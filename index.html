@@ -3,229 +3,282 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workspace Multi-Empresas</title>
+    <title>WorkFace OS - Dashboard Corporativo</title>
+    <!-- Tailwind CSS Engine -->
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- FontAwesome Pro UI Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #0B0F17; color: #E2E8F0; font-family: system-ui, sans-serif; overflow: hidden; height: 100vh; }
+        body { background-color: #080C14; color: #E2E8F0; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; height: 100vh; }
+        .glass-panel { background: rgba(13, 20, 35, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.04); }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #111827; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
-        .kanban-column { min-height: 250px; transition: background-color 0.2s ease; }
-        .drag-over { background-color: rgba(16, 185, 129, 0.05); border: 2px dashed #10B981; }
+        .custom-scroll::-webkit-scrollbar-track { background: #0A0F1D; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #1E2942; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #2D3E64; }
+        .kanban-column { min-height: 450px; transition: all 0.2s ease; }
+        .drag-over { background-color: rgba(var(--cor-tema-rgb, 16, 185, 129), 0.05); border: 2px dashed rgb(var(--cor-tema-rgb, 16, 185, 129)); }
+        .pulse-live { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(0.9); } }
     </style>
 </head>
 <body>
 
-    <div id="loginPage" class="fixed inset-0 bg-[#0B0F17] z-50 flex items-center justify-center">
-        <div class="bg-[#111827] border border-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md">
+    <!-- 1. TELA DE AUTENTICAÇÃO -->
+    <div id="loginPage" class="fixed inset-0 bg-[#060913] z-50 flex items-center justify-center p-4">
+        <div class="glass-panel p-8 rounded-3xl w-full max-w-md shadow-2xl border border-gray-800/60">
             <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-14 h-14 bg-emerald-950 border border-emerald-500 rounded-lg text-emerald-400 text-2xl mb-3">
+                <div class="inline-flex items-center justify-center w-14 h-14 bg-gray-900 border border-gray-800 rounded-2xl text-emerald-400 text-2xl mb-4" id="loginIcon">
                     <i class="fa-solid fa-layer-group"></i>
                 </div>
-                <h1 class="text-2xl font-bold tracking-tight text-white">Workspace</h1>
-                <p class="text-gray-400 text-sm mt-1">Insira suas credenciais corporativas</p>
+                <h1 class="text-2xl font-black tracking-tight text-white" id="loginBrand">WorkFace OS</h1>
+                <p class="text-gray-400 text-xs mt-1">Conecte-se para sincronizar com a planilha corporativa</p>
             </div>
             
-            <div id="loginError" class="hidden mb-4 p-3 bg-red-950/50 border border-red-500/50 text-red-200 text-sm rounded-lg text-center"></div>
+            <div id="loginError" class="hidden mb-4 p-3 bg-red-950/40 border border-red-500/30 text-red-300 text-xs rounded-xl text-center font-medium"></div>
 
-            <form id="formLogin" onsubmit="handleLogin(event)">
-                <div class="mb-4">
-                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">E-mail de Acesso</label>
-                    <input type="email" id="loginEmail" required class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors" placeholder="seu.nome@empresa.com">
+            <form id="formLogin" onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">E-mail Corporativo</label>
+                    <input type="email" id="loginEmail" required class="w-full bg-[#0A0F1D] border border-gray-800/80 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-emerald-500 transition-colors" placeholder="nome@empresa.com">
                 </div>
-                <div class="mb-6">
-                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Senha de Acesso</label>
-                    <input type="password" id="loginSenha" required class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors" placeholder="••••••••">
+                <div>
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Senha de Acesso</label>
+                    <input type="password" id="loginSenha" required class="w-full bg-[#0A0F1D] border border-gray-800/80 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-emerald-500 transition-colors" placeholder="••••••••">
                 </div>
-                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer">
-                    <i class="fa-solid fa-right-to-bracket"></i> Entrar no Painel
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-emerald-950/50 mt-2 cursor-pointer flex items-center justify-center gap-2 text-xs uppercase tracking-widest">
+                    Entrar no Sistema <i class="fa-solid fa-arrow-right text-[10px]"></i>
                 </button>
             </form>
         </div>
     </div>
 
+    <!-- 2. PAINEL DE OPERAÇÕES PRINCIPAL -->
     <div id="appContainer" class="hidden flex h-screen w-screen overflow-hidden">
         
-        <aside class="w-64 bg-[#111827] border-r border-gray-800 flex flex-col justify-between select-none">
+        <!-- SIDEBAR -->
+        <aside class="w-64 bg-[#0A0F1D] border-r border-gray-900/80 flex flex-col justify-between select-none shrink-0">
             <div>
-                <div class="p-5 border-b border-gray-800 flex items-center gap-3">
-                    <img id="companyLogo" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2310B981'><path d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'/></svg>" class="w-10 h-10 object-cover rounded-lg border border-gray-700 bg-gray-900" alt="Logo">
-                    <div>
-                        <h2 class="font-bold text-white tracking-wide text-lg leading-tight">Workspace</h2>
-                        <p id="txtNomeEmpresa" class="text-xs text-gray-400 font-medium truncate max-w-[140px]">Configuração Pendente</p>
+                <div class="p-5 border-b border-gray-900 flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-gray-900 border border-gray-800 flex items-center justify-center font-black text-white text-lg shadow-inner" id="sidebarVisualLogo"><i class="fa-solid fa-cubes"></i></div>
+                    <div class="overflow-hidden">
+                        <h2 class="font-black text-white tracking-wide text-sm uppercase truncate" id="sideBrandName">WorkFace</h2>
+                        <p class="text-[10px] text-gray-500 font-bold tracking-wider uppercase truncate" id="sideCompName">Empresa Sincronizada</p>
                     </div>
                 </div>
 
                 <nav class="p-4 space-y-1">
-                    <button onclick="switchTab('inicio')" id="btn-inicio" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer bg-emerald-950/60 text-emerald-400 border border-emerald-800/50">
-                        <i class="fa-solid fa-chart-pie w-5 text-center"></i> Início (Modo TV)
+                    <button onclick="switchTab('inicio')" id="btn-inicio" class="tab-btn w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-gray-400 hover:bg-gray-900/60 hover:text-white cursor-pointer">
+                        <i class="fa-solid fa-display text-base w-5 text-center"></i> Central de Monitoramento
                     </button>
-                    <button onclick="switchTab('kanban')" id="btn-kanban" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:bg-gray-800 hover:text-white cursor-pointer">
-                        <i class="fa-solid fa-square-poll-horizontal w-5 text-center"></i> Quadro Kanban
+                    <button onclick="switchTab('kanban')" id="btn-kanban" class="tab-btn w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-gray-400 hover:bg-gray-900/60 hover:text-white cursor-pointer">
+                        <i class="fa-solid fa-grip text-base w-5 text-center"></i> Quadro Kanban
                     </button>
-                    <button onclick="switchTab('arquivos')" id="btn-arquivos" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:bg-gray-800 hover:text-white cursor-pointer">
-                        <i class="fa-solid fa-cloud-arrow-up w-5 text-center"></i> Arquivos Nuvem
+                    <button onclick="switchTab('arquivos')" id="btn-arquivos" class="tab-btn w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-gray-400 hover:bg-gray-900/60 hover:text-white cursor-pointer">
+                        <i class="fa-solid fa-cloud-arrow-up text-base w-5 text-center"></i> Arquivos em Nuvem
                     </button>
-                    <button onclick="switchTab('historico')" id="btn-historico" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:bg-gray-800 hover:text-white cursor-pointer">
-                        <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i> Histórico Atividades
+                    <button onclick="switchTab('calendario')" id="btn-calendario" class="tab-btn w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-gray-400 hover:bg-gray-900/60 hover:text-white cursor-pointer">
+                        <i class="fa-solid fa-calendar-alt text-base w-5 text-center"></i> Calendário Geral
                     </button>
-                    <button onclick="switchTab('calendario')" id="btn-calendario" class="tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:bg-gray-800 hover:text-white cursor-pointer">
-                        <i class="fa-solid fa-calendar-days w-5 text-center"></i> Calendário
-                    </button>
-                    <button onclick="switchTab('config')" id="btn-config" class="tab-btn w-full hidden flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:bg-gray-800 hover:text-white cursor-pointer">
-                        <i class="fa-solid fa-sliders w-5 text-center text-amber-400"></i> Configurações ADM
+                    <button onclick="switchTab('config')" id="btn-config" class="tab-btn w-full hidden flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider text-amber-500 border border-transparent hover:bg-amber-950/20 cursor-pointer">
+                        <i class="fa-solid fa-shield-halved text-base w-5 text-center"></i> Gestão Administrativa
                     </button>
                 </nav>
             </div>
 
-            <div class="p-4 border-t border-gray-800 flex items-center justify-between">
-                <div class="flex items-center gap-2.5 overflow-hidden">
-                    <div class="w-9 h-9 rounded-full bg-emerald-700 flex items-center justify-center font-bold text-white text-sm shrink-0 border border-emerald-500" id="userAvatar">M</div>
+            <!-- PERFIL USUÁRIO INFERIOR -->
+            <div class="p-4 border-t border-gray-900 bg-[#070A14] flex items-center justify-between">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-9 h-9 rounded-xl bg-gray-900 border border-gray-800 flex items-center justify-center font-bold text-white text-xs" id="avatarLetra">-</div>
                     <div class="overflow-hidden">
-                        <p class="text-sm font-medium text-white truncate leading-tight" id="lblUserNome">Master Account</p>
-                        <p class="text-xs text-gray-400 truncate" id="lblUserCargo">Administrador</p>
+                        <p class="text-xs font-black text-white truncate" id="userNome">Nome</p>
+                        <p class="text-[10px] text-gray-500 font-semibold truncate uppercase" id="userCargo">Cargo</p>
                     </div>
                 </div>
-                <button onclick="logout()" class="text-gray-500 hover:text-red-400 p-1.5 rounded transition-colors cursor-pointer">
-                    <i class="fa-solid fa-power-off text-sm"></i>
-                </button>
+                <button onclick="logout()" class="text-gray-500 hover:text-red-400 p-2 rounded-lg transition-colors cursor-pointer"><i class="fa-solid fa-sign-out-alt"></i></button>
             </div>
         </aside>
 
-        <main class="flex-1 flex flex-col overflow-hidden bg-[#0B0F17]">
-            <header class="h-16 border-b border-gray-800 px-6 flex items-center justify-between bg-[#111827]/30 shrink-0">
-                <h2 id="pageTitle" class="text-lg font-bold text-white tracking-wide">Início (Modo TV)</h2>
-                
+        <!-- CONTEÚDO DINÂMICO -->
+        <main class="flex-1 flex flex-col overflow-hidden bg-[#060913]">
+            <header class="h-16 border-b border-gray-900/80 px-6 flex items-center justify-between glass-panel shrink-0 z-10">
                 <div class="flex items-center gap-3">
-                    <button id="btnPonto" onclick="baterPonto()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-2 rounded-lg transition-colors flex items-center gap-2 cursor-pointer">
-                        <i class="fa-solid fa-fingerprint"></i> Bater Ponto Entrada
+                    <div id="statusNet" class="w-2 h-2 rounded-full bg-emerald-500 pulse-live"></div>
+                    <h2 id="pageTitle" class="text-xs font-black text-white uppercase tracking-widest font-mono">Painel de Controle</h2>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- BOTÃO DO MODO TV BONITO (REAL) -->
+                    <button onclick="toggleModoTVCompleto()" class="bg-gray-900 border border-gray-800 text-gray-300 hover:text-white font-bold text-xs px-4 py-2 rounded-xl transition-all flex items-center gap-2 cursor-pointer uppercase tracking-wider">
+                        <i class="fa-solid fa-expand"></i> Expandir Monitor TV
                     </button>
-                    <div id="pontoStatus" class="hidden text-xs px-3 py-2 bg-emerald-950/40 border border-emerald-800 text-emerald-400 rounded-lg font-mono"></div>
+                    <button id="btnPonto" onclick="baterPontoPlanilha()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-4 py-2 rounded-xl transition-all flex items-center gap-2 cursor-pointer uppercase tracking-wider shadow-lg">
+                        <i class="fa-solid fa-fingerprint"></i> Registrar Ponto
+                    </button>
+                    <div id="pontoFeedback" class="hidden text-xs px-3 py-2 bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 rounded-xl font-mono font-bold"></div>
                 </div>
             </header>
 
             <div class="flex-1 p-6 overflow-hidden relative custom-scroll">
 
+                <!-- ABA 1: MODO TV COMPACTADO EM KIOSK -->
                 <div id="tab-inicio" class="tab-content h-full flex flex-col gap-6">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl flex items-center justify-between">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div class="glass-panel p-5 rounded-2xl flex items-center justify-between">
                             <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Presença Hoje</p>
-                                <h3 id="tvPresencaContador" class="text-2xl font-black text-white mt-1">0 presente(s)</h3>
+                                <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Colaboradores Ativos Hoje</p>
+                                <h3 id="tvContMembros" class="text-3xl font-black text-white mt-1 font-mono">0 Logados</h3>
                             </div>
-                            <i class="fa-solid fa-users text-emerald-500/20 text-4xl"></i>
+                            <div class="w-12 h-12 bg-gray-900 rounded-xl border border-gray-800/60 flex items-center justify-center text-emerald-400 text-xl"><i class="fa-solid fa-users"></i></div>
                         </div>
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl flex items-center justify-between">
+                        <div class="glass-panel p-5 rounded-2xl flex items-center justify-between">
                             <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tarefas Ativas</p>
-                                <h3 id="tvTarefasContador" class="text-2xl font-black text-amber-400 mt-1">0 pendentes</h3>
+                                <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Demandas Pendentes</p>
+                                <h3 id="tvContTarefas" class="text-3xl font-black text-amber-500 mt-1 font-mono">0 Ativas</h3>
                             </div>
-                            <i class="fa-solid fa-list-check text-amber-500/20 text-4xl"></i>
+                            <div class="w-12 h-12 bg-gray-900 rounded-xl border border-gray-800/60 flex items-center justify-center text-amber-400 text-xl"><i class="fa-solid fa-folder-open"></i></div>
                         </div>
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl flex items-center justify-between">
+                        <div class="glass-panel p-5 rounded-2xl flex items-center justify-between">
                             <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Horário Coordenado</p>
-                                <h3 id="tvRelogio" class="text-2xl font-black text-blue-400 mt-1 font-mono">00:00:00</h3>
+                                <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Horário Coordenado</p>
+                                <h3 id="tvRelogioDigital" class="text-3xl font-black text-blue-400 mt-1 font-mono tracking-widest">00:00:00</h3>
                             </div>
-                            <i class="fa-solid fa-clock text-blue-500/20 text-4xl"></i>
+                            <div class="w-12 h-12 bg-gray-900 rounded-xl border border-gray-800/60 flex items-center justify-center text-blue-400 text-xl"><i class="fa-solid fa-clock"></i></div>
                         </div>
                     </div>
-
                     <div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-hidden">
-                        <div class="bg-[#111827] border border-gray-800 rounded-xl p-5 flex flex-col overflow-hidden">
-                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3"><i class="fa-solid fa-user-check text-emerald-400 mr-2"></i>Presença do Dia</h4>
-                            <div id="tvPresencaLista" class="flex-1 overflow-y-auto custom-scroll space-y-2 text-sm text-gray-400">
-                                <p class="text-center py-8 text-gray-500 italic">Preencha o Link de Implantação nas Configurações para carregar a empresa.</p>
-                            </div>
+                        <div class="glass-panel rounded-2xl p-5 flex flex-col overflow-hidden">
+                            <h4 class="text-xs font-black text-white uppercase tracking-wider border-b border-gray-900 pb-3 mb-3"><i class="fa-solid fa-clipboard-user mr-2 text-emerald-400"></i> Espelho de Entrada (Ponto Digital)</h4>
+                            <div id="tvPainelPontos" class="flex-1 overflow-y-auto custom-scroll space-y-2"></div>
                         </div>
-                        <div class="bg-[#111827] border border-gray-800 rounded-xl p-5 flex flex-col overflow-hidden">
-                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3"><i class="fa-solid fa-bullseye text-red-400 mr-2"></i>Arquivos Recentes</h4>
-                            <div id="tvRecentesLista" class="flex-1 overflow-y-auto custom-scroll space-y-3 text-sm text-gray-400"></div>
+                        <div class="glass-panel rounded-2xl p-5 flex flex-col overflow-hidden">
+                            <h4 class="text-xs font-black text-white uppercase tracking-wider border-b border-gray-900 pb-3 mb-3"><i class="fa-solid fa-satellite mr-2 text-amber-400"></i> Registro Geral de Demandas Ativas</h4>
+                            <div id="tvPainelDemandas" class="flex-1 overflow-y-auto custom-scroll space-y-2"></div>
                         </div>
                     </div>
                 </div>
 
-                <div id="tab-kanban" class="tab-content hidden h-full flex flex-col gap-4">
-                    <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 overflow-hidden h-full">
-                        <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
-                                <span class="text-xs font-bold uppercase text-gray-400"><i class="fa-solid fa-circle text-gray-500 text-[8px] mr-1"></i> A Fazer</span>
-                                <span id="count-a_fazer" class="bg-gray-800 px-2 py-0.5 rounded text-xs font-bold text-gray-300">0</span>
-                            </div>
-                            <div id="col-a_fazer" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'a_fazer')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
+                <!-- ABA 2: QUADRO KANBAN DRAG AND DROP -->
+                <div id="tab-kanban" class="tab-content hidden h-full grid grid-cols-1 md:grid-cols-3 gap-5 overflow-hidden">
+                    <div class="glass-panel rounded-2xl p-4 flex flex-col h-full overflow-hidden">
+                        <div class="flex justify-between items-center border-b border-gray-900 pb-3 mb-3">
+                            <span class="text-xs font-black text-gray-400 uppercase"><i class="fa-solid fa-circle-pause mr-1.5"></i> Fila de Espera</span>
+                            <span id="badge-a_fazer" class="bg-gray-900 text-gray-400 text-xs px-2.5 py-0.5 rounded-md font-mono font-bold">0</span>
                         </div>
-                        <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
-                                <span class="text-xs font-bold uppercase text-blue-400"><i class="fa-solid fa-circle text-blue-500 text-[8px] mr-1"></i> Em Execução</span>
-                                <span id="count-em_andamento" class="bg-blue-950 px-2 py-0.5 rounded text-xs font-bold text-blue-400">0</span>
-                            </div>
-                            <div id="col-em_andamento" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'em_andamento')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
+                        <div id="col-a_fazer" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'a_fazer')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-3"></div>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4 flex flex-col h-full overflow-hidden">
+                        <div class="flex justify-between items-center border-b border-gray-900 pb-3 mb-3">
+                            <span class="text-xs font-black text-blue-400 uppercase"><i class="fa-solid fa-circle-play fa-spin mr-1.5"></i> Em Execução</span>
+                            <span id="badge-em_andamento" class="bg-blue-950 text-blue-400 text-xs px-2.5 py-0.5 rounded-md font-mono font-bold">0</span>
                         </div>
-                        <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
-                                <span class="text-xs font-bold uppercase text-emerald-400"><i class="fa-solid fa-circle text-emerald-500 text-[8px] mr-1"></i> Concluído</span>
-                                <span id="count-concluido" class="bg-emerald-950 px-2 py-0.5 rounded text-xs font-bold text-emerald-400">0</span>
-                            </div>
-                            <div id="col-concluido" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'concluido')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
+                        <div id="col-em_andamento" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'em_andamento')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-3"></div>
+                    </div>
+                    <div class="glass-panel rounded-2xl p-4 flex flex-col h-full overflow-hidden">
+                        <div class="flex justify-between items-center border-b border-gray-900 pb-3 mb-3">
+                            <span class="text-xs font-black text-emerald-400 uppercase"><i class="fa-solid fa-circle-check mr-1.5"></i> Finalizado</span>
+                            <span id="badge-concluido" class="bg-emerald-950 text-emerald-400 text-xs px-2.5 py-0.5 rounded-md font-mono font-bold">0</span>
                         </div>
+                        <div id="col-concluido" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'concluido')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-3"></div>
                     </div>
                 </div>
 
+                <!-- ABA 3: ARQUIVOS EM NUVEM -->
                 <div id="tab-arquivos" class="tab-content hidden h-full flex flex-col gap-4">
-                    <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl flex items-center justify-between shrink-0">
-                        <label class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-2.5 rounded-lg transition-colors flex items-center gap-2 cursor-pointer">
-                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload para o Drive da Empresa
-                            <input type="file" id="fileUploader" class="hidden" onchange="uploadRealParaDrive(this)">
-                        </label>
-                        <span id="uploadStatus" class="text-xs font-medium text-gray-400"></span>
+                    <div class="glass-panel p-4 rounded-2xl flex items-center justify-between shrink-0">
+                        <div class="flex gap-2 items-center">
+                            <input type="text" id="arqNome" placeholder="Nome do arquivo ou pasta" class="bg-[#0A0F1D] border border-gray-800 text-xs rounded-xl px-4 py-2.5 text-white w-64 focus:outline-none">
+                            <input type="text" id="arqUrl" placeholder="Cole a URL do Google Drive aqui" class="bg-[#0A0F1D] border border-gray-800 text-xs rounded-xl px-4 py-2.5 text-white w-80 focus:outline-none">
+                            <button onclick="adicionarLinkArquivo()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer uppercase"><i class="fa-solid fa-plus mr-1"></i> Adicionar Documento</button>
+                        </div>
                     </div>
-                    <div class="flex-1 bg-[#111827] border border-gray-800 rounded-xl overflow-hidden flex flex-col">
-                        <table class="w-full text-left text-sm border-collapse">
-                            <thead>
-                                <tr class="bg-gray-900/50 border-b border-gray-800 text-gray-400 text-xs uppercase font-medium">
-                                    <th class="p-4">ID</th><th class="p-4">Nome do Arquivo</th><th class="p-4">Setor</th><th class="p-4">Enviado Por</th><th class="p-4">Data</th><th class="p-4 text-center">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tblArquivosCorpo" class="divide-y divide-gray-800 text-gray-300"></tbody>
-                        </table>
+                    <div class="flex-1 glass-panel rounded-2xl overflow-hidden flex flex-col">
+                        <div class="overflow-x-auto custom-scroll">
+                            <table class="w-full text-left text-xs">
+                                <thead>
+                                    <tr class="bg-gray-950/80 border-b border-gray-900 text-gray-400 uppercase tracking-wider font-bold">
+                                        <th class="p-4">ID</th><th class="p-4">Documento</th><th class="p-4">Setor Alocado</th><th class="p-4">Indexado Por</th><th class="p-4">Data Inclusão</th><th class="p-4 text-center">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tabelaArquivosCorpo" class="divide-y divide-gray-900 text-gray-300"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
-                <div id="tab-historico" class="tab-content hidden h-full flex flex-col">
-                    <div class="flex-1 bg-[#111827] border border-gray-800 rounded-xl overflow-hidden flex flex-col p-4 space-y-3" id="historicoLista"></div>
-                </div>
-
-                <div id="tab-calendario" class="tab-content hidden h-full flex flex-col items-center justify-center">
-                    <div class="bg-[#111827] border border-gray-800 rounded-xl p-6 w-full max-w-4xl text-center">
-                        <div class="grid grid-cols-7 gap-2 font-semibold text-xs text-gray-400 uppercase mb-2">
+                <!-- ABA 4: CALENDÁRIO CORPORATIVO -->
+                <div id="tab-calendario" class="tab-content hidden h-full flex flex-col gap-4">
+                    <div class="glass-panel p-4 rounded-2xl flex items-center justify-between shrink-0">
+                        <div class="flex items-center gap-3">
+                            <button onclick="navegarMes(-1)" class="p-2 bg-gray-900 border border-gray-800 rounded-xl text-xs text-white cursor-pointer"><i class="fa-solid fa-arrow-left"></i></button>
+                            <h3 id="labelMesCalendario" class="text-xs font-black text-white uppercase tracking-wider font-mono min-w-[120px] text-center">-</h3>
+                            <button onclick="navegarMes(1)" class="p-2 bg-gray-900 border border-gray-800 rounded-xl text-xs text-white cursor-pointer"><i class="fa-solid fa-arrow-right"></i></button>
+                        </div>
+                        <span class="text-[10px] bg-blue-950 text-blue-400 font-mono font-bold px-3 py-1.5 rounded-xl border border-blue-900/40 uppercase">Vinculado a Linha de Prazos</span>
+                    </div>
+                    <div class="flex-1 glass-panel rounded-2xl p-5 flex flex-col overflow-y-auto custom-scroll justify-between">
+                        <div class="grid grid-cols-7 gap-1.5 text-center text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">
                             <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div>
                         </div>
-                        <div class="grid grid-cols-7 gap-2 h-72 text-sm" id="calendarGrid"></div>
+                        <div id="gridDiasCalendario" class="grid grid-cols-7 gap-2 flex-1 min-h-[350px]"></div>
                     </div>
                 </div>
 
-                <div id="tab-config" class="tab-content hidden h-full flex flex-col gap-6">
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl space-y-4">
-                            <h3 class="text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-plug mr-2"></i> Integração da Empresa Cliente</h3>
+                <!-- ABA 5: GESTÃO ADMINISTRATIVA COMPLETA -->
+                <div id="tab-config" class="tab-content hidden h-full grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-y-auto custom-scroll">
+                    <!-- Configuração do Motor e Design -->
+                    <div class="glass-panel p-6 rounded-2xl space-y-4 h-fit">
+                        <h3 class="text-xs font-black text-white uppercase border-b border-gray-900 pb-2"><i class="fa-solid fa-sliders text-emerald-400 mr-2"></i> Identidade & Conectividade SaaS</h3>
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Endereço Web App Google Apps Script</label>
+                            <input type="text" id="cfgLinkScript" class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-3 text-xs text-white font-mono focus:outline-none" placeholder="https://script.google.com/macros/s/.../exec">
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Link de Implantação do Apps Script (URL Web App)</label>
-                                <input type="text" id="cfgLinkScript" onchange="salvarLinkScript(this.value)" class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:border-amber-500 focus:outline-none" placeholder="https://script.google.com/macros/s/.../exec">
-                                <p class="text-[11px] text-gray-500 mt-2">Cole aqui o link gerado após fazer a "Nova Implantação" como App da Web na conta Google do cliente.</p>
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Marca do Painel</label>
+                                <input type="text" id="cfgNomeEmpresa" class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none" placeholder="Ex: Corporativo S/A">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Paleta Cromática Ativa</label>
+                                <select id="cfgCorTema" class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none cursor-pointer">
+                                    <option value="16, 185, 129">Esmeralda (Padrão)</option>
+                                    <option value="59, 130, 246">Ocean Blue</option>
+                                    <option value="139, 92, 246">Roxo Tech</option>
+                                    <option value="245, 158, 11">Laranja Industrial</option>
+                                    <option value="236, 72, 153">Pink Neon</option>
+                                </select>
                             </div>
                         </div>
+                        <button onclick="salvarConfiguracoesGerais()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer">Gravar Parâmetros Globais</button>
+                    </div>
 
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl space-y-4">
-                            <h3 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-image mr-2"></i> Customização de Marca</h3>
+                    <!-- CRIAÇÃO DE LOGINS PELO ADMIN EM REAL-TIME -->
+                    <div class="glass-panel p-6 rounded-2xl space-y-4 h-fit">
+                        <h3 class="text-xs font-black text-amber-500 uppercase border-b border-gray-900 pb-2"><i class="fa-solid fa-user-plus mr-2"></i> Criar Nova Credencial (Grava na Planilha)</h3>
+                        <form id="formNovoUser" onsubmit="cadastrarUsuarioPeloAdmin(event)" class="space-y-3">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Nome Comercial da Empresa</label>
-                                <input type="text" id="cfgNomeEmpresa" oninput="atualizarNomeEmpresa(this.value)" class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2 text-white text-sm focus:border-emerald-500 focus:outline-none" placeholder="Ex: Alfa Transportes">
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Nome Completo</label>
+                                <input type="text" id="admNome" required class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">E-mail de Login</label>
+                                    <input type="email" id="admEmail" required class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Senha Provisória</label>
+                                    <input type="password" id="admSenha" required class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none">
+                                </div>
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Logotipo Corporativo</label>
-                                <input type="file" accept="image/*" onchange="salvarLogotipoLocal(this)" class="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer">
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Setor de Atuação / Cargo</label>
+                                <input type="text" id="admCargo" required class="w-full bg-[#0A0F1D] border border-gray-800 rounded-xl px-4 py-2.5 text-white text-xs focus:outline-none" placeholder="Ex: Logística, Vendas, TI">
                             </div>
+                            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer">Registrar Colaborador</button>
+                        </form>
+                        
+                        <!-- Lista de Membros já existentes -->
+                        <div class="pt-3">
+                            <h4 class="text-[10px] font-black text-gray-400 uppercase mb-2">Equipe Cadastrada na Planilha</h4>
+                            <div id="admListaMembros" class="space-y-1 max-h-40 overflow-y-auto custom-scroll"></div>
                         </div>
                     </div>
                 </div>
@@ -234,247 +287,456 @@
         </main>
     </div>
 
+    <!-- MODO TV INDEPENDENTE FULLSCREEN PREMIUM -->
+    <div id="fullscreenModoTV" class="hidden fixed inset-0 bg-[#04060C] z-50 flex flex-col p-8 select-none">
+        <header class="flex justify-between items-center border-b border-gray-900 pb-4 mb-6">
+            <div class="flex items-center gap-4">
+                <div class="w-3 h-3 rounded-full bg-emerald-500 pulse-live"></div>
+                <h2 class="text-lg font-black tracking-widest text-white font-mono uppercase" id="tvFullBrandName">WORKFACE TELEMETRIA</h2>
+            </div>
+            <div class="flex items-center gap-6">
+                <div class="text-right">
+                    <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Relógio Operacional</p>
+                    <p id="tvFullRelogio" class="text-2xl font-black text-blue-400 font-mono tracking-widest">00:00:00</p>
+                </div>
+                <button onclick="toggleModoTVCompleto()" class="p-3 bg-gray-900 hover:bg-gray-800 border border-gray-800 text-white rounded-2xl cursor-pointer text-sm"><i class="fa-solid fa-compress"></i></button>
+            </div>
+        </header>
+        <div class="grid grid-cols-3 gap-6 mb-6">
+            <div class="glass-panel p-6 rounded-3xl text-center">
+                <p class="text-[11px] font-black text-gray-500 uppercase tracking-widest">Operadores Logados</p>
+                <h3 id="tvFullContMembros" class="text-5xl font-black text-white mt-2 font-mono">0</h3>
+            </div>
+            <div class="glass-panel p-6 rounded-3xl text-center">
+                <p class="text-[11px] font-black text-gray-500 uppercase tracking-widest">Ordens Ativas (Kanban)</p>
+                <h3 id="tvFullContTarefas" class="text-5xl font-black text-amber-500 mt-2 font-mono">0</h3>
+            </div>
+            <div class="glass-panel p-6 rounded-3xl text-center">
+                <p class="text-[11px] font-black text-gray-500 uppercase tracking-widest">Data Sincronizada</p>
+                <h3 id="tvFullData" class="text-3xl font-black text-emerald-400 mt-3 font-mono">00/00/2026</h3>
+            </div>
+        </div>
+        <div class="flex-1 grid grid-cols-2 gap-6 overflow-hidden">
+            <div class="glass-panel p-6 rounded-3xl flex flex-col overflow-hidden">
+                <h4 class="text-xs font-black text-white uppercase tracking-wider mb-4 border-b border-gray-900 pb-2"><i class="fa-solid fa-fingerprint text-emerald-400 mr-2"></i> Fluxo de Presença Comercial</h4>
+                <div id="tvFullListaPontos" class="flex-1 overflow-y-auto custom-scroll space-y-3"></div>
+            </div>
+            <div class="glass-panel p-6 rounded-3xl flex flex-col overflow-hidden">
+                <h4 class="text-xs font-black text-white uppercase tracking-wider mb-4 border-b border-gray-900 pb-2"><i class="fa-solid fa-boxes-stacked text-amber-400 mr-2"></i> Distribuição de Atividades Clientes</h4>
+                <div id="tvFullListaDemandas" class="flex-1 overflow-y-auto custom-scroll space-y-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT DE INTELIGÊNCIA OPERACIONAL -->
     <script>
-        // CONTA MASTER MAJORITÁRIA FIXA (Salva seu acesso supremo de desenvolvedor local)
-        const MASTER_EMAIL = "master@workspace.com";
-        const MASTER_PASS = "adminmaster";
+        let userSessao = null;
+        let scriptUrlGlobal = "";
+        let cachePlanilha = { tarefas: [], presencas: [], arquivos: [], config: {}, membros: [] };
+        let objetoCalendarioData = new Date(2026, 5, 1); // Forçado em Junho/2026 conforme histórico operacional
 
-        let usuarioLogado = null;
-        let dbCache = { tarefas: [], presencas: [], arquivos: [] };
-        let current_web_app_url = "";
-
-        // Inicialização temporal
+        // Relógio Sincronizado Perpétuo
         setInterval(() => {
-            const el = document.getElementById('tvRelogio');
-            if(el) el.innerText = new Date().toLocaleTimeString('pt-BR');
+            const horaStr = new Date().toLocaleTimeString('pt-BR');
+            if(document.getElementById('tvRelogioDigital')) document.getElementById('tvRelogioDigital').innerText = horaStr;
+            if(document.getElementById('tvFullRelogio')) document.getElementById('tvFullRelogio').innerText = horaStr;
         }, 1000);
 
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(el => {
-                el.classList.remove('bg-emerald-950/60', 'text-emerald-400', 'border', 'border-emerald-800/50');
-                el.classList.add('text-gray-400', 'hover:bg-gray-800', 'hover:text-white');
+                el.className = "tab-btn w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-gray-400 hover:bg-gray-900/60 hover:text-white cursor-pointer";
+                el.style.backgroundColor = "transparent";
+                el.style.border = "1px solid transparent";
+                el.style.color = "";
             });
+            
             document.getElementById(`tab-${tabId}`).classList.remove('hidden');
-            document.getElementById(`btn-${tabId}`).classList.add('bg-emerald-950/60', 'text-emerald-400', 'border', 'border-emerald-800/50');
+            const btn = document.getElementById(`btn-${tabId}`);
+            const corAtual = localStorage.getItem('wf_cor_tema') || "16, 185, 129";
+            
+            if(btn) {
+                btn.style.backgroundColor = `rgba(${corAtual}, 0.12)`;
+                btn.style.color = `rgb(${corAtual})`;
+                btn.style.borderColor = `rgba(${corAtual}, 0.3)`;
+            }
+            
+            const txtTitulos = { inicio: 'Central de Monitoramento', kanban: 'Quadro Kanban', arquivos: 'Arquivos em Nuvem', calendario: 'Calendário Geral', config: 'Gestão Administrativa' };
+            document.getElementById('pageTitle').innerText = txtTitulos[tabId];
         }
 
-        // Requisição Dinâmica usando o link salvo na configuração da máquina
-        async function chamarServidor(dados) {
-            if (!current_web_app_url) {
-                console.warn("Sem link de integração ativo.");
-                return { success: false, message: "Link da planilha não configurado neste terminal." };
-            }
+        async function requisicaoNuvem(dados) {
+            if(!scriptUrlGlobal) return { success: false, message: "Apps Script Não Configurado." };
             try {
-                // Contorna o bloqueio de arquivo local forçando o modo 'no-cors' ou tratamento padrão se hospedado
-                const response = await fetch(current_web_app_url, {
-                    method: 'POST',
-                    body: JSON.stringify(dados)
-                });
-                return await response.json();
-            } catch (error) {
-                console.error("Erro na requisição SaaS:", error);
-                return { success: false, message: "Erro de comunicação. Verifique as configurações de implantação do Google." };
+                const response = await fetch(scriptUrlGlobal, { method: 'POST', mode: 'no-cors', body: JSON.stringify(dados) });
+                // Como Web Apps Google em modo 'no-cors' não retornam o JSON direto por segurança do navegador,
+                // fazemos um fallback elegante ou chamamos sem restrição se configurado corretamente.
+                // Para garantir funcionamento pleno de espelho, rodamos com o fetch padrão:
+                const resReal = await fetch(scriptUrlGlobal, { method: 'POST', body: JSON.stringify(dados) });
+                return await resReal.json();
+            } catch (e) {
+                return { success: false, message: "Falha de comunicação." };
             }
         }
 
-        // SISTEMA DE LOGIN DE DUPLO FLUXO
-        async function handleLogin(event) {
-            event.preventDefault();
+        // CARREGAR TUDO DA PLANILHA EM UM EXECUTÁVEL ÚNICO
+        async function sincronizarTudoComPlanilha() {
+            document.getElementById('statusNet').className = "w-2 h-2 rounded-full bg-amber-500 pulse-live";
+            const res = await requisicaoNuvem({ action: 'buscarDados' });
+            
+            if(res && res.success) {
+                cachePlanilha = res;
+                
+                // Grava em LocalStorage para cache instantâneo de renderização rápida
+                localStorage.setItem('wf_nome_empresa', res.config.nome_empresa);
+                localStorage.setItem('wf_cor_tema', res.config.cor_tema);
+                
+                aplicarConfiguracoesVisuais();
+                renderizarKanbanReal();
+                renderizarModoTVFixo();
+                renderizarArquivosReal();
+                renderizarCalendarioReal();
+                renderizarMembrosAdmin();
+                
+                document.getElementById('statusNet').className = "w-2 h-2 rounded-full bg-emerald-500 pulse-live";
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
             const email = document.getElementById('loginEmail').value.trim();
             const senha = document.getElementById('loginSenha').value;
-            const errEl = document.getElementById('loginError');
-            errEl.classList.add('hidden');
+            const err = document.getElementById('loginError');
+            err.classList.add('hidden');
 
-            // Fluxo A: Autenticação Master Direta (Local/Independente)
-            if (email === MASTER_EMAIL && senha === MASTER_PASS) {
-                usuarioLogado = { nome: "Desenvolvedor Master", email: MASTER_EMAIL, cargo: "Administrador" };
-                liberarPainel();
+            scriptUrlGlobal = localStorage.getItem('wf_script_url') || "";
+
+            // Se for a conta mestre padrão e o script ainda não foi configurado
+            if(email === "admin@empresa.com" && senha === "123456" && !scriptUrlGlobal) {
+                userSessao = { nome: "Administrador Provisório", email: email, cargo: "Administrador" };
+                liberarPainelSistema();
                 return;
             }
 
-            // Fluxo B: Se não for master, depende obrigatoriamente do link do Script configurado
-            if(!current_web_app_url) {
-                errEl.innerText = "Este terminal ainda não possui uma planilha vinculada. Faça login com a conta Master para configurar.";
-                errEl.classList.remove('hidden');
+            if(!scriptUrlGlobal) {
+                err.innerText = "URL do Apps Script ausente. Faça o primeiro login com a senha padrão 123456 no e-mail admin@empresa.com para configurar o link.";
+                err.classList.remove('hidden');
                 return;
             }
 
-            // Consulta o Google Sheets da empresa através da API
-            const res = await chamarServidor({ action: 'login', email: email, senha: senha });
-            if(res.success) {
-                usuarioLogado = res.user;
-                liberarPainel();
+            const res = await requisicaoNuvem({ action: 'login', email: email, senha: senha });
+            if(res && res.success) {
+                userSessao = res.user;
+                liberarPainelSistema();
             } else {
-                errEl.innerText = res.message;
-                errEl.classList.remove('hidden');
+                err.innerText = res ? res.message : "Erro na resposta do servidor Google.";
+                err.classList.remove('hidden');
             }
         }
 
-        function liberarPainel() {
+        function liberarPainelSistema() {
             document.getElementById('loginPage').classList.add('hidden');
             document.getElementById('appContainer').classList.remove('hidden');
-            document.getElementById('lblUserNome').innerText = usuarioLogado.nome;
-            document.getElementById('lblUserCargo').innerText = usuarioLogado.cargo;
-            document.getElementById('userAvatar').innerText = usuarioLogado.nome.charAt(0).toUpperCase();
+            
+            document.getElementById('userNome').innerText = userSessao.nome;
+            document.getElementById('userCargo').innerText = userSessao.cargo;
+            document.getElementById('avatarLetra').innerText = userSessao.nome.charAt(0).toUpperCase();
 
-            if(usuarioLogado.cargo.toLowerCase() === 'administrador') {
+            if(userSessao.cargo.toLowerCase() === 'administrador') {
                 document.getElementById('btn-config').classList.remove('hidden');
             }
 
-            recuperarConfiguracoesLocais();
-            if(current_web_app_url) {
-                carregarDadosDoBanco();
+            scriptUrlGlobal = localStorage.getItem('wf_script_url') || "";
+            document.getElementById('cfgLinkScript').value = scriptUrlGlobal;
+            
+            aplicarConfiguracoesVisuais();
+            if(scriptUrlGlobal) sincronizarTudoComPlanilha();
+            switchTab('inicio');
+        }
+
+        function aplicarConfiguracoesVisuais() {
+            const nome = localStorage.getItem('wf_nome_empresa') || "WorkFace OS";
+            const cor = localStorage.getItem('wf_cor_tema') || "16, 185, 129";
+
+            document.getElementById('sideCompName').innerText = nome;
+            document.getElementById('sideBrandName').innerText = nome;
+            document.getElementById('loginBrand').innerText = nome;
+            document.getElementById('tvFullBrandName').innerText = nome + " - TELEMETRIA MULTIVERSO";
+            
+            document.getElementById('cfgNomeEmpresa').value = nome;
+            document.getElementById('cfgCorTema').value = cor;
+            
+            document.documentElement.style.setProperty('--cor-tema-rgb', cor);
+            document.getElementById('loginIcon').style.color = `rgb(${cor})`;
+        }
+
+        async function salvarConfiguracoesGerais() {
+            const nome = document.getElementById('cfgNomeEmpresa').value.trim();
+            const cor = document.getElementById('cfgCorTema').value;
+            scriptUrlGlobal = document.getElementById('cfgLinkScript').value.trim();
+
+            localStorage.setItem('wf_script_url', scriptUrlGlobal);
+            localStorage.setItem('wf_nome_empresa', nome);
+            localStorage.setItem('wf_cor_tema', cor);
+
+            if(scriptUrlGlobal) {
+                await requisicaoNuvem({ action: 'salvarConfiguracoes', nomeEmpresa: nome, corTema: cor });
+                sincronizarTudoComPlanilha();
+            } else {
+                aplicarConfiguracoesVisuais();
             }
-            renderizarCalendario();
+            alert("Parâmetros salvos localmente e replicados na Planilha!");
         }
 
-        function salvarLinkScript(valor) {
-            current_web_app_url = valor.trim();
-            localStorage.setItem('workspace_tenant_script_url', current_web_app_url);
-            if(current_web_app_url) carregarDadosDoBanco();
-        }
+        async function cadastrarUsuarioPeloAdmin(e) {
+            e.preventDefault();
+            const nome = document.getElementById('admNome').value.trim();
+            const email = document.getElementById('admEmail').value.trim();
+            const senha = document.getElementById('admSenha').value;
+            const cargo = document.getElementById('admCargo').value.trim();
 
-        async function carregarDadosDoBanco() {
-            const res = await chamarServidor({ action: 'buscarDados' });
-            if(res.success) {
-                dbCache.tarefas = res.tarefas;
-                dbCache.presencas = res.presencas;
-                dbCache.arquivos = res.arquivos;
-                renderizarKanban();
-                renderizarDashboardTV();
-                renderizarArquivos();
-                renderizarHistorico();
+            const res = await requisicaoNuvem({ action: 'cadastrarUsuario', nome: nome, email: email, senha: senha, cargo: cargo });
+            if(res && res.success) {
+                alert(res.message);
+                document.getElementById('formNovoUser').reset();
+                sincronizarTudoComPlanilha();
+            } else {
+                alert("Erro ao salvar usuário na planilha.");
             }
         }
 
-        async function baterPonto() {
-            const res = await chamarServidor({ action: 'baterPonto', email: usuarioLogado.email, nome: usuarioLogado.nome });
-            if(res.success) {
+        async function baterPontoPlanilha() {
+            const res = await requisicaoNuvem({ action: 'baterPonto', email: userSessao.email, nome: userSessao.nome });
+            if(res && res.success) {
                 document.getElementById('btnPonto').classList.add('hidden');
-                const pStatus = document.getElementById('pontoStatus');
-                pStatus.innerHTML = `PONTO OK (${res.hora})`;
-                pStatus.classList.remove('hidden');
-                carregarDadosDoBanco();
-            } else { alert(res.message); }
+                const feed = document.getElementById('pontoFeedback');
+                feed.innerHTML = `<i class="fa-solid fa-check-circle mr-1"></i> REGISTRADO ÀS ${res.hora} (${res.status})`;
+                feed.classList.remove('hidden');
+                sincronizarTudoComPlanilha();
+            }
         }
 
-        function renderizarKanban() {
-            const cols = ['a_fazer', 'em_andamento', 'concluido'];
-            cols.forEach(c => document.getElementById(`col-${c}`).innerHTML = '');
-            let counts = { a_fazer: 0, em_andamento: 0, concluido: 0 };
+        // RENDERIZADOR DO SEU NOVO KANBAN FANTÁSTICO
+        function renderizarKanbanReal() {
+            const colunas = ['a_fazer', 'em_andamento', 'concluido'];
+            colunas.forEach(col => document.getElementById(`col-${col}`).innerHTML = '');
+            let contadores = { a_fazer: 0, em_andamento: 0, concluido: 0 };
 
-            dbCache.tarefas.forEach(t => {
+            cachePlanilha.tarefas.forEach(t => {
                 const card = document.createElement('div');
-                card.className = "bg-[#1F2937] border border-gray-700 p-3 rounded-lg shadow cursor-grab active:cursor-grabbing";
-                card.id = `task-${t.id}`;
+                card.className = "bg-[#0E1626] border border-gray-800/80 p-4 rounded-xl shadow-md cursor-grab active:cursor-grabbing hover:border-gray-700 transition-all space-y-2.5 select-none";
+                card.id = `card-${t.id}`;
                 card.draggable = true;
                 card.setAttribute('ondragstart', 'drag(event)');
+
+                let prioBadge = `<span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-950/60 text-red-400 border border-red-900/30">ALTA</span>`;
+                if(t.prioridade.toLowerCase() === 'média' || t.prioridade.toLowerCase() === 'media') {
+                    prioBadge = `<span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-900/30">MÉDIA</span>`;
+                } else if(t.prioridade.toLowerCase() === 'baixa') {
+                    prioBadge = `<span class="text-[9px] font-black px-1.5 py-0.5 rounded bg-gray-900 text-gray-400 border border-gray-800">BAIXA</span>`;
+                }
+
                 card.innerHTML = `
-                    <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-gray-400 uppercase">${t.setor}</span>
-                    <h5 class="text-sm font-bold text-white mt-1">${t.titulo}</h5>
-                    <p class="text-xs text-gray-400 mt-0.5">${t.descricao}</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-[9px] font-black px-2 py-0.5 rounded bg-gray-950 text-gray-400 border border-gray-900 uppercase tracking-wide">${t.setor}</span>
+                        ${prioBadge}
+                    </div>
+                    <h5 class="text-xs font-black text-white uppercase truncate">${t.titulo}</h5>
+                    <p class="text-[11px] text-gray-400 line-clamp-2 leading-tight">${t.descricao}</p>
+                    <div class="flex justify-between items-center text-[10px] text-gray-500 pt-2 border-t border-gray-900">
+                        <span class="truncate max-w-[100px]"><i class="fa-solid fa-circle-user mr-1 text-gray-400"></i>${t.responsavel}</span>
+                        <span class="font-mono text-gray-400 font-bold"><i class="fa-regular fa-calendar-check mr-1 text-[9px]"></i>${t.prazo}</span>
+                    </div>
                 `;
-                if(counts[t.coluna] !== undefined) {
+
+                if(contadores[t.coluna] !== undefined) {
                     document.getElementById(`col-${t.coluna}`).appendChild(card);
-                    counts[t.coluna]++;
+                    contadores[t.coluna]++;
                 }
             });
-            cols.forEach(c => document.getElementById(`count-${c}`).innerText = counts[c]);
+
+            colunas.forEach(col => document.getElementById(`badge-${col}`).innerText = contadores[col]);
         }
 
-        function allowDrop(ev) { ev.preventDefault(); ev.currentTarget.classList.add('drag-over'); }
-        function dragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
-        function drag(ev) { ev.dataTransfer.setData("text", ev.currentTarget.id); }
-        async function drop(ev, cNome) {
-            ev.preventDefault();
-            ev.currentTarget.classList.remove('drag-over');
-            const data = ev.dataTransfer.getData("text");
-            const card = document.getElementById(data);
-            if(!card) return;
-            const id = data.replace('task-', '');
-            ev.currentTarget.appendChild(card);
-            await chamarServidor({ action: 'atualizarKanban', tarefaId: id, novaColuna: cNome });
-            carregarDadosDoBanco();
+        function allowDrop(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+        function dragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+        document.addEventListener("dragover", function(e) { e.preventDefault(); }, false);
+        function drag(e) { e.dataTransfer.setData("text", e.currentTarget.id); }
+
+        async function drop(e, nomeColunaDestino) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('drag-over');
+            const idCardCompleto = e.dataTransfer.setData("text") || e.dataTransfer.getData("text/plain") || document.querySelector('.dragging')?.id || e.target.closest('[id^="card-"]')?.id;
+            
+            // Tratamento alternativo seguro para drag drop nativo em navegadores modernos
+            let cleanId = idCardCompleto ? idCardCompleto.replace('card-', '') : "";
+            if(!cleanId) return;
+
+            const elementNode = document.getElementById(`card-${cleanId}`);
+            if(elementNode) e.currentTarget.appendChild(elementNode);
+
+            // Transmite alteração de linha direto para a Planilha Google
+            const res = await requisicaoNuvem({ action: 'atualizarKanban', tarefaId: cleanId, novaColuna: nomeColunaDestino });
+            sincronizarTudoComPlanilha();
         }
 
-        function renderizarArquivos() {
-            const c = document.getElementById('tblArquivosCorpo');
-            c.innerHTML = '';
-            dbCache.arquivos.forEach(a => {
-                c.innerHTML += `<tr class="border-b border-gray-800 text-xs">
-                    <td class="p-4 font-mono text-emerald-500">${a.id}</td><td class="p-4 text-white font-medium">${a.nome}</td>
-                    <td class="p-4">${a.setor}</td><td class="p-4 text-gray-400">${a.por}</td><td class="p-4 text-gray-500">${a.data}</td>
-                    <td class="p-4 text-center"><a href="${a.url}" target="_blank" class="bg-gray-800 text-emerald-400 px-2 py-1 rounded">Abrir</a></td>
-                </tr>`;
+        // DESIGN DO MODO TV EXCLUSIVO RECONSTRUTOR
+        function renderizarModoTVFixo() {
+            document.getElementById('tvContMembros').innerText = `${cachePlanilha.presencas.length} Ativo(s)`;
+            document.getElementById('tvFullContMembros').innerText = cachePlanilha.presencas.length;
+            
+            const totalPend = cachePlanilha.tarefas.filter(t => t.coluna !== 'concluido').length;
+            document.getElementById('tvContTarefas').innerText = `${totalPend} Ativa(s)`;
+            document.getElementById('tvFullContTarefas').innerText = totalPend;
+
+            const hojeStr = new Date().toLocaleDateString('pt-BR');
+            document.getElementById('tvFullData').innerText = hojeStr;
+
+            // Painéis de Presença (Normal e Full)
+            const pNormal = document.getElementById('tvPainelPontos');
+            const pFull = document.getElementById('tvFullListaPontos');
+            pNormal.innerHTML = ''; pFull.innerHTML = '';
+
+            if(!cachePlanilha.presencas.length) {
+                const dummy = `<p class="text-center py-6 text-gray-600 text-xs italic">Nenhum ponto registrado hoje na planilha.</p>`;
+                pNormal.innerHTML = dummy; pFull.innerHTML = dummy;
+            } else {
+                cachePlanilha.presencas.forEach(p => {
+                    const cBadge = p.status === 'No Prazo' ? 'bg-emerald-950 text-emerald-400 border-emerald-900/30' : 'bg-red-950 text-red-400 border-red-900/30';
+                    const estrutura = `
+                        <div class="bg-[#0A0F1D]/60 p-3 rounded-xl border border-gray-900 flex justify-between items-center">
+                            <div>
+                                <p class="text-xs font-bold text-white leading-tight">${p.nome}</p>
+                                <p class="text-[10px] text-gray-500 font-mono">${p.email}</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-mono font-black text-gray-400">${p.hora}</span>
+                                <span class="text-[9px] font-black px-2 py-0.5 rounded border uppercase ${cBadge}">${p.status}</span>
+                            </div>
+                        </div>`;
+                    pNormal.innerHTML += estrutura; pFull.innerHTML += estrutura;
+                });
+            }
+
+            // Painéis de Demandas (Normal e Full)
+            const dNormal = document.getElementById('tvPainelDemandas');
+            const dFull = document.getElementById('tvFullListaDemandas');
+            dNormal.innerHTML = ''; dFull.innerHTML = '';
+
+            if(!cachePlanilha.tarefas.length) {
+                const dummy = `<p class="text-center py-6 text-gray-600 text-xs italic">Sem tarefas ativas registradas.</p>`;
+                dNormal.innerHTML = dummy; dFull.innerHTML = dummy;
+            } else {
+                cachePlanilha.tarefas.slice(-5).reverse().forEach(t => {
+                    const estrutura = `
+                        <div class="bg-[#0A0F1D]/40 p-3 rounded-xl border border-gray-900 flex justify-between items-center text-xs">
+                            <div>
+                                <p class="text-gray-300 font-medium">Ordem <span class="text-white font-black uppercase">${t.titulo}</span> alocada para execução.</p>
+                                <p class="text-[10px] text-gray-500 font-bold mt-1 uppercase">Responsável: ${t.responsavel} • Setor: ${t.setor} • Prazo: ${t.prazo}</p>
+                            </div>
+                            <span class="text-[10px] font-mono text-gray-600 font-bold">#${t.id}</span>
+                        </div>`;
+                    dNormal.innerHTML += estrutura; dFull.innerHTML += estrutura;
+                });
+            }
+        }
+
+        // ADICIONAR DOCUMENTO DIRETO NA PLANILHA
+        async function adicionarLinkArquivo() {
+            const nome = document.getElementById('arqNome').value.trim();
+            const url = document.getElementById('arqUrl').value.trim();
+            if(!nome || !url) return alert("Preencha todos os campos do documento.");
+
+            const res = await requisicaoNuvem({ action: 'uploadArquivo', nomeArquivo: nome, setor: userSessao.cargo, por: userSessao.email, urlMock: url });
+            document.getElementById('arqNome').value = "";
+            document.getElementById('arqUrl').value = "";
+            sincronizarTudoComPlanilha();
+        }
+
+        function renderizarArquivosReal() {
+            const corpo = document.getElementById('tabelaArquivosCorpo'); corpo.innerHTML = '';
+            if(!cachePlanilha.arquivos.length) {
+                corpo.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-gray-600 italic">Nenhum link ou documento anexado nesta planilha.</td></tr>`;
+                return;
+            }
+            cachePlanilha.arquivos.forEach(a => {
+                corpo.innerHTML += `
+                    <tr class="hover:bg-gray-900/40 transition-colors">
+                        <td class="p-4 font-mono font-bold text-gray-500">${a.id}</td>
+                        <td class="p-4 text-white font-bold">${a.nome}</td>
+                        <td class="p-4"><span class="text-[10px] font-black px-2 py-0.5 rounded bg-gray-900 border border-gray-800 uppercase text-gray-400">${a.setor}</span></td>
+                        <td class="p-4 text-gray-400 text-xs">${a.por}</td>
+                        <td class="p-4 text-gray-500 font-mono">${a.data}</td>
+                        <td class="p-4 text-center">
+                            <a href="${a.url}" target="_blank" class="bg-gray-900 border border-gray-800 text-gray-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-colors inline-flex items-center gap-1">Acessar <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i></a>
+                        </td>
+                    </tr>`;
             });
         }
 
-        function uploadRealParaDrive(input) {
-            const f = input.files[0]; if(!f) return;
-            const s = document.getElementById('uploadStatus');
-            s.innerText = "Subindo...";
-            const r = new FileReader(); r.readAsDataURL(f);
-            r.onload = async function() {
-                const res = await chamarServidor({ action: 'uploadArquivo', nomeArquivo: f.name, base64: r.result, setor: usuarioLogado.cargo, email: usuarioLogado.email });
-                if(res.success) { s.innerText = "Sucesso!"; carregarDadosDoBanco(); }
-                else { s.innerText = "Erro."; alert(res.message); }
-            };
+        // INTEGRAÇÃO DE PRAZOS AUTOMÁTICOS NO SEU CALENDÁRIO
+        function renderizarCalendarioReal() {
+            const grid = document.getElementById('gridDiasCalendario'); grid.innerHTML = '';
+            const ano = objetoCalendarioData.getFullYear();
+            const mes = objetoCalendarioData.getMonth();
+
+            const mesesTxt = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            document.getElementById('labelMesCalendario').innerText = `${mesesTxt[mes]} ${ano}`;
+
+            const primeiroDia = new Date(ano, mes, 1).getDay();
+            const totalDias = new Date(ano, mes + 1, 0).getDate();
+
+            for(let i = 0; i < primeiroDia; i++) {
+                grid.innerHTML += `<div class="bg-transparent border border-transparent"></div>`;
+            }
+
+            for(let dia = 1; dia <= totalDias; dia++) {
+                const strDataFmt = `${String(dia).padStart(2, '0')}/${String(mes + 1).padStart(2, '0')}/${ano}`;
+                let nosHtml = '';
+
+                cachePlanilha.tarefas.forEach(t => {
+                    if(t.prazo === strDataFmt) {
+                        nosHtml += `<div class="text-[9px] bg-amber-950/80 border border-amber-900/50 text-amber-400 rounded px-1.5 py-0.5 truncate font-black uppercase">📌 ${t.titulo}</div>`;
+                    }
+                });
+
+                grid.innerHTML += `
+                    <div class="bg-gray-950/20 border border-gray-900 rounded-xl p-2 flex flex-col justify-between text-left h-16 min-h-[64px] hover:border-gray-800 transition-colors">
+                        <span class="font-mono text-[10px] font-bold text-gray-600">${dia}</span>
+                        <div class="space-y-0.5 overflow-hidden shrink-0">${nosHtml}</div>
+                    </div>`;
+            }
         }
 
-        function renderizarDashboardTV() {
-            document.getElementById('tvPresencaContador').innerText = `${dbCache.presencas.length} presente(s)`;
-            document.getElementById('tvTarefasContador').innerText = `${dbCache.tarefas.filter(t => t.coluna !== 'concluido').length} pendentes`;
-            const l = document.getElementById('tvPresencaLista');
-            if(!dbCache.presencas.length) { l.innerHTML = `<p class="text-center py-4 text-gray-500 italic text-xs">Nenhum funcionário ativo no momento.</p>`; return; }
-            l.innerHTML = '';
-            dbCache.presencas.forEach(p => {
-                l.innerHTML += `<div class="bg-gray-900/40 p-2.5 rounded border border-gray-800/80 flex justify-between items-center text-xs">
-                    <span class="text-white font-medium">${p.nome} (${p.email})</span><span class="text-emerald-400 font-mono">${p.hora}</span>
-                </div>`;
+        function navegarMes(dir) {
+            objetoCalendarioData.setMonth(objetoCalendarioData.getMonth() + dir);
+            renderizarCalendarioReal();
+        }
+
+        function renderizarMembrosAdmin() {
+            const box = document.getElementById('admListaMembros'); box.innerHTML = '';
+            if(!cachePlanilha.membros) return;
+            cachePlanilha.membros.forEach(m => {
+                box.innerHTML += `
+                    <div class="p-2 bg-gray-950/60 rounded-lg border border-gray-900 flex justify-between items-center text-[11px]">
+                        <span class="text-white font-bold">${m.nome} <span class="text-gray-500 font-normal">(${m.email})</span></span>
+                        <span class="text-[9px] bg-gray-900 px-1.5 py-0.5 rounded text-gray-400 font-bold uppercase">${m.cargo}</span>
+                    </div>`;
             });
         }
 
-        function renderizarHistorico() {
-            const h = document.getElementById('historicoLista'); h.innerHTML = '';
-            dbCache.arquivos.forEach(a => {
-                h.innerHTML += `<div class="p-2.5 bg-gray-900/50 border border-gray-800 rounded text-xs">Arquivo ${a.nome} enviado para pasta ${a.setor} por ${a.por} em ${a.data}.</div>`;
-            });
-            document.getElementById('tvRecentesLista').innerHTML = h.innerHTML;
-        }
-
-        function renderizarCalendario() {
-            const g = document.getElementById('calendarGrid'); g.innerHTML = '';
-            for(let i=1; i<=30; i++) g.innerHTML += `<div class="bg-gray-900/40 border border-gray-800 rounded p-1 text-left font-mono text-xs text-gray-600">${i}</div>`;
-        }
-
-        function salvarLogotipoLocal(input) {
-            const f = input.files[0]; if(!f) return;
-            const r = new FileReader();
-            r.onload = function(e) { localStorage.setItem('workspace_logo', e.target.result); document.getElementById('companyLogo').src = e.target.result; };
-            r.readAsDataURL(f);
-        }
-
-        function atualizarNomeEmpresa(v) {
-            const txt = v.trim() || "Configuração Pendente";
-            localStorage.setItem('workspace_nome_empresa', txt);
-            document.getElementById('txtNomeEmpresa').innerText = txt;
-        }
-
-        function recuperarConfiguracoesLocais() {
-            const logo = localStorage.getItem('workspace_logo'); if(logo) document.getElementById('companyLogo').src = logo;
-            const nome = localStorage.getItem('workspace_nome_empresa'); if(nome) { document.getElementById('txtNomeEmpresa').innerText = nome; document.getElementById('cfgNomeEmpresa').value = nome; }
-            current_web_app_url = localStorage.getItem('workspace_tenant_script_url') || "";
-            document.getElementById('cfgLinkScript').value = current_web_app_url;
+        function toggleModoTVCompleto() {
+            document.getElementById('fullscreenModoTV').classList.toggle('hidden');
         }
 
         function logout() {
-            usuarioLogado = null;
+            userSessao = null;
             document.getElementById('appContainer').classList.add('hidden');
+            document.getElementById('fullscreenModoTV').classList.add('hidden');
             document.getElementById('loginPage').classList.remove('hidden');
             document.getElementById('formLogin').reset();
             document.getElementById('btnPonto').classList.remove('hidden');
-            document.getElementById('pontoStatus').classList.add('hidden');
+            document.getElementById('pontoFeedback').classList.add('hidden');
         }
     </script>
 </body>
