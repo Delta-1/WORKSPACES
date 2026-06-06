@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workspace - Painel Operacional</title>
+    <title>Workspace Multi-Empresas</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -17,16 +17,11 @@
 </head>
 <body>
 
-    <script>
-        // Insira a URL do seu App da Web gerada no Passo 3 aqui dentro das aspas
-        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbypDuGJtGUlIq1MpK0nDVrn8CqCjrlrSrhBTVvo3ED0VK3YqLF7Yu7C3t-uGrs_y4wM/exec";
-    </script>
-
     <div id="loginPage" class="fixed inset-0 bg-[#0B0F17] z-50 flex items-center justify-center">
         <div class="bg-[#111827] border border-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md">
             <div class="text-center mb-8">
                 <div class="inline-flex items-center justify-center w-14 h-14 bg-emerald-950 border border-emerald-500 rounded-lg text-emerald-400 text-2xl mb-3">
-                    <i class="fa-solid fa-briefcase"></i>
+                    <i class="fa-solid fa-layer-group"></i>
                 </div>
                 <h1 class="text-2xl font-bold tracking-tight text-white">Workspace</h1>
                 <p class="text-gray-400 text-sm mt-1">Insira suas credenciais corporativas</p>
@@ -36,14 +31,14 @@
 
             <form id="formLogin" onsubmit="handleLogin(event)">
                 <div class="mb-4">
-                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">E-mail Corporativo</label>
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">E-mail de Acesso</label>
                     <input type="email" id="loginEmail" required class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors" placeholder="seu.nome@empresa.com">
                 </div>
                 <div class="mb-6">
                     <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Senha de Acesso</label>
                     <input type="password" id="loginSenha" required class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors" placeholder="••••••••">
                 </div>
-                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer">
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer">
                     <i class="fa-solid fa-right-to-bracket"></i> Entrar no Painel
                 </button>
             </form>
@@ -58,7 +53,7 @@
                     <img id="companyLogo" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2310B981'><path d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'/></svg>" class="w-10 h-10 object-cover rounded-lg border border-gray-700 bg-gray-900" alt="Logo">
                     <div>
                         <h2 class="font-bold text-white tracking-wide text-lg leading-tight">Workspace</h2>
-                        <p id="txtNomeEmpresa" class="text-xs text-gray-400 font-medium truncate max-w-[140px]">Minha Empresa</p>
+                        <p id="txtNomeEmpresa" class="text-xs text-gray-400 font-medium truncate max-w-[140px]">Configuração Pendente</p>
                     </div>
                 </div>
 
@@ -86,27 +81,24 @@
 
             <div class="p-4 border-t border-gray-800 flex items-center justify-between">
                 <div class="flex items-center gap-2.5 overflow-hidden">
-                    <div class="w-9 h-9 rounded-full bg-emerald-700 flex items-center justify-center font-bold text-white text-sm shrink-0 border border-emerald-500" id="userAvatar">U</div>
+                    <div class="w-9 h-9 rounded-full bg-emerald-700 flex items-center justify-center font-bold text-white text-sm shrink-0 border border-emerald-500" id="userAvatar">M</div>
                     <div class="overflow-hidden">
-                        <p class="text-sm font-medium text-white truncate leading-tight" id="lblUserNome">Funcionário</p>
-                        <p class="text-xs text-gray-400 truncate" id="lblUserCargo">Setor</p>
+                        <p class="text-sm font-medium text-white truncate leading-tight" id="lblUserNome">Master Account</p>
+                        <p class="text-xs text-gray-400 truncate" id="lblUserCargo">Administrador</p>
                     </div>
                 </div>
-                <button onclick="logout()" class="text-gray-500 hover:text-red-400 p-1.5 rounded transition-colors cursor-pointer" title="Desconectar">
+                <button onclick="logout()" class="text-gray-500 hover:text-red-400 p-1.5 rounded transition-colors cursor-pointer">
                     <i class="fa-solid fa-power-off text-sm"></i>
                 </button>
             </div>
         </aside>
 
         <main class="flex-1 flex flex-col overflow-hidden bg-[#0B0F17]">
-            
             <header class="h-16 border-b border-gray-800 px-6 flex items-center justify-between bg-[#111827]/30 shrink-0">
-                <div class="flex items-center gap-4">
-                    <h2 id="pageTitle" class="text-lg font-bold text-white tracking-wide">Início (Modo TV)</h2>
-                </div>
+                <h2 id="pageTitle" class="text-lg font-bold text-white tracking-wide">Início (Modo TV)</h2>
                 
                 <div class="flex items-center gap-3">
-                    <button id="btnPonto" onclick="baterPonto()" class="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-medium text-xs px-4 py-2 rounded-lg transition-colors flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-950/50">
+                    <button id="btnPonto" onclick="baterPonto()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-2 rounded-lg transition-colors flex items-center gap-2 cursor-pointer">
                         <i class="fa-solid fa-fingerprint"></i> Bater Ponto Entrada
                     </button>
                     <div id="pontoStatus" class="hidden text-xs px-3 py-2 bg-emerald-950/40 border border-emerald-800 text-emerald-400 rounded-lg font-mono"></div>
@@ -126,14 +118,14 @@
                         </div>
                         <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl flex items-center justify-between">
                             <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tarefas Pendentes</p>
-                                <h3 id="tvTarefasContador" class="text-2xl font-black text-amber-400 mt-1">0 no Kanban</h3>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tarefas Ativas</p>
+                                <h3 id="tvTarefasContador" class="text-2xl font-black text-amber-400 mt-1">0 pendentes</h3>
                             </div>
                             <i class="fa-solid fa-list-check text-amber-500/20 text-4xl"></i>
                         </div>
                         <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl flex items-center justify-between">
                             <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Horário Atual</p>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Horário Coordenado</p>
                                 <h3 id="tvRelogio" class="text-2xl font-black text-blue-400 mt-1 font-mono">00:00:00</h3>
                             </div>
                             <i class="fa-solid fa-clock text-blue-500/20 text-4xl"></i>
@@ -142,56 +134,37 @@
 
                     <div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-hidden">
                         <div class="bg-[#111827] border border-gray-800 rounded-xl p-5 flex flex-col overflow-hidden">
-                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3 flex items-center gap-2">
-                                <i class="fa-solid fa-user-check text-emerald-400"></i> Quadro de Presença Diária
-                            </h4>
+                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3"><i class="fa-solid fa-user-check text-emerald-400 mr-2"></i>Presença do Dia</h4>
                             <div id="tvPresencaLista" class="flex-1 overflow-y-auto custom-scroll space-y-2 text-sm text-gray-400">
-                                <p class="text-center py-8 text-gray-500 italic">Nenhuma presença computada hoje até agora.</p>
+                                <p class="text-center py-8 text-gray-500 italic">Preencha o Link de Implantação nas Configurações para carregar a empresa.</p>
                             </div>
                         </div>
-
                         <div class="bg-[#111827] border border-gray-800 rounded-xl p-5 flex flex-col overflow-hidden">
-                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3 flex items-center gap-2">
-                                <i class="fa-solid fa-bullseye text-red-400"></i> Atividades Operacionais Recentes
-                            </h4>
-                            <div id="tvRecentesLista" class="flex-1 overflow-y-auto custom-scroll space-y-3 text-sm text-gray-400">
-                                <p class="text-center py-8 text-gray-500 italic">Aguardando atualizações da planilha...</p>
-                            </div>
+                            <h4 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-3 mb-3"><i class="fa-solid fa-bullseye text-red-400 mr-2"></i>Arquivos Recentes</h4>
+                            <div id="tvRecentesLista" class="flex-1 overflow-y-auto custom-scroll space-y-3 text-sm text-gray-400"></div>
                         </div>
                     </div>
                 </div>
 
                 <div id="tab-kanban" class="tab-content hidden h-full flex flex-col gap-4">
-                    <div class="flex items-center justify-between">
-                        <p class="text-sm text-gray-400">Arraste os cards para atualizar as fases operacionais em tempo real.</p>
-                    </div>
-                    
                     <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 overflow-hidden h-full">
                         <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5 mb-3">
-                                <span class="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-2">
-                                    <i class="fa-solid fa-circle text-gray-500 text-[8px]"></i> A Fazer
-                                </span>
+                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
+                                <span class="text-xs font-bold uppercase text-gray-400"><i class="fa-solid fa-circle text-gray-500 text-[8px] mr-1"></i> A Fazer</span>
                                 <span id="count-a_fazer" class="bg-gray-800 px-2 py-0.5 rounded text-xs font-bold text-gray-300">0</span>
                             </div>
                             <div id="col-a_fazer" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'a_fazer')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
                         </div>
-
                         <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5 mb-3">
-                                <span class="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-2">
-                                    <i class="fa-solid fa-circle text-blue-500 text-[8px]"></i> Em Execução
-                                </span>
+                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
+                                <span class="text-xs font-bold uppercase text-blue-400"><i class="fa-solid fa-circle text-blue-500 text-[8px] mr-1"></i> Em Execução</span>
                                 <span id="count-em_andamento" class="bg-blue-950 px-2 py-0.5 rounded text-xs font-bold text-blue-400">0</span>
                             </div>
                             <div id="col-em_andamento" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'em_andamento')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
                         </div>
-
                         <div class="bg-[#111827]/60 border border-gray-800 rounded-xl p-4 flex flex-col h-full overflow-hidden">
-                            <div class="flex items-center justify-between border-b border-gray-800 pb-2.5 mb-3">
-                                <span class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
-                                    <i class="fa-solid fa-circle text-emerald-500 text-[8px]"></i> Concluído
-                                </span>
+                            <div class="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
+                                <span class="text-xs font-bold uppercase text-emerald-400"><i class="fa-solid fa-circle text-emerald-500 text-[8px] mr-1"></i> Concluído</span>
                                 <span id="count-concluido" class="bg-emerald-950 px-2 py-0.5 rounded text-xs font-bold text-emerald-400">0</span>
                             </div>
                             <div id="col-concluido" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'concluido')" class="kanban-column flex-1 overflow-y-auto custom-scroll space-y-2"></div>
@@ -201,83 +174,57 @@
 
                 <div id="tab-arquivos" class="tab-content hidden h-full flex flex-col gap-4">
                     <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl flex items-center justify-between shrink-0">
-                        <div class="flex items-center gap-3">
-                            <label class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-2.5 rounded-lg transition-colors flex items-center gap-2 cursor-pointer shadow">
-                                <i class="fa-solid fa-cloud-arrow-up"></i> Upload Direto para o Drive
-                                <input type="file" id="fileUploader" class="hidden" onchange="uploadRealParaDrive(this)">
-                            </label>
-                            <span id="uploadStatus" class="text-xs font-medium text-gray-400"></span>
-                        </div>
-                        <span class="text-xs text-gray-500 font-mono">Destino Automático: Baseado no seu Cargo</span>
+                        <label class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-2.5 rounded-lg transition-colors flex items-center gap-2 cursor-pointer">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload para o Drive da Empresa
+                            <input type="file" id="fileUploader" class="hidden" onchange="uploadRealParaDrive(this)">
+                        </label>
+                        <span id="uploadStatus" class="text-xs font-medium text-gray-400"></span>
                     </div>
-
                     <div class="flex-1 bg-[#111827] border border-gray-800 rounded-xl overflow-hidden flex flex-col">
                         <table class="w-full text-left text-sm border-collapse">
                             <thead>
-                                <tr class="bg-gray-900/50 border-b border-gray-800 text-gray-400 font-medium text-xs uppercase tracking-wider select-none">
-                                    <th class="p-4">Identificador</th>
-                                    <th class="p-4">Nome do Arquivo</th>
-                                    <th class="p-4">Setor Alocado</th>
-                                    <th class="p-4">Enviado Por</th>
-                                    <th class="p-4">Data Envio</th>
-                                    <th class="p-4 text-center">Ações</th>
+                                <tr class="bg-gray-900/50 border-b border-gray-800 text-gray-400 text-xs uppercase font-medium">
+                                    <th class="p-4">ID</th><th class="p-4">Nome do Arquivo</th><th class="p-4">Setor</th><th class="p-4">Enviado Por</th><th class="p-4">Data</th><th class="p-4 text-center">Ações</th>
                                 </tr>
                             </thead>
-                            <tbody id="tblArquivosCorpo" class="divide-y divide-gray-800 text-gray-300">
-                                <tr>
-                                    <td colspan="6" class="p-8 text-center text-gray-500 italic">Nenhum documento listado na nuvem.</td>
-                                </tr>
-                            </tbody>
+                            <tbody id="tblArquivosCorpo" class="divide-y divide-gray-800 text-gray-300"></tbody>
                         </table>
                     </div>
                 </div>
 
                 <div id="tab-historico" class="tab-content hidden h-full flex flex-col">
-                    <div class="flex-1 bg-[#111827] border border-gray-800 rounded-xl overflow-hidden flex flex-col">
-                        <div class="p-4 bg-gray-900/30 border-b border-gray-800 flex items-center justify-between">
-                            <h3 class="text-sm font-bold text-white uppercase tracking-wider">Histórico Geral de Entregas</h3>
-                        </div>
-                        <div id="historicoLista" class="flex-1 p-4 overflow-y-auto custom-scroll space-y-3">
-                            <p class="text-gray-500 italic text-sm">Nenhum evento registrado no histórico.</p>
-                        </div>
-                    </div>
+                    <div class="flex-1 bg-[#111827] border border-gray-800 rounded-xl overflow-hidden flex flex-col p-4 space-y-3" id="historicoLista"></div>
                 </div>
 
                 <div id="tab-calendario" class="tab-content hidden h-full flex flex-col items-center justify-center">
                     <div class="bg-[#111827] border border-gray-800 rounded-xl p-6 w-full max-w-4xl text-center">
-                        <div class="flex items-center justify-between border-b border-gray-800 pb-4 mb-6">
-                            <h3 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-calendar-check text-emerald-400"></i> Calendário Institucional Integrado</h3>
-                            <span class="text-xs bg-gray-800 text-gray-400 font-mono px-2.5 py-1 rounded">Junho 2026</span>
-                        </div>
-                        <div class="grid grid-cols-7 gap-2 font-semibold text-xs text-gray-400 uppercase tracking-wider mb-2">
+                        <div class="grid grid-cols-7 gap-2 font-semibold text-xs text-gray-400 uppercase mb-2">
                             <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div>
                         </div>
-                        <div class="grid grid-cols-7 gap-2 h-72 text-sm" id="calendarGrid">
-                            </div>
+                        <div class="grid grid-cols-7 gap-2 h-72 text-sm" id="calendarGrid"></div>
                     </div>
                 </div>
 
                 <div id="tab-config" class="tab-content hidden h-full flex flex-col gap-6">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl space-y-4">
-                            <h3 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-paint-roller text-amber-400 mr-2"></i> Identidade Visual do Painel</h3>
-                            
+                            <h3 class="text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-plug mr-2"></i> Integração da Empresa Cliente</h3>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Logotipo Corporativo (.png / .jpg)</label>
-                                <input type="file" accept="image/*" onchange="salvarLogotipoLocal(this)" class="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer">
-                            </div>
-
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Nome Comercial da Empresa</label>
-                                <input type="text" id="cfgNomeEmpresa" oninput="atualizarNomeEmpresa(this.value)" class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-emerald-500" placeholder="Ex: Alfa Marketing">
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Link de Implantação do Apps Script (URL Web App)</label>
+                                <input type="text" id="cfgLinkScript" onchange="salvarLinkScript(this.value)" class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:border-amber-500 focus:outline-none" placeholder="https://script.google.com/macros/s/.../exec">
+                                <p class="text-[11px] text-gray-500 mt-2">Cole aqui o link gerado após fazer a "Nova Implantação" como App da Web na conta Google do cliente.</p>
                             </div>
                         </div>
 
-                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl space-y-3">
-                            <h3 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-circle-nodes text-emerald-400 mr-2"></i> Status do Servidor de Nuvem</h3>
-                            <p class="text-xs text-gray-400 leading-relaxed">Este painel está pronto para ler e escrever dados diretamente no ecossistema Google Drive e Planilhas por meio do link de implantação.</p>
-                            <div class="p-3 bg-gray-900 rounded-lg border border-gray-800 text-xs font-mono text-gray-400 break-all">
-                                <span class="font-bold text-white">Endpoint Ativo:</span> <span id="lblEndpoint">Configurado</span>
+                        <div class="bg-[#111827] border border-gray-800 p-5 rounded-xl space-y-4">
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider border-b border-gray-800 pb-2"><i class="fa-solid fa-image mr-2"></i> Customização de Marca</h3>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Nome Comercial da Empresa</label>
+                                <input type="text" id="cfgNomeEmpresa" oninput="atualizarNomeEmpresa(this.value)" class="w-full bg-[#1F2937] border border-gray-700 rounded-lg px-4 py-2 text-white text-sm focus:border-emerald-500 focus:outline-none" placeholder="Ex: Alfa Transportes">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Logotipo Corporativo</label>
+                                <input type="file" accept="image/*" onchange="salvarLogotipoLocal(this)" class="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer">
                             </div>
                         </div>
                     </div>
@@ -288,98 +235,112 @@
     </div>
 
     <script>
+        // CONTA MASTER MAJORITÁRIA FIXA (Salva seu acesso supremo de desenvolvedor local)
+        const MASTER_EMAIL = "master@workspace.com";
+        const MASTER_PASS = "adminmaster";
+
         let usuarioLogado = null;
         let dbCache = { tarefas: [], presencas: [], arquivos: [] };
+        let current_web_app_url = "";
 
-        // Inicialização do Relógio em Tempo Real para TV
+        // Inicialização temporal
         setInterval(() => {
-            const txt = new Date().toLocaleTimeString('pt-BR');
             const el = document.getElementById('tvRelogio');
-            if(el) el.innerText = txt;
+            if(el) el.innerText = new Date().toLocaleTimeString('pt-BR');
         }, 1000);
 
-        // Troca de Abas Fluida
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(el => {
                 el.classList.remove('bg-emerald-950/60', 'text-emerald-400', 'border', 'border-emerald-800/50');
                 el.classList.add('text-gray-400', 'hover:bg-gray-800', 'hover:text-white');
             });
-
             document.getElementById(`tab-${tabId}`).classList.remove('hidden');
-            const currentBtn = document.getElementById(`btn-${tabId}`);
-            currentBtn.classList.remove('text-gray-400', 'hover:bg-gray-800');
-            currentBtn.classList.add('bg-emerald-950/60', 'text-emerald-400', 'border', 'border-emerald-800/50');
-
-            // Atualiza o título do header
-            const titles = { inicio: 'Início (Modo TV)', kanban: 'Quadro Kanban', arquivos: 'Arquivos Nuvem', historico: 'Histórico Atividades', calendario: 'Calendário', config: 'Configurações ADM' };
-            document.getElementById('pageTitle').innerText = titles[tabId];
+            document.getElementById(`btn-${tabId}`).classList.add('bg-emerald-950/60', 'text-emerald-400', 'border', 'border-emerald-800/50');
         }
 
-        // Requisição Genérica para o Google Apps Script (Fetch API)
+        // Requisição Dinâmica usando o link salvo na configuração da máquina
         async function chamarServidor(dados) {
-            if (WEB_APP_URL === "SUA_URL_DO_APPS_SCRIPT_AQUI") {
-                console.warn("API Google não configurada. Operando em Modo Demonstração Local.");
-                return mockLocalResponse(dados);
+            if (!current_web_app_url) {
+                console.warn("Sem link de integração ativo.");
+                return { success: false, message: "Link da planilha não configurado neste terminal." };
             }
-
             try {
-                const response = await fetch(WEB_APP_URL, {
+                // Contorna o bloqueio de arquivo local forçando o modo 'no-cors' ou tratamento padrão se hospedado
+                const response = await fetch(current_web_app_url, {
                     method: 'POST',
-                    mode: 'cors',
                     body: JSON.stringify(dados)
                 });
                 return await response.json();
             } catch (error) {
-                console.error("Falha na comunicação com o Google Script:", error);
-                return { success: false, message: "Erro de conexão com o servidor de nuvem." };
+                console.error("Erro na requisição SaaS:", error);
+                return { success: false, message: "Erro de comunicação. Verifique as configurações de implantação do Google." };
             }
         }
 
-        // LOGIN OPERACIONAL
+        // SISTEMA DE LOGIN DE DUPLO FLUXO
         async function handleLogin(event) {
             event.preventDefault();
             const email = document.getElementById('loginEmail').value.trim();
             const senha = document.getElementById('loginSenha').value;
             const errEl = document.getElementById('loginError');
-
             errEl.classList.add('hidden');
 
-            const res = await chamarServidor({ action: 'login', email: email, senha: senha });
+            // Fluxo A: Autenticação Master Direta (Local/Independente)
+            if (email === MASTER_EMAIL && senha === MASTER_PASS) {
+                usuarioLogado = { nome: "Desenvolvedor Master", email: MASTER_EMAIL, cargo: "Administrador" };
+                liberarPainel();
+                return;
+            }
 
+            // Fluxo B: Se não for master, depende obrigatoriamente do link do Script configurado
+            if(!current_web_app_url) {
+                errEl.innerText = "Este terminal ainda não possui uma planilha vinculada. Faça login com a conta Master para configurar.";
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            // Consulta o Google Sheets da empresa através da API
+            const res = await chamarServidor({ action: 'login', email: email, senha: senha });
             if(res.success) {
                 usuarioLogado = res.user;
-                document.getElementById('loginPage').classList.add('hidden');
-                document.getElementById('appContainer').classList.remove('hidden');
-                
-                // Aplicar Dados na Interface
-                document.getElementById('lblUserNome').innerText = usuarioLogado.nome;
-                document.getElementById('lblUserCargo').innerText = usuarioLogado.cargo;
-                document.getElementById('userAvatar').innerText = usuarioLogado.nome.charAt(0).toUpperCase();
-
-                // Regra de Proteção ADM
-                if(usuarioLogado.cargo.toLowerCase() === 'administrador') {
-                    document.getElementById('btn-config').classList.remove('hidden');
-                }
-
-                // Carregar banco inicial
-                carregarDadosDoBanco();
-                renderizarCalendario();
-                recuperarConfiguracoesLocais();
+                liberarPainel();
             } else {
                 errEl.innerText = res.message;
                 errEl.classList.remove('hidden');
             }
         }
 
-        // BUSCAR ATUALIZAÇÕES DO GOOGLE SHEETS
+        function liberarPainel() {
+            document.getElementById('loginPage').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            document.getElementById('lblUserNome').innerText = usuarioLogado.nome;
+            document.getElementById('lblUserCargo').innerText = usuarioLogado.cargo;
+            document.getElementById('userAvatar').innerText = usuarioLogado.nome.charAt(0).toUpperCase();
+
+            if(usuarioLogado.cargo.toLowerCase() === 'administrador') {
+                document.getElementById('btn-config').classList.remove('hidden');
+            }
+
+            recuperarConfiguracoesLocais();
+            if(current_web_app_url) {
+                carregarDadosDoBanco();
+            }
+            renderizarCalendario();
+        }
+
+        function salvarLinkScript(valor) {
+            current_web_app_url = valor.trim();
+            localStorage.setItem('workspace_tenant_script_url', current_web_app_url);
+            if(current_web_app_url) carregarDadosDoBanco();
+        }
+
         async function carregarDadosDoBanco() {
             const res = await chamarServidor({ action: 'buscarDados' });
             if(res.success) {
                 dbCache.tarefas = res.tarefas;
                 dbCache.presencas = res.presencas;
                 dbCache.arquivos = res.arquivos;
-
                 renderizarKanban();
                 renderizarDashboardTV();
                 renderizarArquivos();
@@ -387,256 +348,124 @@
             }
         }
 
-        // BATER PONTO (PRESENÇA DIÁRIA)
         async function baterPonto() {
             const res = await chamarServidor({ action: 'baterPonto', email: usuarioLogado.email, nome: usuarioLogado.nome });
-            const pBtn = document.getElementById('btnPonto');
-            const pStatus = document.getElementById('pontoStatus');
-
             if(res.success) {
-                pBtn.classList.add('hidden');
-                pStatus.innerHTML = `<i class="fa-solid fa-circle-check"></i> PRESENÇA OK (${res.hora}) - ${res.status}`;
+                document.getElementById('btnPonto').classList.add('hidden');
+                const pStatus = document.getElementById('pontoStatus');
+                pStatus.innerHTML = `PONTO OK (${res.hora})`;
                 pStatus.classList.remove('hidden');
-                carregarDadosDoBanco(); // Atualiza a TV instantaneamente
-            } else {
-                alert(res.message);
-            }
+                carregarDadosDoBanco();
+            } else { alert(res.message); }
         }
 
-        // RENDERIZAR QUADRO KANBAN
         function renderizarKanban() {
-            const colunas = ['a_fazer', 'em_andamento', 'concluido'];
-            colunas.forEach(col => {
-                document.getElementById(`col-${col}`).innerHTML = '';
-                document.getElementById(`count-${col}`).innerText = '0';
-            });
+            const cols = ['a_fazer', 'em_andamento', 'concluido'];
+            cols.forEach(c => document.getElementById(`col-${c}`).innerHTML = '');
+            let counts = { a_fazer: 0, em_andamento: 0, concluido: 0 };
 
-            let contadores = { a_fazer: 0, em_andamento: 0, concluido: 0 };
-
-            dbCache.tarefas.forEach(task => {
-                // Filtro visual básico: funcionários comuns só alteram o que pertence ao seu setor ou geral
+            dbCache.tarefas.forEach(t => {
                 const card = document.createElement('div');
-                card.className = "bg-[#1F2937] border border-gray-700 p-3.5 rounded-lg shadow cursor-grab active:cursor-grabbing hover:border-gray-500 transition-all select-none";
-                card.id = `task-${task.id}`;
+                card.className = "bg-[#1F2937] border border-gray-700 p-3 rounded-lg shadow cursor-grab active:cursor-grabbing";
+                card.id = `task-${t.id}`;
                 card.draggable = true;
                 card.setAttribute('ondragstart', 'drag(event)');
-                
                 card.innerHTML = `
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-900 text-gray-400 uppercase tracking-wider">${task.setor}</span>
-                        <span class="text-[10px] text-gray-500 font-mono">#${task.id}</span>
-                    </div>
-                    <h5 class="text-sm font-bold text-white mb-1">${task.titulo}</h5>
-                    <p class="text-xs text-gray-400 line-clamp-2 mb-2">${task.descricao}</p>
-                    <div class="text-[11px] text-gray-400 flex items-center gap-1.5 pt-2 border-t border-gray-800">
-                        <i class="fa-regular fa-user text-emerald-400"></i> ${task.responsavel}
-                    </div>
+                    <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-900 text-gray-400 uppercase">${t.setor}</span>
+                    <h5 class="text-sm font-bold text-white mt-1">${t.titulo}</h5>
+                    <p class="text-xs text-gray-400 mt-0.5">${t.descricao}</p>
                 `;
-
-                if(contadores[task.coluna] !== undefined) {
-                    document.getElementById(`col-${task.coluna}`).appendChild(card);
-                    contadores[task.coluna]++;
+                if(counts[t.coluna] !== undefined) {
+                    document.getElementById(`col-${t.coluna}`).appendChild(card);
+                    counts[t.coluna]++;
                 }
             });
-
-            colunas.forEach(col => {
-                document.getElementById(`count-${col}`).innerText = contadores[col];
-            });
+            cols.forEach(c => document.getElementById(`count-${c}`).innerText = counts[c]);
         }
 
-        // REGRAS DRAG AND DROP NATIVO
         function allowDrop(ev) { ev.preventDefault(); ev.currentTarget.classList.add('drag-over'); }
         function dragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
         function drag(ev) { ev.dataTransfer.setData("text", ev.currentTarget.id); }
-        
         async function drop(ev, cNome) {
             ev.preventDefault();
             ev.currentTarget.classList.remove('drag-over');
             const data = ev.dataTransfer.getData("text");
-            const elCard = document.getElementById(data);
-            if(!elCard) return;
-
-            const idTarefaReal = data.replace('task-', '');
-            ev.currentTarget.appendChild(elCard);
-
-            // Envia alteração em background para o Google Sheets
-            const res = await chamarServidor({ action: 'atualizarKanban', tarefaId: idTarefaReal, novaColuna: cNome });
-            if(!res.success) {
-                alert("Erro ao salvar movimentação na planilha.");
-                carregarDadosDoBanco(); // Desfaz visualmente recarregando o banco
-            } else {
-                // Atualiza o cache local
-                let t = dbCache.tarefas.find(x => x.id.toString() === idTarefaReal.toString());
-                if(t) t.coluna = cNome;
-                renderizarKanban();
-                renderizarDashboardTV();
-            }
+            const card = document.getElementById(data);
+            if(!card) return;
+            const id = data.replace('task-', '');
+            ev.currentTarget.appendChild(card);
+            await chamarServidor({ action: 'atualizarKanban', tarefaId: id, novaColuna: cNome });
+            carregarDadosDoBanco();
         }
 
-        // RENDERIZAR EXPLORADOR DE ARQUIVOS
         function renderizarArquivos() {
-            const corpo = document.getElementById('tblArquivosCorpo');
-            if(!dbCache.arquivos.length) {
-                corpo.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-gray-500 italic">Nenhum documento listado na nuvem.</td></tr>`;
-                return;
-            }
-            corpo.innerHTML = '';
-            dbCache.arquivos.forEach(arq => {
-                corpo.innerHTML += `
-                    <tr class="hover:bg-gray-800/30 transition-colors border-b border-gray-800/70">
-                        <td class="p-4 font-mono text-xs text-emerald-500 font-semibold">${arq.id}</td>
-                        <td class="p-4 font-medium text-white">${arq.nome}</td>
-                        <td class="p-4"><span class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-medium">${arq.setor}</span></td>
-                        <td class="p-4 text-xs text-gray-400">${arq.por}</td>
-                        <td class="p-4 text-xs text-gray-500">${arq.data}</td>
-                        <td class="p-4 text-center">
-                            <a href="${arq.url}" target="_blank" class="bg-gray-800 hover:bg-gray-700 text-emerald-400 text-xs px-3 py-1.5 rounded-md font-medium transition-colors inline-flex items-center gap-1">
-                                <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir no Drive
-                            </a>
-                        </td>
-                    </tr>
-                `;
+            const c = document.getElementById('tblArquivosCorpo');
+            c.innerHTML = '';
+            dbCache.arquivos.forEach(a => {
+                c.innerHTML += `<tr class="border-b border-gray-800 text-xs">
+                    <td class="p-4 font-mono text-emerald-500">${a.id}</td><td class="p-4 text-white font-medium">${a.nome}</td>
+                    <td class="p-4">${a.setor}</td><td class="p-4 text-gray-400">${a.por}</td><td class="p-4 text-gray-500">${a.data}</td>
+                    <td class="p-4 text-center"><a href="${a.url}" target="_blank" class="bg-gray-800 text-emerald-400 px-2 py-1 rounded">Abrir</a></td>
+                </tr>`;
             });
         }
 
-        // UPLOAD REAL CONVERTENDO PARA BASE64 E DISPARANDO PARA O GOOGLE DRIVE
         function uploadRealParaDrive(input) {
-            const file = input.files[0];
-            if(!file) return;
-
-            const statusEl = document.getElementById('uploadStatus');
-            statusEl.innerText = "Preparando arquivo e convertendo...";
-            statusEl.className = "text-xs font-medium text-amber-400";
-
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = async function () {
-                statusEl.innerText = "Enviando e registrando na nuvem do Google...";
-                
-                const res = await chamarServidor({
-                    action: 'uploadArquivo',
-                    nomeArquivo: file.name,
-                    base64: reader.result,
-                    setor: usuarioLogado.cargo, // Classificação automática baseada no cargo!
-                    email: usuarioLogado.email
-                });
-
-                if(res.success) {
-                    statusEl.innerText = "Sucesso! Arquivo alocado.";
-                    statusEl.className = "text-xs font-medium text-emerald-400";
-                    carregarDadosDoBanco(); // Recarrega listas
-                } else {
-                    statusEl.innerText = "Falha no upload.";
-                    statusEl.className = "text-xs font-medium text-red-400";
-                    alert(res.message);
-                }
+            const f = input.files[0]; if(!f) return;
+            const s = document.getElementById('uploadStatus');
+            s.innerText = "Subindo...";
+            const r = new FileReader(); r.readAsDataURL(f);
+            r.onload = async function() {
+                const res = await chamarServidor({ action: 'uploadArquivo', nomeArquivo: f.name, base64: r.result, setor: usuarioLogado.cargo, email: usuarioLogado.email });
+                if(res.success) { s.innerText = "Sucesso!"; carregarDadosDoBanco(); }
+                else { s.innerText = "Erro."; alert(res.message); }
             };
         }
 
-        // RENDERIZAR CENTRAL DE COMANDO DA TV
         function renderizarDashboardTV() {
             document.getElementById('tvPresencaContador').innerText = `${dbCache.presencas.length} presente(s)`;
-            
-            const pendentes = dbCache.tarefas.filter(t => t.coluna !== 'concluido').length;
-            document.getElementById('tvTarefasContador').innerText = `${pendentes} no Kanban`;
-
-            // Lista de presenças na TV
-            const pLista = document.getElementById('tvPresencaLista');
-            if(!dbCache.presencas.length) {
-                pLista.innerHTML = `<p class="text-center py-8 text-gray-500 italic">Nenhuma presença computada hoje até agora.</p>`;
-            } else {
-                pLista.innerHTML = '';
-                dbCache.presencas.forEach(p => {
-                    const badge = p.status === 'No Prazo' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' : 'bg-red-950 text-red-400 border border-red-900';
-                    pLista.innerHTML += `
-                        <div class="bg-[#1F2937]/50 p-3 rounded-lg border border-gray-800 flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                                <span class="font-medium text-white">${p.nome}</span>
-                                <span class="text-xs text-gray-500 font-mono">(${p.email})</span>
-                            </div>
-                            <div class="flex items-center gap-3">
-                                <span class="text-xs font-mono text-gray-300"><i class="fa-regular fa-clock"></i> ${p.hora}</span>
-                                <span class="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${badge}">${p.status}</span>
-                            </div>
-                        </div>
-                    `;
-                });
-            }
-        }
-
-        // HISTÓRICO E LINHA DE TEMPO
-        function renderizarHistorico() {
-            const hLista = document.getElementById('historicoLista');
-            if(!dbCache.arquivos.length) {
-                hLista.innerHTML = `<p class="text-gray-500 italic text-sm">Nenhum evento registrado no histórico.</p>`;
-                return;
-            }
-            hLista.innerHTML = '';
-            dbCache.arquivos.forEach(a => {
-                hLista.innerHTML += `
-                    <div class="p-3 bg-gray-900/40 border border-gray-800 rounded-lg flex items-center gap-3 text-xs">
-                        <div class="p-2 bg-emerald-950 rounded text-emerald-400"><i class="fa-solid fa-file-circle-check"></i></div>
-                        <div>
-                            <p class="text-gray-300 font-medium">O arquivo <span class="text-white font-bold">${a.nome}</span> foi catalogado com sucesso na pasta ${a.setor}.</p>
-                            <p class="text-gray-500 mt-0.5">Operador: ${a.por} • ${a.data}</p>
-                        </div>
-                    </div>
-                `;
+            document.getElementById('tvTarefasContador').innerText = `${dbCache.tarefas.filter(t => t.coluna !== 'concluido').length} pendentes`;
+            const l = document.getElementById('tvPresencaLista');
+            if(!dbCache.presencas.length) { l.innerHTML = `<p class="text-center py-4 text-gray-500 italic text-xs">Nenhum funcionário ativo no momento.</p>`; return; }
+            l.innerHTML = '';
+            dbCache.presencas.forEach(p => {
+                l.innerHTML += `<div class="bg-gray-900/40 p-2.5 rounded border border-gray-800/80 flex justify-between items-center text-xs">
+                    <span class="text-white font-medium">${p.nome} (${p.email})</span><span class="text-emerald-400 font-mono">${p.hora}</span>
+                </div>`;
             });
-            // Alimenta também a lista secundária da TV
-            document.getElementById('tvRecentesLista').innerHTML = hLista.innerHTML;
         }
 
-        // CALENDÁRIO CORPORATIVO BÁSICO VISUAL
+        function renderizarHistorico() {
+            const h = document.getElementById('historicoLista'); h.innerHTML = '';
+            dbCache.arquivos.forEach(a => {
+                h.innerHTML += `<div class="p-2.5 bg-gray-900/50 border border-gray-800 rounded text-xs">Arquivo ${a.nome} enviado para pasta ${a.setor} por ${a.por} em ${a.data}.</div>`;
+            });
+            document.getElementById('tvRecentesLista').innerHTML = h.innerHTML;
+        }
+
         function renderizarCalendario() {
-            const grid = document.getElementById('calendarGrid');
-            grid.innerHTML = '';
-            // Renderiza 30 dias simulados para Junho de 2026
-            for (let i = 1; i <= 30; i++) {
-                let note = '';
-                if(i === 10) note = '<div class="text-[9px] bg-amber-950 border border-amber-900 text-amber-400 rounded mt-1 truncate px-1">Reunião Geral</div>';
-                if(i === 24) note = '<div class="text-[9px] bg-emerald-950 border border-emerald-900 text-emerald-400 rounded mt-1 truncate px-1">Meta Batida</div>';
-                
-                grid.innerHTML += `
-                    <div class="bg-gray-900/60 border border-gray-800 rounded p-1.5 flex flex-col justify-between text-left select-none">
-                        <span class="font-mono text-xs text-gray-500">${i}</span>
-                        ${note}
-                    </div>
-                `;
-            }
+            const g = document.getElementById('calendarGrid'); g.innerHTML = '';
+            for(let i=1; i<=30; i++) g.innerHTML += `<div class="bg-gray-900/40 border border-gray-800 rounded p-1 text-left font-mono text-xs text-gray-600">${i}</div>`;
         }
 
-        // SALVAR LOGOTIPO DO ADM LOCALMENTE (PERSISTENTE VIA LOCALSTORAGE)
         function salvarLogotipoLocal(input) {
-            const file = input.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const imgData = e.target.result;
-                localStorage.setItem('workspace_logo', imgData);
-                document.getElementById('companyLogo').src = imgData;
-            };
-            reader.readAsDataURL(file);
+            const f = input.files[0]; if(!f) return;
+            const r = new FileReader();
+            r.onload = function(e) { localStorage.setItem('workspace_logo', e.target.result); document.getElementById('companyLogo').src = e.target.result; };
+            r.readAsDataURL(f);
         }
 
-        function atualizarNomeEmpresa(valor) {
-            const n = valor.trim() || "Minha Empresa";
-            localStorage.setItem('workspace_nome_empresa', n);
-            document.getElementById('txtNomeEmpresa').innerText = n;
+        function atualizarNomeEmpresa(v) {
+            const txt = v.trim() || "Configuração Pendente";
+            localStorage.setItem('workspace_nome_empresa', txt);
+            document.getElementById('txtNomeEmpresa').innerText = txt;
         }
 
         function recuperarConfiguracoesLocais() {
-            const l = localStorage.getItem('workspace_logo');
-            if(l) document.getElementById('companyLogo').src = l;
-            
-            const n = localStorage.getItem('workspace_nome_empresa');
-            if(n) {
-                document.getElementById('txtNomeEmpresa').innerText = n;
-                document.getElementById('cfgNomeEmpresa').value = n;
-            }
-            
-            document.getElementById('lblEndpoint').innerText = WEB_APP_URL === "SUA_URL_DO_APPS_SCRIPT_AQUI" ? "Modo Offline / Demonstração" : WEB_APP_URL;
+            const logo = localStorage.getItem('workspace_logo'); if(logo) document.getElementById('companyLogo').src = logo;
+            const nome = localStorage.getItem('workspace_nome_empresa'); if(nome) { document.getElementById('txtNomeEmpresa').innerText = nome; document.getElementById('cfgNomeEmpresa').value = nome; }
+            current_web_app_url = localStorage.getItem('workspace_tenant_script_url') || "";
+            document.getElementById('cfgLinkScript').value = current_web_app_url;
         }
 
         function logout() {
@@ -646,34 +475,6 @@
             document.getElementById('formLogin').reset();
             document.getElementById('btnPonto').classList.remove('hidden');
             document.getElementById('pontoStatus').classList.add('hidden');
-        }
-
-        // ENGINE DE MOCK LOCAL (Caso rode sem preencher o link do Apps Script para testes)
-        function mockLocalResponse(dados) {
-            if(dados.action === 'login') {
-                if(dados.email === 'admin@empresa.com' && dados.senha === '123') {
-                    return { success: true, user: { nome: "Rodrigo (ADM)", email: "admin@empresa.com", cargo: "Administrador", foto: "", horarioEntrada: "08:00", linkIntegracao: "Master" } };
-                }
-                if(dados.email.includes('marketing') && dados.senha === '123') {
-                    return { success: true, user: { nome: "Ana Souza", email: dados.email, cargo: "Marketing", foto: "", horarioEntrada: "09:00", linkIntegracao: "Folder_Mkt" } };
-                }
-                return { success: false, message: "Use admin@empresa.com ou algo com 'marketing' (Senha: 123) para testar o mock local." };
-            }
-            if(dados.action === 'buscarDados') {
-                return {
-                    success: true,
-                    tarefas: [
-                        { id: 101, titulo: "Planejamento de 10 Artes", descricao: "Criar o cronograma de postagens mensais para redes sociais da marca.", coluna: "a_fazer", setor: "Marketing", responsavel: "ana.marketing@empresa.com" },
-                        { id: 102, titulo: "Dashboard de TVs Corporativas", descricao: "Desenvolver a interface limpa em HTML/Tailwind para projeção nos escritórios.", coluna: "em_andamento", setor: "Geral", responsavel: "admin@empresa.com" }
-                    ],
-                    presencas: [],
-                    arquivos: []
-                };
-            }
-            if(dados.action === 'baterPonto') return { success: true, hora: "08:02", status: "No Prazo" };
-            if(dados.action === 'atualizarKanban') return { success: true };
-            if(dados.action === 'uploadArquivo') return { success: true, url: "#", id: "DOC-MOCK" };
-            return { success: false };
         }
     </script>
 </body>
