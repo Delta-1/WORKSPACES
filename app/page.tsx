@@ -12,6 +12,7 @@ import ChatTab from "@/components/tabs/ChatTab";
 import WhatsappTab from "@/components/tabs/WhatsappTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
 import ConfigTab from "@/components/tabs/ConfigTab";
+import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 
 const APPS = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60" },
@@ -21,8 +22,11 @@ const APPS = [
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60" },
 ];
 
+type SessionUser = { name: string; email: string; role: "Administrador" | "Funcionário" };
+
 export default function Home() {
-  const [user, setUser] = useState<{ name: string } | null>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
   const [showSplash, setShowSplash] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -43,14 +47,75 @@ export default function Home() {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
 
-  function handleLogin(name: string) {
-    setUser({ name });
+  async function buildSessionUser(authUser: {
+    email?: string | null;
+    user_metadata?: { full_name?: string; name?: string };
+  }): Promise<SessionUser> {
+    const email = authUser.email ?? "";
+    const name =
+      authUser.user_metadata?.full_name ?? authUser.user_metadata?.name ?? email.split("@")[0] ?? "Usuário";
+
+    let role: SessionUser["role"] = "Funcionário";
+    if (supabase && email) {
+      const { data } = await supabase.from("admins").select("email").eq("email", email).maybeSingle();
+      if (data) role = "Administrador";
+    }
+    return { name, email, role };
+  }
+
+  useEffect(() => {
+    if (!supabase) {
+      setCheckingSession(false);
+      return;
+    }
+
+    let mounted = true;
+    let sawInitialLogin = false;
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!mounted) return;
+      if (data.session?.user) {
+        const sessionUser = await buildSessionUser(data.session.user);
+        if (mounted) setUser(sessionUser);
+      }
+      setCheckingSession(false);
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+      if (event === "SIGNED_IN" && session?.user) {
+        const sessionUser = await buildSessionUser(session.user);
+        if (!mounted) return;
+        setUser(sessionUser);
+        if (!sawInitialLogin) {
+          sawInitialLogin = true;
+          setShowSplash(true);
+        }
+      }
+      if (event === "SIGNED_OUT") {
+        setUser(null);
+        setTab("inicio");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  function handleDemoLogin(name: string) {
+    setUser({ name, email: "", role: "Administrador" });
     setShowSplash(true);
   }
 
-  function handleLogout() {
-    setUser(null);
-    setTab("inicio");
+  async function handleLogout() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    } else {
+      setUser(null);
+      setTab("inicio");
+    }
   }
 
   async function updateCompany(name: string, logoDataUrl?: string) {
@@ -62,8 +127,12 @@ export default function Home() {
     setCompany(await res.json());
   }
 
+  if (checkingSession) {
+    return <div className="fixed inset-0 bg-[#060a12]" />;
+  }
+
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleDemoLogin} />;
   }
 
   if (showSplash) {
@@ -94,7 +163,7 @@ export default function Home() {
         </div>
         <ProfileMenu
           name={user.name}
-          role="Administrador"
+          role={user.role}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}

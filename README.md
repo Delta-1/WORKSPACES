@@ -9,13 +9,20 @@ npm install
 npm run dev
 ```
 
-Abra [http://localhost:3000](http://localhost:3000). Login aceita qualquer e-mail/senha (autenticação real ainda não implementada).
+Abra [http://localhost:3000](http://localhost:3000).
 
 ## Variáveis de ambiente
 
 | Variável | Efeito |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Ativa o copiloto de IA de verdade (Claude) e as respostas automáticas do WhatsApp. Sem ela, o app roda em **modo demo** (respostas simuladas, deixado claro na interface). |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Ativam o login com Google via Supabase Auth. Sem elas, a tela de login cai num "modo demo" com botão de entrada direta. |
+
+## Login com Google (Supabase Auth)
+
+1. No [Google Cloud Console](https://console.cloud.google.com), crie um OAuth Client ID do tipo "Aplicativo da Web" com o URI de redirecionamento `https://<seu-projeto>.supabase.co/auth/v1/callback`.
+2. No painel do Supabase: **Authentication → Sign In / Providers → Google**, cole o Client ID e o Client Secret e salve.
+3. A tabela `public.admins` (coluna `email`) define quem vira "Administrador" no app; qualquer outro e-mail autenticado entra como "Funcionário".
 
 ## Integração com WhatsApp
 

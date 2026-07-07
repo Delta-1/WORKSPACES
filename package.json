@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
+    "@supabase/supabase-js": "^2.110.1",
     "baileys": "^7.0.0-rc13",
     "jimp": "^1.6.1",
     "lucide-react": "^1.23.0",
