@@ -1,0 +1,52 @@
+"use client";
+
+import { useState } from "react";
+import { Image as ImageIcon, Sliders } from "lucide-react";
+
+export default function ConfigTab({
+  companyName,
+  onUpdateCompany,
+}: {
+  companyName: string;
+  onUpdateCompany: (name: string, logoDataUrl?: string) => void;
+}) {
+  const [name, setName] = useState(companyName);
+
+  function handleLogo(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => onUpdateCompany(name, reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="h-full flex flex-col gap-6">
+      <h3 className="text-lg font-bold flex items-center gap-2">
+        <Sliders className="text-amber-400" size={20} /> Configurações
+      </h3>
+      <div className="liquid-glass rounded-2xl p-5 space-y-4 max-w-md">
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Nome comercial da empresa
+          </label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => onUpdateCompany(name)}
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+            <ImageIcon size={14} /> Logotipo corporativo
+          </label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => e.target.files?.[0] && handleLogo(e.target.files[0])}
+            className="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
