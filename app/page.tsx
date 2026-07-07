@@ -41,6 +41,7 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [demoUser, setDemoUser] = useState<{ name: string } | null>(null);
   const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(false);
   const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
@@ -75,14 +76,27 @@ export default function Home() {
     let mounted = true;
     let sawInitialLogin = false;
 
-    async function loadProfile(authUser: { user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string } }) {
+    async function loadProfile(
+      authUser: { user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string } },
+      attempt = 1
+    ): Promise<Profile | null> {
       if (!supabase) return null;
       const fullName = authUser.user_metadata?.full_name ?? authUser.user_metadata?.name ?? null;
       const avatarUrl = authUser.user_metadata?.avatar_url ?? authUser.user_metadata?.picture ?? null;
-      const { data } = await supabase.rpc("ensure_profile", {
+      const { data, error } = await supabase.rpc("ensure_profile", {
         p_full_name: fullName,
         p_avatar_url: avatarUrl,
       });
+      if (error) {
+        // Right after a schema change the API cache can lag briefly; retry once.
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 800));
+          return loadProfile(authUser, attempt + 1);
+        }
+        setAuthError(`Não consegui carregar seu perfil (${error.message}). Tente entrar novamente.`);
+        return null;
+      }
+      setAuthError(null);
       return data as Profile | null;
     }
 
@@ -143,7 +157,7 @@ export default function Home() {
   }
 
   if (!isAuthenticated) {
-    return <LoginScreen onLogin={handleDemoLogin} />;
+    return <LoginScreen onLogin={handleDemoLogin} externalError={authError} />;
   }
 
   if (showSplash) {

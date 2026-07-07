@@ -4,9 +4,16 @@ import { useState } from "react";
 import { Layers } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 
-export default function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
+export default function LoginScreen({
+  onLogin,
+  externalError,
+}: {
+  onLogin: (name: string) => void;
+  externalError?: string | null;
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const shownError = error ?? externalError ?? null;
 
   async function handleGoogleLogin() {
     if (!supabase) return;
@@ -33,9 +40,9 @@ export default function LoginScreen({ onLogin }: { onLogin: (name: string) => vo
           <p className="text-gray-400 text-sm mt-1">Acesse com sua conta Google corporativa</p>
         </div>
 
-        {error && (
+        {shownError && (
           <p className="text-xs text-red-400 text-center mb-4 bg-red-950/30 border border-red-800/50 rounded-lg py-2 px-3">
-            {error}
+            {shownError}
           </p>
         )}
 
