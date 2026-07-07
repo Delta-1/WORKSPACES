@@ -1,7 +1,12 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), ".data");
+// Serverless platforms (e.g. Vercel) only allow writes under the OS temp dir;
+// the project directory itself is read-only there. This store is a demo-only
+// placeholder (see README) and isn't expected to persist across cold starts
+// in that environment.
+const DATA_DIR = path.join(os.tmpdir(), "workspace-app-data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 export type FileNode = {
@@ -34,17 +39,30 @@ const DEFAULT_DB: Db = {
   whatsappMessages: [],
 };
 
+// Last-resort fallback if even the OS temp dir isn't writable, so the app
+// degrades to non-persistent in-memory data instead of throwing 500s.
+let memoryDb: Db | null = null;
+
 function ensureDb(): Db {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(DB_FILE)) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+    }
+    const raw = fs.readFileSync(DB_FILE, "utf-8");
+    return JSON.parse(raw) as Db;
+  } catch {
+    if (!memoryDb) memoryDb = structuredClone(DEFAULT_DB);
+    return memoryDb;
   }
-  const raw = fs.readFileSync(DB_FILE, "utf-8");
-  return JSON.parse(raw) as Db;
 }
 
 function saveDb(db: Db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  } catch {
+    memoryDb = db;
+  }
 }
 
 export function getFiles(): FileNode[] {
