@@ -1,44 +1,63 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, LayoutGrid, MessageCircle, Network, Sliders } from "lucide-react";
+import { Bot, LayoutGrid, MessageCircle, Network, Sliders, SquareKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
 import AppDrawer from "@/components/AppDrawer";
 import ProfileMenu from "@/components/ProfileMenu";
+import TVModeOverlay from "@/components/TVModeOverlay";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
 import WhatsappTab from "@/components/tabs/WhatsappTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
 import ConfigTab from "@/components/tabs/ConfigTab";
+import OrgChartTab from "@/components/tabs/OrgChartTab";
+import KanbanTab from "@/components/tabs/KanbanTab";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
+import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
+import type { Profile, Role } from "@/lib/types";
 
-const APPS = [
-  { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60" },
-  { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60" },
-  { id: "whatsapp", label: "WhatsApp", icon: MessageCircle, accent: "bg-green-800/60" },
-  { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60" },
-  { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60" },
+type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
+
+const APPS: AppDef[] = [
+  { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "whatsapp", label: "WhatsApp", icon: MessageCircle, accent: "bg-green-800/60", roles: ["gestor", "gerente"] },
+  { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
 
-type SessionUser = { name: string; email: string; role: "Administrador" | "Funcionário" };
+const ROLE_LABEL: Record<Role, string> = {
+  gestor: "Gestor Geral",
+  gerente: "Administrador de Setor",
+  funcionario: "Funcionário",
+};
 
 export default function Home() {
-  const [user, setUser] = useState<SessionUser | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [demoUser, setDemoUser] = useState<{ name: string } | null>(null);
   const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
   const [showSplash, setShowSplash] = useState(false);
+  const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [company, setCompany] = useState<{ name: string; logoDataUrl: string | null }>({
+  const [company, setCompany] = useState<CompanyInfo>({
     name: "Configuração Pendente",
     logoDataUrl: null,
+    tvLogoCorner: "top-left",
   });
 
+  const role: Role = profile?.role ?? "gestor";
+  const isAuthenticated = Boolean(profile) || Boolean(demoUser);
+  const displayName = profile?.full_name ?? profile?.email ?? demoUser?.name ?? "Usuário";
+
   useEffect(() => {
-    fetch("/api/company")
-      .then((r) => r.json())
+    fetchCompany()
       .then(setCompany)
       .catch(() => {});
   }, []);
@@ -46,22 +65,6 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
-
-  async function buildSessionUser(authUser: {
-    email?: string | null;
-    user_metadata?: { full_name?: string; name?: string };
-  }): Promise<SessionUser> {
-    const email = authUser.email ?? "";
-    const name =
-      authUser.user_metadata?.full_name ?? authUser.user_metadata?.name ?? email.split("@")[0] ?? "Usuário";
-
-    let role: SessionUser["role"] = "Funcionário";
-    if (supabase && email) {
-      const { data } = await supabase.from("admins").select("email").eq("email", email).maybeSingle();
-      if (data) role = "Administrador";
-    }
-    return { name, email, role };
-  }
 
   useEffect(() => {
     if (!supabase) {
@@ -72,11 +75,22 @@ export default function Home() {
     let mounted = true;
     let sawInitialLogin = false;
 
+    async function loadProfile(authUser: { user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string } }) {
+      if (!supabase) return null;
+      const fullName = authUser.user_metadata?.full_name ?? authUser.user_metadata?.name ?? null;
+      const avatarUrl = authUser.user_metadata?.avatar_url ?? authUser.user_metadata?.picture ?? null;
+      const { data } = await supabase.rpc("ensure_profile", {
+        p_full_name: fullName,
+        p_avatar_url: avatarUrl,
+      });
+      return data as Profile | null;
+    }
+
     supabase.auth.getSession().then(async ({ data }) => {
       if (!mounted) return;
       if (data.session?.user) {
-        const sessionUser = await buildSessionUser(data.session.user);
-        if (mounted) setUser(sessionUser);
+        const p = await loadProfile(data.session.user);
+        if (mounted && p) setProfile(p);
       }
       setCheckingSession(false);
     });
@@ -84,16 +98,16 @@ export default function Home() {
     const { data: subscription } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       if (event === "SIGNED_IN" && session?.user) {
-        const sessionUser = await buildSessionUser(session.user);
+        const p = await loadProfile(session.user);
         if (!mounted) return;
-        setUser(sessionUser);
+        if (p) setProfile(p);
         if (!sawInitialLogin) {
           sawInitialLogin = true;
           setShowSplash(true);
         }
       }
       if (event === "SIGNED_OUT") {
-        setUser(null);
+        setProfile(null);
         setTab("inicio");
       }
     });
@@ -105,33 +119,30 @@ export default function Home() {
   }, []);
 
   function handleDemoLogin(name: string) {
-    setUser({ name, email: "", role: "Administrador" });
+    setDemoUser({ name });
     setShowSplash(true);
   }
 
   async function handleLogout() {
     if (supabase) {
       await supabase.auth.signOut();
-    } else {
-      setUser(null);
-      setTab("inicio");
     }
+    setDemoUser(null);
+    setTab("inicio");
   }
 
-  async function updateCompany(name: string, logoDataUrl?: string) {
-    const res = await fetch("/api/company", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, ...(logoDataUrl ? { logoDataUrl } : {}) }),
-    });
-    setCompany(await res.json());
+  async function handleUpdateCompany(update: Partial<CompanyInfo>) {
+    const next = await persistCompany(update);
+    setCompany(next);
   }
+
+  const visibleApps = APPS.filter((a) => a.roles.includes(role));
 
   if (checkingSession) {
     return <div className="fixed inset-0 bg-[#060a12]" />;
   }
 
-  if (!user) {
+  if (!isAuthenticated) {
     return <LoginScreen onLogin={handleDemoLogin} />;
   }
 
@@ -141,6 +152,17 @@ export default function Home() {
         companyName={company.name}
         logoDataUrl={company.logoDataUrl}
         onDone={() => setShowSplash(false)}
+      />
+    );
+  }
+
+  if (showTV) {
+    return (
+      <TVModeOverlay
+        companyName={company.name}
+        logoDataUrl={company.logoDataUrl}
+        corner={company.tvLogoCorner}
+        onClose={() => setShowTV(false)}
       />
     );
   }
@@ -162,8 +184,8 @@ export default function Home() {
           </div>
         </div>
         <ProfileMenu
-          name={user.name}
-          role={user.role}
+          name={displayName}
+          role={ROLE_LABEL[role]}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
@@ -171,15 +193,19 @@ export default function Home() {
       </header>
 
       <main className="flex-1 overflow-hidden p-6 pb-28">
-        {tab === "inicio" && <HomeTab companyName={company.name} />}
+        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
+        {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
+        {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
         {tab === "whatsapp" && <WhatsappTab />}
         {tab === "arquivos" && <FilesGraphTab />}
-        {tab === "config" && <ConfigTab companyName={company.name} onUpdateCompany={updateCompany} />}
+        {tab === "config" && (
+          <ConfigTab companyName={company.name} tvLogoCorner={company.tvLogoCorner} onUpdateCompany={handleUpdateCompany} />
+        )}
       </main>
 
-      <Dock apps={APPS} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
-      <AppDrawer apps={APPS} open={drawerOpen} onClose={() => setDrawerOpen(false)} onSelect={setTab} />
+      <Dock apps={visibleApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
+      <AppDrawer apps={visibleApps} open={drawerOpen} onClose={() => setDrawerOpen(false)} onSelect={setTab} />
     </div>
   );
 }

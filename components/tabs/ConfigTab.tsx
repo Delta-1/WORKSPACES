@@ -2,19 +2,31 @@
 
 import { useState } from "react";
 import { Image as ImageIcon, Sliders } from "lucide-react";
+import type { CompanySettingsRow } from "@/lib/types";
+
+type Corner = CompanySettingsRow["tv_logo_corner"];
+
+const CORNERS: { id: Corner; label: string }[] = [
+  { id: "top-left", label: "Superior esquerdo" },
+  { id: "top-right", label: "Superior direito" },
+  { id: "bottom-left", label: "Inferior esquerdo" },
+  { id: "bottom-right", label: "Inferior direito" },
+];
 
 export default function ConfigTab({
   companyName,
+  tvLogoCorner,
   onUpdateCompany,
 }: {
   companyName: string;
-  onUpdateCompany: (name: string, logoDataUrl?: string) => void;
+  tvLogoCorner: Corner;
+  onUpdateCompany: (update: { name?: string; logoDataUrl?: string; tvLogoCorner?: Corner }) => void;
 }) {
   const [name, setName] = useState(companyName);
 
   function handleLogo(file: File) {
     const reader = new FileReader();
-    reader.onload = () => onUpdateCompany(name, reader.result as string);
+    reader.onload = () => onUpdateCompany({ logoDataUrl: reader.result as string });
     reader.readAsDataURL(file);
   }
 
@@ -31,7 +43,7 @@ export default function ConfigTab({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={() => onUpdateCompany(name)}
+            onBlur={() => onUpdateCompany({ name })}
             className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
           />
         </div>
@@ -45,6 +57,22 @@ export default function ConfigTab({
             onChange={(e) => e.target.files?.[0] && handleLogo(e.target.files[0])}
             className="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
           />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Posição do logo no Modo TV
+          </label>
+          <select
+            value={tvLogoCorner}
+            onChange={(e) => onUpdateCompany({ tvLogoCorner: e.target.value as Corner })}
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+          >
+            {CORNERS.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
