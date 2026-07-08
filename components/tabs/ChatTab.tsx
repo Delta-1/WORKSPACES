@@ -2,6 +2,15 @@
 
 import { useRef, useState } from "react";
 import { Bot, Image as ImageIcon, Mic, MicOff, Send, User } from "lucide-react";
+import { supabase } from "@/lib/supabase-client";
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session ? { Authorization: `Bearer ${session.access_token}` } : {};
+}
 
 type Turn = {
   role: "user" | "assistant";
@@ -38,10 +47,12 @@ export default function ChatTab() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useState(() => {
-    fetch("/api/ai/chat")
-      .then((r) => r.json())
-      .then((d) => setLive(d.live))
-      .catch(() => setLive(false));
+    authHeaders().then((headers) =>
+      fetch("/api/ai/chat", { headers })
+        .then((r) => r.json())
+        .then((d) => setLive(d.live))
+        .catch(() => setLive(false))
+    );
   });
 
   function scrollToBottom() {
@@ -118,14 +129,15 @@ export default function ChatTab() {
     scrollToBottom();
 
     try {
+      const headers = await authHeaders();
       const res = await fetch("/api/ai/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ history: historyForApi }),
       });
       const data = await res.json();
-      setLive(data.live);
-      setTurns((prev) => [...prev, { role: "assistant", text: data.reply || "(sem resposta)" }]);
+      if (data.live !== undefined) setLive(data.live);
+      setTurns((prev) => [...prev, { role: "assistant", text: data.reply || data.error || "(sem resposta)" }]);
     } catch {
       setTurns((prev) => [...prev, { role: "assistant", text: "Erro ao falar com a IA." }]);
     } finally {
@@ -148,7 +160,7 @@ export default function ChatTab() {
                 : "border-amber-700 text-amber-400 bg-amber-950/40"
             }`}
           >
-            {live ? "IA conectada (Claude)" : "Modo demo — configure ANTHROPIC_API_KEY"}
+            {live ? "IA conectada" : "Modo demo — configure uma chave de IA em Configurações"}
           </span>
         )}
       </div>

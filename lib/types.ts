@@ -47,5 +47,31 @@ export type CompanySettingsRow = {
   name: string;
   logo_url: string | null;
   tv_logo_corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  google_drive_enabled: boolean;
+  google_drive_root_folder_id: string | null;
+  updated_at: string;
+};
+
+export type FileNodeRow = {
+  id: string;
+  name: string;
+  type: "folder" | "file";
+  parent_id: string | null;
+  uploaded_by: string | null;
+  data_url: string | null;
+  drive_file_id: string | null;
+  pos_x: number | null;
+  pos_y: number | null;
+  created_at: string;
+};
+
+export type AiProvider = "anthropic" | "openai" | "gemini";
+
+export type AiConfigRow = {
+  id: string;
+  user_id: string;
+  provider: AiProvider;
+  api_key: string;
+  created_at: string;
   updated_at: string;
 };

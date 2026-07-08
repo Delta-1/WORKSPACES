@@ -5,18 +5,24 @@ export type CompanyInfo = {
   name: string;
   logoDataUrl: string | null;
   tvLogoCorner: CompanySettingsRow["tv_logo_corner"];
+  googleDriveEnabled: boolean;
 };
 
 export async function fetchCompany(): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
     const { data } = await supabase.from("company_settings").select("*").eq("id", true).maybeSingle();
     if (data) {
-      return { name: data.name, logoDataUrl: data.logo_url, tvLogoCorner: data.tv_logo_corner };
+      return {
+        name: data.name,
+        logoDataUrl: data.logo_url,
+        tvLogoCorner: data.tv_logo_corner,
+        googleDriveEnabled: data.google_drive_enabled,
+      };
     }
   }
   const res = await fetch("/api/company");
   const json = await res.json();
-  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left" };
+  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left", googleDriveEnabled: false };
 }
 
 export async function updateCompany(update: Partial<CompanyInfo>): Promise<CompanyInfo> {
@@ -27,13 +33,19 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.name !== undefined ? { name: update.name } : {}),
         ...(update.logoDataUrl !== undefined ? { logo_url: update.logoDataUrl } : {}),
         ...(update.tvLogoCorner !== undefined ? { tv_logo_corner: update.tvLogoCorner } : {}),
+        ...(update.googleDriveEnabled !== undefined ? { google_drive_enabled: update.googleDriveEnabled } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", true)
       .select("*")
       .single();
     if (data) {
-      return { name: data.name, logoDataUrl: data.logo_url, tvLogoCorner: data.tv_logo_corner };
+      return {
+        name: data.name,
+        logoDataUrl: data.logo_url,
+        tvLogoCorner: data.tv_logo_corner,
+        googleDriveEnabled: data.google_drive_enabled,
+      };
     }
   }
   const res = await fetch("/api/company", {
@@ -42,5 +54,5 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
     body: JSON.stringify({ name: update.name, logoDataUrl: update.logoDataUrl }),
   });
   const json = await res.json();
-  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left" };
+  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left", googleDriveEnabled: false };
 }

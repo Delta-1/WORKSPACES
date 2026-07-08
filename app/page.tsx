@@ -51,6 +51,7 @@ export default function Home() {
     name: "Configuração Pendente",
     logoDataUrl: null,
     tvLogoCorner: "top-left",
+    googleDriveEnabled: false,
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -212,9 +213,14 @@ export default function Home() {
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
         {tab === "whatsapp" && <WhatsappTab />}
-        {tab === "arquivos" && <FilesGraphTab />}
+        {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "config" && (
-          <ConfigTab companyName={company.name} tvLogoCorner={company.tvLogoCorner} onUpdateCompany={handleUpdateCompany} />
+          <ConfigTab
+            companyName={company.name}
+            tvLogoCorner={company.tvLogoCorner}
+            googleDriveEnabled={company.googleDriveEnabled}
+            onUpdateCompany={handleUpdateCompany}
+          />
         )}
       </main>
 
