@@ -51,7 +51,11 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const [selected, setSelected] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragOffset = useRef({ x: 0, y: 0 });
+  const dragStart = useRef<{
+    pointerX: number;
+    pointerY: number;
+    positions: Map<string, { x: number; y: number }>;
+  } | null>(null);
 
   async function load() {
     if (!supabase) return;
@@ -138,29 +142,69 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     a.click();
   }
 
+  // Every node linked below the dragged one (its whole subtree) moves along
+  // with it, like dragging a node in Obsidian's graph view.
+  function collectSubtree(rootId: string): string[] {
+    const childrenByParent = new Map<string | null, string[]>();
+    nodes.forEach((n) => {
+      const list = childrenByParent.get(n.parent_id) ?? [];
+      list.push(n.id);
+      childrenByParent.set(n.parent_id, list);
+    });
+    const ids: string[] = [rootId];
+    const stack = [rootId];
+    while (stack.length) {
+      const current = stack.pop()!;
+      for (const childId of childrenByParent.get(current) ?? []) {
+        ids.push(childId);
+        stack.push(childId);
+      }
+    }
+    return ids;
+  }
+
   function onPointerDownNode(e: React.PointerEvent, id: string) {
     const rect = containerRef.current?.getBoundingClientRect();
-    const n = byId.get(id);
-    if (!rect || !n) return;
-    dragOffset.current = { x: e.clientX - rect.left - n.pos_x, y: e.clientY - rect.top - n.pos_y };
+    if (!rect) return;
+    const positions = new Map<string, { x: number; y: number }>();
+    for (const nodeId of collectSubtree(id)) {
+      const n = byId.get(nodeId);
+      if (n) positions.set(nodeId, { x: n.pos_x, y: n.pos_y });
+    }
+    dragStart.current = { pointerX: e.clientX, pointerY: e.clientY, positions };
     setDragging(id);
     setSelected(id);
   }
 
   function onPointerMove(e: React.PointerEvent) {
-    if (!dragging) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left - dragOffset.current.x;
-    const y = e.clientY - rect.top - dragOffset.current.y;
-    setNodes((prev) => prev.map((n) => (n.id === dragging ? { ...n, pos_x: x, pos_y: y } : n)));
+    if (!dragging || !dragStart.current) return;
+    const { pointerX, pointerY, positions } = dragStart.current;
+    const dx = e.clientX - pointerX;
+    const dy = e.clientY - pointerY;
+    setNodes((prev) =>
+      prev.map((n) => {
+        const start = positions.get(n.id);
+        return start ? { ...n, pos_x: start.x + dx, pos_y: start.y + dy } : n;
+      })
+    );
   }
 
   async function onPointerUp() {
-    if (!dragging) return;
-    const n = byId.get(dragging);
+    if (!dragging || !dragStart.current || !supabase) {
+      setDragging(null);
+      dragStart.current = null;
+      return;
+    }
+    const client = supabase;
+    const movedIds = Array.from(dragStart.current.positions.keys());
     setDragging(null);
-    if (n && supabase) await supabase.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", n.id);
+    dragStart.current = null;
+    await Promise.all(
+      movedIds.map((id) => {
+        const n = byId.get(id);
+        return n ? client.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", id) : null;
+      })
+    );
   }
 
   const matches = query
