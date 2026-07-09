@@ -74,11 +74,17 @@ async function ensureNovoContatoTag() {
   return novoContatoTagId;
 }
 
-async function upsertContact(phone) {
+async function upsertContact(phone, name = null) {
   if (!supabase) return null;
   const { data: existing } = await supabase.from("contacts").select("*").eq("phone", phone).maybeSingle();
-  if (existing) return existing;
-  const { data } = await supabase.from("contacts").insert({ phone }).select("*").single();
+  if (existing) {
+    if (name && !existing.name) {
+      await supabase.from("contacts").update({ name }).eq("id", existing.id);
+      existing.name = name;
+    }
+    return existing;
+  }
+  const { data } = await supabase.from("contacts").insert({ phone, name }).select("*").single();
   // Auto-etiqueta o contato recém-criado.
   const tagId = await ensureNovoContatoTag();
   if (data && tagId) {
@@ -88,6 +94,38 @@ async function upsertContact(phone) {
     );
   }
   return data;
+}
+
+// Sincroniza a agenda de contatos do WhatsApp para a tabela `contacts`,
+// para o usuário ver seus contatos assim que conectar (como no WhatsApp Web).
+async function syncContacts(list) {
+  if (!supabase || !Array.isArray(list) || list.length === 0) return;
+  const withName = [];
+  const phoneOnly = [];
+  const seen = new Set();
+  for (const c of list) {
+    const id = c?.id || c?.jid;
+    if (!id || !id.endsWith("@s.whatsapp.net")) continue;
+    const phone = id.split("@")[0];
+    if (!phone || seen.has(phone)) continue;
+    seen.add(phone);
+    const name = c.name || c.notify || c.verifiedName || null;
+    if (name) withName.push({ phone, name });
+    else phoneOnly.push({ phone });
+  }
+  try {
+    for (let i = 0; i < withName.length; i += 200) {
+      await supabase.from("contacts").upsert(withName.slice(i, i + 200), { onConflict: "phone" });
+    }
+    for (let i = 0; i < phoneOnly.length; i += 200) {
+      await supabase.from("contacts").upsert(phoneOnly.slice(i, i + 200), { onConflict: "phone", ignoreDuplicates: true });
+    }
+    if (withName.length || phoneOnly.length) {
+      console.log(`Synced ${withName.length + phoneOnly.length} WhatsApp contacts`);
+    }
+  } catch (err) {
+    console.error("Contact sync failed:", err);
+  }
 }
 
 async function findOrCreateOpenConversation(contactId, numberId, sectorId) {
@@ -207,6 +245,17 @@ async function startSession(numberId) {
 
     sock.ev.on("creds.update", saveCreds);
 
+    // Sincroniza a agenda de contatos do WhatsApp assim que conectar e a cada atualização.
+    sock.ev.on("messaging-history.set", async ({ contacts }) => {
+      await syncContacts(contacts);
+    });
+    sock.ev.on("contacts.upsert", async (contacts) => {
+      await syncContacts(contacts);
+    });
+    sock.ev.on("contacts.update", async (contacts) => {
+      await syncContacts(contacts);
+    });
+
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
@@ -240,13 +289,18 @@ async function startSession(numberId) {
         const jid = msg.key.remoteJid;
         // ignore groups / broadcasts — this is 1:1 customer support
         if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+        const text =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          msg.message?.imageMessage?.caption ||
+          msg.message?.videoMessage?.caption ||
+          "";
         if (!text) continue;
         const phone = jid.split("@")[0];
 
         try {
           const { number, chatbot } = await getNumberConfig(numberId);
-          const contact = await upsertContact(phone);
+          const contact = await upsertContact(phone, msg.pushName || null);
           const { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
             numberId,
