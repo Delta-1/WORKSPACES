@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Plug, Search, Send, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
+import { Check, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 
 type ConvRow = Conversation & { contacts: Pick<Contact, "id" | "name" | "phone" | "avatar_url"> | null };
@@ -72,6 +72,10 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
   const scrollRef = useRef<HTMLDivElement>(null);
   const selConvRef = useRef<string | null>(null);
   const selColleagueRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const [recording, setRecording] = useState(false);
 
   useEffect(() => setReadMap(loadReadMap()), []);
 
@@ -201,9 +205,16 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
       openConversation(existing.id);
       return;
     }
+    const connected = numbers.find((n) => n.status === "connected");
     const { data } = await supabase
       .from("conversations")
-      .insert({ contact_id: contact.id, status: "atendendo", assignee_id: profile?.id ?? null })
+      .insert({
+        contact_id: contact.id,
+        status: "atendendo",
+        assignee_id: profile?.id ?? null,
+        number_id: connected?.id ?? null,
+        sector_id: connected?.sector_id ?? null,
+      })
       .select("*")
       .single();
     if (data) {
@@ -313,6 +324,101 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
       loadMessages(selConv.id);
     } finally {
       setSending(false);
+    }
+  }
+
+  function mediaTypeFromMime(mime: string): WhatsappMediaType {
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    return "document";
+  }
+
+  async function uploadMedia(blob: Blob, filename: string, mime: string) {
+    if (!supabase) return null;
+    const ext = (filename.split(".").pop() || mime.split("/")[1] || "bin").slice(0, 8);
+    const path = `out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage.from("wa-media").upload(path, blob, { contentType: mime, upsert: false });
+    if (error) {
+      alert("Falha ao subir o arquivo: " + error.message);
+      return null;
+    }
+    const { data } = supabase.storage.from("wa-media").getPublicUrl(path);
+    return data?.publicUrl ? { url: data.publicUrl, name: filename, mime } : null;
+  }
+
+  async function sendWithMedia(media: { type: WhatsappMediaType; url: string; name: string; mime: string }, caption?: string) {
+    if (!selConv?.contacts) return;
+    const headers = await authHeaders();
+    const res = await fetch("/api/whatsapp/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        to: selConv.contacts.phone,
+        senderId: profile?.id,
+        numberId: selConv.number_id,
+        media,
+        text: caption || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!data.success) alert(data.message ?? "Erro ao enviar. Algum número está conectado?");
+    loadMessages(selConv.id);
+  }
+
+  async function onPickFile(file: File) {
+    if (!selConv?.contacts || !supabase) return;
+    setSending(true);
+    try {
+      const mime = file.type || "application/octet-stream";
+      const uploaded = await uploadMedia(file, file.name, mime);
+      if (uploaded) await sendWithMedia({ type: mediaTypeFromMime(mime), ...uploaded }, input.trim());
+      setInput("");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function toggleRecord() {
+    if (recording) {
+      recorderRef.current?.stop();
+      return;
+    }
+    if (!selConv?.contacts) {
+      alert("Selecione uma conversa de WhatsApp para gravar áudio.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mt = MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+        ? "audio/ogg;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "";
+      const rec = mt ? new MediaRecorder(stream, { mimeType: mt }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunksRef.current.push(e.data);
+      };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        const mime = rec.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: mime });
+        if (blob.size < 500) return;
+        setSending(true);
+        try {
+          const uploaded = await uploadMedia(blob, `audio.${mime.includes("ogg") ? "ogg" : "webm"}`, mime);
+          if (uploaded) await sendWithMedia({ type: "audio", ...uploaded });
+        } finally {
+          setSending(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch {
+      alert("Não consegui acessar o microfone.");
     }
   }
 
@@ -620,7 +726,30 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                             m.direction === "out" ? "bg-emerald-600 text-white" : "bg-[#1c232e]"
                           }`}
                         >
-                          <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                          {m.media_url && m.media_type === "image" && (
+                            <a href={m.media_url} target="_blank" rel="noreferrer">
+                              <img src={m.media_url} alt="" className="rounded-lg max-w-full max-h-64 mb-1" />
+                            </a>
+                          )}
+                          {m.media_url && m.media_type === "audio" && (
+                            <audio controls src={m.media_url} className="mb-1 w-56 max-w-full" />
+                          )}
+                          {m.media_url && m.media_type === "video" && (
+                            <video controls src={m.media_url} className="rounded-lg max-w-full max-h-64 mb-1" />
+                          )}
+                          {m.media_url && m.media_type === "document" && (
+                            <a
+                              href={m.media_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-2 underline mb-1"
+                            >
+                              <FileText size={14} /> {m.media_name || "Arquivo"}
+                            </a>
+                          )}
+                          {m.text && !(m.media_type && /^(📷|🎵|🎥|📄|📎)/.test(m.text)) && (
+                            <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                          )}
                           <p
                             className={`text-[9px] mt-0.5 text-right ${
                               m.direction === "out" ? "text-emerald-100/70" : "text-gray-500"
@@ -644,12 +773,45 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
 
           {(selConv || selColleague) && (
             <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0">
+              {selConv && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) onPickFile(f);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={sending}
+                    title="Anexar arquivo, foto ou vídeo"
+                    className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50"
+                  >
+                    <Paperclip size={18} />
+                  </button>
+                  <button
+                    onClick={toggleRecord}
+                    disabled={sending}
+                    title={recording ? "Parar e enviar áudio" : "Gravar áudio"}
+                    className={`p-2.5 rounded-lg cursor-pointer disabled:opacity-50 ${
+                      recording ? "bg-red-600 text-white animate-pulse" : "hover:bg-white/10 text-gray-300"
+                    }`}
+                  >
+                    {recording ? <Square size={18} /> : <Mic size={18} />}
+                  </button>
+                </>
+              )}
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="Digite uma mensagem..."
-                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none"
+                placeholder={recording ? "Gravando áudio..." : "Digite uma mensagem..."}
+                disabled={recording}
+                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none disabled:opacity-60"
               />
               <button
                 onClick={send}

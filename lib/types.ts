@@ -103,11 +103,17 @@ export type Conversation = {
   closed_at: string | null;
 };
 
+export type WhatsappMediaType = "image" | "audio" | "video" | "document";
+
 export type WhatsappMessageRow = {
   id: string;
   conversation_id: string;
   direction: "in" | "out";
-  text: string;
+  text: string | null;
+  media_type: WhatsappMediaType | null;
+  media_url: string | null;
+  media_name: string | null;
+  media_mime: string | null;
   sender_id: string | null;
   at: string;
 };

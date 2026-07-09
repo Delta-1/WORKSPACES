@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "baileys";
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage } from "baileys";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -147,12 +147,67 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId) {
   return { conversation: data, created: true };
 }
 
-async function logMessage(conversationId, direction, text, senderId = null) {
+function mediaLabel(media, fallbackText) {
+  if (fallbackText) return fallbackText;
+  if (!media) return null;
+  return (
+    { image: "📷 Foto", audio: "🎵 Áudio", video: "🎥 Vídeo", document: `📄 ${media.name || "Arquivo"}` }[media.type] ??
+    "📎 Mídia"
+  );
+}
+
+async function logMessage(conversationId, direction, text, senderId = null, media = null) {
   if (!supabase) return;
-  await supabase
-    .from("whatsapp_messages")
-    .insert({ conversation_id: conversationId, direction, text, sender_id: senderId });
+  const row = {
+    conversation_id: conversationId,
+    direction,
+    text: mediaLabel(media, text) || null,
+    sender_id: senderId,
+  };
+  if (media) {
+    row.media_type = media.type;
+    row.media_url = media.url;
+    row.media_name = media.name || null;
+    row.media_mime = media.mime || null;
+  }
+  await supabase.from("whatsapp_messages").insert(row);
   await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversationId);
+}
+
+// Logger silencioso para o downloadMediaMessage do Baileys.
+const noopLogger = {
+  level: "silent",
+  trace() {},
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  fatal() {},
+  child() {
+    return noopLogger;
+  },
+};
+
+async function uploadMedia(buffer, mime, prefix) {
+  if (!supabase) return null;
+  const ext = ((mime || "application/octet-stream").split("/")[1] || "bin").split(";")[0].slice(0, 8);
+  const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabase.storage
+    .from("wa-media")
+    .upload(path, buffer, { contentType: mime || "application/octet-stream", upsert: false });
+  if (error) {
+    console.error("Media upload failed:", error);
+    return null;
+  }
+  const { data } = supabase.storage.from("wa-media").getPublicUrl(path);
+  return data?.publicUrl ?? null;
+}
+
+function firstConnectedNumberId() {
+  for (const [id, s] of sessions) {
+    if (s.state.status === "connected" && s.sock) return id;
+  }
+  return null;
 }
 
 async function setNumberStatus(numberId, status, phoneNumber) {
@@ -289,13 +344,39 @@ async function startSession(numberId) {
         const jid = msg.key.remoteJid;
         // ignore groups / broadcasts — this is 1:1 customer support
         if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+        // Desembrulha documentos com legenda
+        const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
+        const mediaKind = inner.imageMessage
+          ? "image"
+          : inner.audioMessage
+            ? "audio"
+            : inner.videoMessage
+              ? "video"
+              : inner.documentMessage
+                ? "document"
+                : null;
+        const node =
+          inner.imageMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
         const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          "";
-        if (!text) continue;
+          inner.conversation || inner.extendedTextMessage?.text || node?.caption || "";
+
+        let media = null;
+        if (mediaKind) {
+          try {
+            const buffer = await downloadMediaMessage(
+              { key: msg.key, message: inner },
+              "buffer",
+              {},
+              { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
+            );
+            const url = await uploadMedia(buffer, node?.mimetype || null, "in");
+            if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
+          } catch (err) {
+            console.error("Failed to download incoming media:", err);
+          }
+        }
+
+        if (!text && !media) continue;
         const phone = jid.split("@")[0];
 
         try {
@@ -306,7 +387,7 @@ async function startSession(numberId) {
             numberId,
             number?.sector_id ?? null
           );
-          await logMessage(conversation.id, "in", text);
+          await logMessage(conversation.id, "in", text, null, media);
 
           const botOn = number?.auto_reply && chatbot?.enabled;
           if (botOn) {
@@ -315,7 +396,7 @@ async function startSession(numberId) {
               await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting);
             }
-            const reply = await runChatbotReply(chatbot, text);
+            const reply = text ? await runChatbotReply(chatbot, text) : null;
             if (reply) {
               await sock.sendMessage(jid, { text: reply });
               await logMessage(conversation.id, "out", reply);
@@ -357,19 +438,39 @@ async function disconnectSession(numberId) {
   }
 }
 
-async function sendMessage(numberId, to, text, senderId) {
-  const s = getSession(numberId);
-  if (!s.sock || s.state.status !== "connected") {
-    throw new Error("WhatsApp não está conectado.");
+async function sendMessage(numberId, to, text, senderId, media) {
+  // Se o número informado não estiver conectado, usa qualquer número conectado.
+  let s = numberId ? getSession(numberId) : null;
+  if (!s || !s.sock || s.state.status !== "connected") {
+    const fid = firstConnectedNumberId();
+    if (!fid) throw new Error("Nenhum número de WhatsApp conectado.");
+    numberId = fid;
+    s = getSession(fid);
   }
+
   const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
-  await s.sock.sendMessage(jid, { text });
+
+  if (media?.url) {
+    const resp = await fetch(media.url);
+    if (!resp.ok) throw new Error("Não consegui baixar o arquivo para enviar.");
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const mimetype = media.mime || undefined;
+    let content;
+    if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
+    else if (media.type === "audio") content = { audio: buf, mimetype: mimetype || "audio/mp4", ptt: true };
+    else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
+    else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
+    await s.sock.sendMessage(jid, content);
+  } else {
+    await s.sock.sendMessage(jid, { text });
+  }
+
   const phone = jid.split("@")[0];
   const { number } = await getNumberConfig(numberId);
   const contact = await upsertContact(phone);
   if (contact) {
     const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null);
-    await logMessage(conversation.id, "out", text, senderId ?? null);
+    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null);
   }
 }
 
@@ -444,12 +545,12 @@ app.post("/disconnect", async (req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { numberId, to, text, senderId } = req.body ?? {};
-  if (!numberId || !to || !text) {
-    return res.status(400).json({ error: "Campos 'numberId', 'to' e 'text' são obrigatórios." });
+  const { numberId, to, text, senderId, media } = req.body ?? {};
+  if (!to || (!text && !media?.url)) {
+    return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
   }
   try {
-    await sendMessage(String(numberId), to, text, senderId);
+    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
