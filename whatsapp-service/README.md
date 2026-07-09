@@ -11,7 +11,8 @@ O app principal (Next.js) roda bem em serverless para tudo — login, IA, banco 
 1. Crie um novo projeto no [Railway](https://railway.app), apontando para este repositório com **root directory** = `whatsapp-service`.
 2. Configure as variáveis de ambiente (veja `.env.example`):
    - `WHATSAPP_SERVICE_SECRET`: uma senha aleatória forte — o app principal precisa da mesma senha para poder chamar esse serviço.
-   - `SUPABASE_URL` / `SUPABASE_ANON_KEY`: mesmos valores do app principal.
+   - `SUPABASE_URL`: mesma URL do app principal.
+   - `SUPABASE_SERVICE_ROLE_KEY`: a chave **service_role** (Project Settings → API no Supabase) — não é a `anon`. Esse serviço grava contatos/conversas/mensagens sem um usuário logado, então precisa de uma chave que ignore as políticas de RLS. Nunca coloque essa chave no app principal (Vercel) nem em qualquer código que rode no navegador.
    - `ANTHROPIC_API_KEY`: opcional, ativa a resposta automática por IA às mensagens recebidas.
 3. Deploy. Railway detecta o `package.json` e roda `npm start`.
 4. Copie a URL pública gerada (ex: `https://seu-servico.up.railway.app`).

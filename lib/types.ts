@@ -75,3 +75,52 @@ export type AiConfigRow = {
   created_at: string;
   updated_at: string;
 };
+
+export type Contact = {
+  id: string;
+  phone: string;
+  name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+};
+
+export type ConversationStatus = "espera" | "atendendo" | "fechado" | "cancelado";
+
+export type Conversation = {
+  id: string;
+  protocol: number;
+  contact_id: string;
+  sector_id: string | null;
+  assignee_id: string | null;
+  status: ConversationStatus;
+  problem: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+};
+
+export type WhatsappMessageRow = {
+  id: string;
+  conversation_id: string;
+  direction: "in" | "out";
+  text: string;
+  sender_id: string | null;
+  at: string;
+};
+
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  author_id: string | null;
+  pinned: boolean;
+  created_at: string;
+};
+
+export type InternalMessage = {
+  id: string;
+  sender_id: string;
+  recipient_id: string;
+  text: string;
+  at: string;
+};

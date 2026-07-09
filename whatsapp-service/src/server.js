@@ -12,9 +12,11 @@ const PORT = process.env.PORT || 8787;
 const SERVICE_SECRET = process.env.WHATSAPP_SERVICE_SECRET || "";
 const AUTH_DIR = path.join(__dirname, "..", ".wa-session");
 
+// service_role bypasses RLS — this process has no logged-in app user, so it
+// needs full write access to the contacts/conversations/messages tables.
 const supabase =
-  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
     : null;
 
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
@@ -25,16 +27,10 @@ const state = {
   phoneNumber: null,
   autoReply: true,
   lastError: null,
-  messages: [],
 };
 
 let sock = null;
 let starting = false;
-
-function logMessage(entry) {
-  state.messages.push(entry);
-  state.messages = state.messages.slice(-200);
-}
 
 async function companyName() {
   if (!supabase) return "a empresa";
@@ -42,10 +38,43 @@ async function companyName() {
   return data?.name ?? "a empresa";
 }
 
+async function upsertContact(phone) {
+  if (!supabase) return null;
+  const { data: existing } = await supabase.from("contacts").select("*").eq("phone", phone).maybeSingle();
+  if (existing) return existing;
+  const { data } = await supabase.from("contacts").insert({ phone }).select("*").single();
+  return data;
+}
+
+async function findOrCreateOpenConversation(contactId) {
+  if (!supabase) return null;
+  const { data: existing } = await supabase
+    .from("conversations")
+    .select("*")
+    .eq("contact_id", contactId)
+    .in("status", ["espera", "atendendo"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existing) return existing;
+  const { data } = await supabase
+    .from("conversations")
+    .insert({ contact_id: contactId, status: "espera" })
+    .select("*")
+    .single();
+  return data;
+}
+
+async function logMessage(conversationId, direction, text, senderId = null) {
+  if (!supabase) return;
+  await supabase
+    .from("whatsapp_messages")
+    .insert({ conversation_id: conversationId, direction, text, sender_id: senderId });
+  await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversationId);
+}
+
 async function autoReplyText(customerText) {
-  if (!anthropic) {
-    return null; // no key configured on this service, skip auto-reply silently
-  }
+  if (!anthropic) return null; // no key configured on this service, skip auto-reply silently
   const name = await companyName();
   const response = await anthropic.messages.create({
     model: "claude-sonnet-5",
@@ -97,22 +126,25 @@ async function startSession() {
       if (type !== "notify") return;
       for (const msg of messages) {
         if (msg.key.fromMe) continue;
-        const from = msg.key.remoteJid;
+        const jid = msg.key.remoteJid;
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        if (!from || !text) continue;
+        if (!jid || !text) continue;
+        const phone = jid.split("@")[0];
 
-        logMessage({ id: `${msg.key.id}-in`, from, text, direction: "in", at: new Date().toISOString() });
+        try {
+          const contact = await upsertContact(phone);
+          const conversation = await findOrCreateOpenConversation(contact.id);
+          await logMessage(conversation.id, "in", text);
 
-        if (state.autoReply) {
-          try {
+          if (state.autoReply) {
             const reply = await autoReplyText(text);
             if (reply && sock) {
-              await sock.sendMessage(from, { text: reply });
-              logMessage({ id: `${msg.key.id}-out`, from, text: reply, direction: "out", at: new Date().toISOString() });
+              await sock.sendMessage(jid, { text: reply });
+              await logMessage(conversation.id, "out", reply);
             }
-          } catch (err) {
-            console.error("Auto-reply failed:", err);
           }
+        } catch (err) {
+          console.error("Failed to process incoming message:", err);
         }
       }
     });
@@ -139,13 +171,18 @@ async function disconnectSession() {
   state.phoneNumber = null;
 }
 
-async function sendMessage(to, text) {
+async function sendMessage(to, text, senderId) {
   if (!sock || state.status !== "connected") {
     throw new Error("WhatsApp não está conectado.");
   }
   const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
   await sock.sendMessage(jid, { text });
-  logMessage({ id: `manual-${Date.now()}`, from: jid, text, direction: "out", at: new Date().toISOString() });
+  const phone = jid.split("@")[0];
+  const contact = await upsertContact(phone);
+  if (contact) {
+    const conversation = await findOrCreateOpenConversation(contact.id);
+    await logMessage(conversation.id, "out", text, senderId ?? null);
+  }
 }
 
 const app = express();
@@ -172,10 +209,10 @@ app.post("/disconnect", async (_req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { to, text } = req.body ?? {};
+  const { to, text, senderId } = req.body ?? {};
   if (!to || !text) return res.status(400).json({ error: "Campos 'to' e 'text' são obrigatórios." });
   try {
-    await sendMessage(to, text);
+    await sendMessage(to, text, senderId);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
