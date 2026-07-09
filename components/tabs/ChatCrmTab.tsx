@@ -164,7 +164,7 @@ export default function ChatCrmTab({ profile }: { profile: Profile | null }) {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ to: contact.phone, text: input.trim(), senderId: profile?.id }),
+        body: JSON.stringify({ to: contact.phone, text: input.trim(), senderId: profile?.id, numberId: conversation?.number_id }),
       });
       const data = await res.json();
       if (!data.success) alert(data.message ?? "Erro ao enviar.");

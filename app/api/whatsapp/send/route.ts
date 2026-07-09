@@ -3,7 +3,12 @@ import { sendWhatsappMessage } from "@/lib/whatsapp";
 import { callWhatsappService, whatsappServiceConfigured } from "@/lib/whatsapp-proxy";
 
 export async function POST(request: Request) {
-  const { to, text, senderId } = (await request.json()) as { to?: string; text?: string; senderId?: string };
+  const { to, text, senderId, numberId } = (await request.json()) as {
+    to?: string;
+    text?: string;
+    senderId?: string;
+    numberId?: string;
+  };
   if (!to || !text) {
     return NextResponse.json({ error: "Campos 'to' e 'text' são obrigatórios." }, { status: 400 });
   }
@@ -11,7 +16,7 @@ export async function POST(request: Request) {
   if (whatsappServiceConfigured) {
     const { status, data } = await callWhatsappService("/send", {
       method: "POST",
-      body: JSON.stringify({ to, text, senderId }),
+      body: JSON.stringify({ to, text, senderId, numberId }),
     });
     return NextResponse.json(data, { status });
   }

@@ -60,6 +60,7 @@ export type FileNodeRow = {
   uploaded_by: string | null;
   data_url: string | null;
   drive_file_id: string | null;
+  chatbot_id: string | null;
   pos_x: number | null;
   pos_y: number | null;
   created_at: string;
@@ -90,10 +91,13 @@ export type Conversation = {
   id: string;
   protocol: number;
   contact_id: string;
+  number_id: string | null;
   sector_id: string | null;
   assignee_id: string | null;
   status: ConversationStatus;
   problem: string | null;
+  last_message: string | null;
+  last_message_at: string | null;
   created_at: string;
   updated_at: string;
   closed_at: string | null;
@@ -106,6 +110,56 @@ export type WhatsappMessageRow = {
   text: string;
   sender_id: string | null;
   at: string;
+};
+
+export type Chatbot = {
+  id: string;
+  name: string;
+  persona: string | null;
+  instructions: string | null;
+  greeting: string | null;
+  knowledge: string | null;
+  provider: AiProvider;
+  api_key: string | null;
+  enabled: boolean;
+  folder_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Tag = {
+  id: string;
+  name: string;
+  color: string;
+  created_at: string;
+};
+
+export type ContactTag = {
+  contact_id: string;
+  tag_id: string;
+  created_at: string;
+};
+
+export type WhatsappNumberStatus = "disconnected" | "connecting" | "qr_pending" | "connected";
+
+export type WhatsappNumber = {
+  id: string;
+  label: string;
+  phone_number: string | null;
+  sector_id: string | null;
+  chatbot_id: string | null;
+  auto_reply: boolean;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WhatsappNumberAccess = {
+  id: string;
+  number_id: string;
+  sector_id: string | null;
+  profile_id: string | null;
+  created_at: string;
 };
 
 export type Announcement = {

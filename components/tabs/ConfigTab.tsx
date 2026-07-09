@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Image as ImageIcon, Sliders } from "lucide-react";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
+import ChatbotSection from "./ChatbotSection";
 import GoogleDriveSection from "./GoogleDriveSection";
 
 type Corner = CompanySettingsRow["tv_logo_corner"];
@@ -95,6 +96,8 @@ export default function ConfigTab({
           enabled={googleDriveEnabled}
           onToggle={(googleDriveEnabled) => onUpdateCompany({ googleDriveEnabled })}
         />
+
+        <ChatbotSection />
       </div>
     </div>
   );

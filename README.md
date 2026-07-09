@@ -28,12 +28,14 @@ Abra [http://localhost:3000](http://localhost:3000).
 
 ## Banco de dados (Supabase)
 
-Schema em `public`: `sectors` (organograma), `profiles` (1:1 com `auth.users`, com `role` e `sector_id`), `tasks` (Kanban, por setor), `attendance` (ponto/presença), `files` (módulo Arquivos, com posição `pos_x`/`pos_y` livre e `drive_file_id`), `ai_config` (chave de IA por usuário) e `company_settings` (nome, logo, Modo TV, Google Drive). RLS aplica a hierarquia de permissões diretamente no banco:
+Schema em `public`: `sectors` (organograma), `profiles` (1:1 com `auth.users`, com `role` e `sector_id`), `tasks` (Kanban, por setor), `attendance` (ponto/presença), `files` (módulo Arquivos, com posição `pos_x`/`pos_y` livre, `drive_file_id` e `chatbot_id` para a pasta do bot), `ai_config` (chave de IA por usuário) e `company_settings` (nome, logo, Modo TV, Google Drive). Módulo de atendimento/CRM: `contacts`, `conversations` (com `protocol` sequencial, `number_id`, `last_message`), `whatsapp_messages`, `internal_messages`, `announcements` (mural), `tags` + `contact_tags` (etiquetas), `chatbots` (assistentes configuráveis) e `whatsapp_numbers` + `whatsapp_number_access` (multicanal e permissões por número). RLS aplica a hierarquia de permissões diretamente no banco:
 
 - **Gestor**: acesso total.
 - **Gerente/Funcionário**: só veem e editam tarefas do próprio setor (`sector_id` do seu perfil); só o Gestor (ou o Gerente do setor sendo visualizado) pode criar tarefas.
 - Qualquer autenticado pode ler `sectors`/`profiles`/`company_settings`/`files`, mas escrita é restrita por papel.
 - `ai_config` é privado por usuário (`auth.uid() = user_id`).
+- **Conversas por número**: a leitura das conversas respeita `whatsapp_number_access` via a função `can_access_number()` — se um número tem setores/pessoas marcados, só eles veem aquelas conversas; sem restrição, todos os autenticados veem. Gestor gerencia números, chatbots e etiquetas.
+- O `whatsapp-service` usa a **service_role key** (só no Railway, nunca no navegador) para gravar contatos/conversas/mensagens sem depender de um usuário logado.
 
 ## Integração com WhatsApp
 
@@ -41,7 +43,24 @@ A conexão usa [Baileys](https://github.com/WhiskeySockets/Baileys), que fala di
 
 **Importante:** a sessão do WhatsApp precisa de um processo sempre ligado, o que a Vercel (serverless) não oferece. Por isso existe `/whatsapp-service`, um serviço Node separado e independente que você hospeda em algo como Railway/Render/uma VPS — veja `whatsapp-service/README.md` para o passo a passo. Configurando `WHATSAPP_SERVICE_URL` e `WHATSAPP_SERVICE_SECRET` no app principal, a aba WhatsApp passa a falar com esse serviço; sem essas variáveis, ele roda no próprio processo do Next.js (ok para rodar localmente).
 
-Na aba WhatsApp, clique em "Gerar QR Code", escaneie com o celular (WhatsApp > Aparelhos Conectados) e a sessão fica ativa. Quando conectado, mensagens recebidas de clientes são respondidas automaticamente pela IA, a menos que `autoReply` seja desativado.
+### Multicanal (vários números)
+
+Na aba **WhatsApp**, o Gestor adiciona quantos números quiser (ex.: "Vendas", "Suporte"). Cada número:
+
+- Gera seu **próprio QR Code** e roda uma sessão Baileys independente no serviço (`.wa-session/<numberId>`), reconectando sozinho no boot.
+- Pode ter um **setor responsável** (novas conversas já entram naquele setor) e um **chatbot** vinculado.
+- Tem **permissões**: marque setores e/ou funcionários específicos que podem atender aquele número. Sem nada marcado, todos veem.
+
+### Chatbot configurável (auto-resposta)
+
+Em **Configurações → Chatbot de Atendimento**, o Gestor define nome/persona ("Pedro"), saudação de primeiro contato, instruções de comportamento, base de conhecimento (texto + pasta de arquivos própria que também aparece no grafo principal) e o provedor de IA + chave (Anthropic/Gemini/OpenAI). Ligando o chatbot e a "Auto-resposta da IA" no número desejado, ele passa a atender os clientes automaticamente antes de repassar para um humano.
+
+### Atendimento (WhatsApp Web + fila)
+
+- **Aba WhatsApp Web**: layout fiel ao WhatsApp Web, com lista de conversas (prévia da última mensagem, hora, não lidas, etiquetas), busca, filtros (Todos/Espera/Atendendo), etiquetagem de contatos e **sincronia em tempo real** via Supabase Realtime.
+- **Etiquetas automáticas**: todo contato novo recebe a etiqueta "Novo contato"; o Gestor/Gerente cria e aplica outras.
+- **Notificações**: quando entra um cliente na fila, o app toca um sino (repetido até alguém assumir) e dispara notificação do navegador.
+- **Aba Chat** (Atendendo/Espera/Contatos/Interno) e **Atendimentos** (fila com protocolo, filtros, paginação) completam o fluxo.
 
 ## Integração de IA (Anthropic / Gemini)
 
@@ -55,7 +74,7 @@ Em **Configurações → Google Drive**, o Gestor pode ativar a sincronização 
 
 - **UX/Visual**: splash screen animada (portas deslizantes), dock inferior com efeito *liquid glass*, gaveta de aplicativos estilo Android, menu de perfil com logout e alternância de tema claro/escuro.
 - **Copiloto de IA**: chat interno com texto, upload de imagem e gravação de áudio (transcrita no navegador via Web Speech API), com escolha de provedor (Anthropic/Gemini) por usuário.
-- **WhatsApp nativo**: QR Code de conexão, resposta automática via IA, log de conversas e envio manual de teste — pronto para rodar num serviço sempre ligado separado da Vercel.
+- **WhatsApp estilo DropDesk**: multicanal (vários números, cada um com QR e sessão própria), permissões por setor/funcionário por número, chatbot configurável de auto-resposta, aba WhatsApp Web com sincronia em tempo real, etiquetas automáticas e notificações sonoras de novos clientes — pronto para rodar num serviço sempre ligado separado da Vercel.
 - **Arquivos em grafo**: visualização estilo Obsidian, com nós que podem ser livremente arrastados (posição persistida no Supabase), busca, criação de pastas, upload/download e sincronização opcional com o Google Drive.
 - **Organograma visual**: canvas de arrastar/soltar para desenhar setores, definir líder, promover/rebaixar papel de cada funcionário e vincular/remover pessoas de um setor (edição restrita ao Gestor).
 - **Kanban real**: tarefas por setor persistidas no Supabase, criadas via modal (assunto + setor) restrito ao Gestor ou ao Gerente do setor, com drag and drop entre A Fazer / Em Execução / Concluído.
@@ -64,8 +83,9 @@ Em **Configurações → Google Drive**, o Gestor pode ativar a sincronização 
 
 ## Pendências conhecidas / próximos passos
 
-- Deploy efetivo do `/whatsapp-service` (o código está pronto, falta só a hospedagem — ver README dele).
-- Módulo de atendimento estilo CRM (fila de atendimento, contatos, atendentes, mural de avisos, relatórios) — próxima rodada.
+- Módulos **Empresas** (cadastro de empresas-cliente) e **Relatórios** do CRM — próxima rodada.
 - Permissões mais finas no organograma (hoje Gerente só visualiza, não edita seu próprio setor).
 - Upload de foto de perfil próprio (hoje `avatar_url` só vem do Google).
 - Sincronização de arquivos (não só pastas) com o Google Drive.
+- Envio de mídia (foto/áudio/arquivo) pelo WhatsApp — hoje o envio pela plataforma é de texto.
+- O fallback in-process (`lib/whatsapp.ts`, usado sem `WHATSAPP_SERVICE_URL`) é single-número e não persiste no schema novo — use o `whatsapp-service` para o fluxo completo.
