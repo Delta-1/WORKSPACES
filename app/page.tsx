@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, ClipboardList, Headphones, LayoutGrid, Megaphone, MessageCircle, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
+import { Bot, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
@@ -10,13 +10,11 @@ import ProfileMenu from "@/components/ProfileMenu";
 import TVModeOverlay from "@/components/TVModeOverlay";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
-import WhatsappTab from "@/components/tabs/WhatsappTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
 import ConfigTab from "@/components/tabs/ConfigTab";
 import OrgChartTab from "@/components/tabs/OrgChartTab";
 import KanbanTab from "@/components/tabs/KanbanTab";
-import ChatCrmTab from "@/components/tabs/ChatCrmTab";
-import WhatsWebTab from "@/components/tabs/WhatsWebTab";
+import WhatsappHubTab from "@/components/tabs/WhatsappHubTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
@@ -30,11 +28,9 @@ const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "whatsweb", label: "WhatsApp Web", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "atendimento", label: "Chat", icon: Headphones, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "whatsapp", label: "WhatsApp", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "whatsapp", label: "WhatsApp", icon: MessageCircle, accent: "bg-green-800/60", roles: ["gestor", "gerente"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mural", label: "Mural", icon: Megaphone, accent: "bg-orange-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
@@ -220,11 +216,9 @@ export default function Home() {
         {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
-        {tab === "whatsweb" && <WhatsWebTab profile={profile} />}
-        {tab === "atendimento" && <ChatCrmTab profile={profile} />}
+        {tab === "whatsapp" && <WhatsappHubTab profile={profile} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
-        {tab === "whatsapp" && <WhatsappTab profile={profile} />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "mural" && <AnnouncementsTab profile={profile} />}
         {tab === "config" && (
@@ -237,7 +231,7 @@ export default function Home() {
         )}
       </main>
 
-      {profile && <NewConversationNotifier onOpen={() => setTab("whatsweb")} />}
+      {profile && <NewConversationNotifier onOpen={() => setTab("whatsapp")} />}
 
       <Dock apps={visibleApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
       <AppDrawer apps={visibleApps} open={drawerOpen} onClose={() => setDrawerOpen(false)} onSelect={setTab} />
