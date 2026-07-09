@@ -389,6 +389,29 @@ async function resumeSessions() {
 const app = express();
 app.use(express.json());
 
+// Diagnóstico público (sem segredos): mostra se o serviço enxerga as variáveis
+// de ambiente do Supabase em tempo de execução. Fica ANTES do middleware de
+// segurança para poder ser aberto direto no navegador.
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    supabaseConfigured: Boolean(supabase),
+    hasUrl: Boolean(process.env.SUPABASE_URL),
+    hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    hasSecret: Boolean(process.env.WHATSAPP_SERVICE_SECRET),
+    serviceKeyRole: (() => {
+      try {
+        const k = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+        const payload = JSON.parse(Buffer.from(k.split(".")[1] || "", "base64").toString("utf8"));
+        return payload?.role ?? null;
+      } catch {
+        return null;
+      }
+    })(),
+    sessions: Array.from(sessions.values()).map((s) => ({ numberId: s.state.numberId, status: s.state.status })),
+  });
+});
+
 app.use((req, res, next) => {
   if (!SERVICE_SECRET || req.header("x-service-secret") !== SERVICE_SECRET) {
     return res.status(401).json({ error: "unauthorized" });
