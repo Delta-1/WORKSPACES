@@ -65,18 +65,37 @@ async function getNumberConfig(numberId) {
   return { number, chatbot };
 }
 
-let novoContatoTagId = null;
-async function ensureNovoContatoTag() {
-  if (!supabase) return null;
-  if (novoContatoTagId) return novoContatoTagId;
-  const { data } = await supabase.from("tags").select("id").eq("name", "Novo contato").maybeSingle();
-  novoContatoTagId = data?.id ?? null;
-  return novoContatoTagId;
+const novoContatoTagByCompany = new Map();
+async function ensureNovoContatoTag(companyId) {
+  if (!supabase || !companyId) return null;
+  if (novoContatoTagByCompany.has(companyId)) return novoContatoTagByCompany.get(companyId);
+  let { data } = await supabase
+    .from("tags")
+    .select("id")
+    .eq("name", "Novo contato")
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!data) {
+    const ins = await supabase
+      .from("tags")
+      .insert({ name: "Novo contato", color: "#f59e0b", company_id: companyId })
+      .select("id")
+      .maybeSingle();
+    data = ins.data ?? null;
+  }
+  const id = data?.id ?? null;
+  novoContatoTagByCompany.set(companyId, id);
+  return id;
 }
 
-async function upsertContact(phone, name = null) {
+async function upsertContact(phone, name = null, companyId = null) {
   if (!supabase) return null;
-  const { data: existing } = await supabase.from("contacts").select("*").eq("phone", phone).maybeSingle();
+  const { data: existing } = await supabase
+    .from("contacts")
+    .select("*")
+    .eq("phone", phone)
+    .eq("company_id", companyId)
+    .maybeSingle();
   if (existing) {
     if (name && !existing.name) {
       await supabase.from("contacts").update({ name }).eq("id", existing.id);
@@ -84,11 +103,15 @@ async function upsertContact(phone, name = null) {
     }
     return existing;
   }
-  const { data } = await supabase.from("contacts").insert({ phone, name }).select("*").single();
+  const { data } = await supabase
+    .from("contacts")
+    .insert({ phone, name, company_id: companyId })
+    .select("*")
+    .single();
   // Auto-etiqueta o contato recém-criado.
-  const tagId = await ensureNovoContatoTag();
+  const tagId = await ensureNovoContatoTag(companyId);
   if (data && tagId) {
-    await supabase.from("contact_tags").insert({ contact_id: data.id, tag_id: tagId }).then(
+    await supabase.from("contact_tags").insert({ contact_id: data.id, tag_id: tagId, company_id: companyId }).then(
       () => {},
       () => {}
     );
@@ -98,8 +121,8 @@ async function upsertContact(phone, name = null) {
 
 // Sincroniza a agenda de contatos do WhatsApp para a tabela `contacts`,
 // para o usuário ver seus contatos assim que conectar (como no WhatsApp Web).
-async function syncContacts(list) {
-  if (!supabase || !Array.isArray(list) || list.length === 0) return;
+async function syncContacts(list, companyId) {
+  if (!supabase || !companyId || !Array.isArray(list) || list.length === 0) return;
   const withName = [];
   const phoneOnly = [];
   const seen = new Set();
@@ -110,15 +133,17 @@ async function syncContacts(list) {
     if (!phone || seen.has(phone)) continue;
     seen.add(phone);
     const name = c.name || c.notify || c.verifiedName || null;
-    if (name) withName.push({ phone, name });
-    else phoneOnly.push({ phone });
+    if (name) withName.push({ phone, name, company_id: companyId });
+    else phoneOnly.push({ phone, company_id: companyId });
   }
   try {
     for (let i = 0; i < withName.length; i += 200) {
-      await supabase.from("contacts").upsert(withName.slice(i, i + 200), { onConflict: "phone" });
+      await supabase.from("contacts").upsert(withName.slice(i, i + 200), { onConflict: "company_id,phone" });
     }
     for (let i = 0; i < phoneOnly.length; i += 200) {
-      await supabase.from("contacts").upsert(phoneOnly.slice(i, i + 200), { onConflict: "phone", ignoreDuplicates: true });
+      await supabase
+        .from("contacts")
+        .upsert(phoneOnly.slice(i, i + 200), { onConflict: "company_id,phone", ignoreDuplicates: true });
     }
     if (withName.length || phoneOnly.length) {
       console.log(`Synced ${withName.length + phoneOnly.length} WhatsApp contacts`);
@@ -128,7 +153,7 @@ async function syncContacts(list) {
   }
 }
 
-async function findOrCreateOpenConversation(contactId, numberId, sectorId) {
+async function findOrCreateOpenConversation(contactId, numberId, sectorId, companyId) {
   if (!supabase) return { conversation: null, created: false };
   const { data: existing } = await supabase
     .from("conversations")
@@ -141,7 +166,13 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId) {
   if (existing) return { conversation: existing, created: false };
   const { data } = await supabase
     .from("conversations")
-    .insert({ contact_id: contactId, status: "espera", number_id: numberId ?? null, sector_id: sectorId ?? null })
+    .insert({
+      contact_id: contactId,
+      status: "espera",
+      number_id: numberId ?? null,
+      sector_id: sectorId ?? null,
+      company_id: companyId ?? null,
+    })
     .select("*")
     .single();
   return { conversation: data, created: true };
@@ -156,13 +187,14 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
     direction,
     text: mediaLabel(media, text) || null,
     sender_id: senderId,
+    company_id: companyId,
   };
   if (media) {
     row.media_type = media.type;
@@ -302,13 +334,16 @@ async function startSession(numberId) {
 
     // Sincroniza a agenda de contatos do WhatsApp assim que conectar e a cada atualização.
     sock.ev.on("messaging-history.set", async ({ contacts }) => {
-      await syncContacts(contacts);
+      const { number } = await getNumberConfig(numberId);
+      await syncContacts(contacts, number?.company_id ?? null);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
-      await syncContacts(contacts);
+      const { number } = await getNumberConfig(numberId);
+      await syncContacts(contacts, number?.company_id ?? null);
     });
     sock.ev.on("contacts.update", async (contacts) => {
-      await syncContacts(contacts);
+      const { number } = await getNumberConfig(numberId);
+      await syncContacts(contacts, number?.company_id ?? null);
     });
 
     sock.ev.on("connection.update", async (update) => {
@@ -381,25 +416,27 @@ async function startSession(numberId) {
 
         try {
           const { number, chatbot } = await getNumberConfig(numberId);
-          const contact = await upsertContact(phone, msg.pushName || null);
+          const cid = number?.company_id ?? null;
+          const contact = await upsertContact(phone, msg.pushName || null, cid);
           const { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
             numberId,
-            number?.sector_id ?? null
+            number?.sector_id ?? null,
+            cid
           );
-          await logMessage(conversation.id, "in", text, null, media);
+          await logMessage(conversation.id, "in", text, null, media, cid);
 
           const botOn = number?.auto_reply && chatbot?.enabled;
           if (botOn) {
             // Saudação apenas na abertura da conversa.
             if (created && chatbot?.greeting) {
               await sock.sendMessage(jid, { text: chatbot.greeting });
-              await logMessage(conversation.id, "out", chatbot.greeting);
+              await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid);
             }
             const reply = text ? await runChatbotReply(chatbot, text) : null;
             if (reply) {
               await sock.sendMessage(jid, { text: reply });
-              await logMessage(conversation.id, "out", reply);
+              await logMessage(conversation.id, "out", reply, null, null, cid);
             }
           }
         } catch (err) {
@@ -467,10 +504,11 @@ async function sendMessage(numberId, to, text, senderId, media) {
 
   const phone = jid.split("@")[0];
   const { number } = await getNumberConfig(numberId);
-  const contact = await upsertContact(phone);
+  const cid = number?.company_id ?? null;
+  const contact = await upsertContact(phone, null, cid);
   if (contact) {
-    const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null);
-    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null);
+    const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
+    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid);
   }
 }
 
