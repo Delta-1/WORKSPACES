@@ -6,7 +6,12 @@ export type CompanyInfo = {
   logoDataUrl: string | null;
   tvLogoCorner: CompanySettingsRow["tv_logo_corner"];
   googleDriveEnabled: boolean;
+  themeColor: string;
+  logoSize: number;
 };
+
+const DEFAULT_THEME = "#10b981";
+const DEFAULT_LOGO_SIZE = 36;
 
 export async function fetchCompany(): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
@@ -17,12 +22,21 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         logoDataUrl: data.logo_url,
         tvLogoCorner: data.tv_logo_corner,
         googleDriveEnabled: data.google_drive_enabled,
+        themeColor: data.theme_color ?? DEFAULT_THEME,
+        logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
       };
     }
   }
   const res = await fetch("/api/company");
   const json = await res.json();
-  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left", googleDriveEnabled: false };
+  return {
+    name: json.name,
+    logoDataUrl: json.logoDataUrl,
+    tvLogoCorner: "top-left",
+    googleDriveEnabled: false,
+    themeColor: DEFAULT_THEME,
+    logoSize: DEFAULT_LOGO_SIZE,
+  };
 }
 
 export async function updateCompany(update: Partial<CompanyInfo>): Promise<CompanyInfo> {
@@ -34,6 +48,8 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.logoDataUrl !== undefined ? { logo_url: update.logoDataUrl } : {}),
         ...(update.tvLogoCorner !== undefined ? { tv_logo_corner: update.tvLogoCorner } : {}),
         ...(update.googleDriveEnabled !== undefined ? { google_drive_enabled: update.googleDriveEnabled } : {}),
+        ...(update.themeColor !== undefined ? { theme_color: update.themeColor } : {}),
+        ...(update.logoSize !== undefined ? { logo_size: update.logoSize } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", true)
@@ -45,6 +61,8 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         logoDataUrl: data.logo_url,
         tvLogoCorner: data.tv_logo_corner,
         googleDriveEnabled: data.google_drive_enabled,
+        themeColor: data.theme_color ?? DEFAULT_THEME,
+        logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
       };
     }
   }
@@ -54,5 +72,12 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
     body: JSON.stringify({ name: update.name, logoDataUrl: update.logoDataUrl }),
   });
   const json = await res.json();
-  return { name: json.name, logoDataUrl: json.logoDataUrl, tvLogoCorner: "top-left", googleDriveEnabled: false };
+  return {
+    name: json.name,
+    logoDataUrl: json.logoDataUrl,
+    tvLogoCorner: "top-left",
+    googleDriveEnabled: false,
+    themeColor: DEFAULT_THEME,
+    logoSize: DEFAULT_LOGO_SIZE,
+  };
 }

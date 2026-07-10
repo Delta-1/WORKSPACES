@@ -16,20 +16,28 @@ const CORNERS: { id: Corner; label: string }[] = [
   { id: "bottom-right", label: "Inferior direito" },
 ];
 
+const THEME_PRESETS = ["#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#ef4444", "#14b8a6", "#6366f1"];
+
 export default function ConfigTab({
   companyName,
   tvLogoCorner,
   googleDriveEnabled,
+  themeColor,
+  logoSize,
   onUpdateCompany,
 }: {
   companyName: string;
   tvLogoCorner: Corner;
   googleDriveEnabled: boolean;
+  themeColor: string;
+  logoSize: number;
   onUpdateCompany: (update: {
     name?: string;
     logoDataUrl?: string;
     tvLogoCorner?: Corner;
     googleDriveEnabled?: boolean;
+    themeColor?: string;
+    logoSize?: number;
   }) => void;
 }) {
   const [name, setName] = useState(companyName);
@@ -87,6 +95,44 @@ export default function ConfigTab({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Tamanho da logo ({logoSize}px)
+            </label>
+            <input
+              type="range"
+              min={24}
+              max={72}
+              value={logoSize}
+              onChange={(e) => onUpdateCompany({ logoSize: Number(e.target.value) })}
+              className="w-full accent-emerald-600 cursor-pointer"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Cor tema do site
+            </label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {THEME_PRESETS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => onUpdateCompany({ themeColor: c })}
+                  title={c}
+                  className="w-7 h-7 rounded-full cursor-pointer border-2"
+                  style={{ backgroundColor: c, borderColor: themeColor === c ? "#fff" : "transparent" }}
+                />
+              ))}
+              <input
+                type="color"
+                value={themeColor}
+                onChange={(e) => onUpdateCompany({ themeColor: e.target.value })}
+                title="Cor personalizada"
+                className="w-8 h-8 rounded cursor-pointer bg-transparent border border-white/10"
+              />
+            </div>
           </div>
         </div>
 

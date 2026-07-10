@@ -49,6 +49,8 @@ export type CompanySettingsRow = {
   tv_logo_corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   google_drive_enabled: boolean;
   google_drive_root_folder_id: string | null;
+  theme_color: string;
+  logo_size: number;
   updated_at: string;
 };
 

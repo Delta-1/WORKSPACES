@@ -3,6 +3,34 @@
 :root {
   --background: #060a12;
   --foreground: #e2e8f0;
+  --accent: #10b981;
+  --accent-hover: #34d399;
+}
+
+/* Cor tema configurável: recolore os destaques (verde esmeralda por padrão). */
+.bg-emerald-600 {
+  background-color: var(--accent) !important;
+}
+.hover\:bg-emerald-500:hover {
+  background-color: var(--accent-hover) !important;
+}
+.text-emerald-400 {
+  color: var(--accent) !important;
+}
+.text-emerald-500 {
+  color: var(--accent) !important;
+}
+.bg-emerald-500 {
+  background-color: var(--accent) !important;
+}
+.border-emerald-600 {
+  border-color: var(--accent) !important;
+}
+.border-emerald-500 {
+  border-color: var(--accent) !important;
+}
+.accent-ring {
+  border-color: var(--accent) !important;
 }
 
 html.light {

@@ -36,6 +36,17 @@ const APPS: AppDef[] = [
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
 
+function lightenHex(hex: string, percent: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const num = parseInt(m[1], 16);
+  const amt = Math.round(2.55 * percent);
+  const r = Math.min(255, (num >> 16) + amt);
+  const g = Math.min(255, ((num >> 8) & 0xff) + amt);
+  const b = Math.min(255, (num & 0xff) + amt);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
 const ROLE_LABEL: Record<Role, string> = {
   gestor: "Gestor Geral",
   gerente: "Administrador de Setor",
@@ -57,6 +68,8 @@ export default function Home() {
     logoDataUrl: null,
     tvLogoCorner: "top-left",
     googleDriveEnabled: false,
+    themeColor: "#10b981",
+    logoSize: 36,
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -72,6 +85,13 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
+
+  useEffect(() => {
+    const color = company.themeColor || "#10b981";
+    const root = document.documentElement;
+    root.style.setProperty("--accent", color);
+    root.style.setProperty("--accent-hover", lightenHex(color, 18));
+  }, [company.themeColor]);
 
   useEffect(() => {
     if (!supabase) {
@@ -152,8 +172,9 @@ export default function Home() {
   }
 
   async function handleUpdateCompany(update: Partial<CompanyInfo>) {
+    setCompany((prev) => ({ ...prev, ...update })); // feedback imediato
     const next = await persistCompany(update);
-    setCompany(next);
+    setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, logoSize: update.logoSize ?? next.logoSize }));
   }
 
   const visibleApps = APPS.filter((a) => a.roles.includes(role));
@@ -192,9 +213,17 @@ export default function Home() {
       <header className="h-16 px-6 flex items-center justify-between shrink-0 border-b border-white/5">
         <div className="flex items-center gap-3">
           {company.logoDataUrl ? (
-            <img src={company.logoDataUrl} className="w-9 h-9 rounded-lg object-cover" alt="Logo" />
+            <img
+              src={company.logoDataUrl}
+              style={{ width: company.logoSize, height: company.logoSize }}
+              className="rounded-lg object-cover shrink-0"
+              alt="Logo"
+            />
           ) : (
-            <div className="w-9 h-9 rounded-lg bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 text-xs font-bold">
+            <div
+              style={{ width: company.logoSize, height: company.logoSize }}
+              className="rounded-lg bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 text-xs font-bold shrink-0"
+            >
               {company.name.charAt(0)}
             </div>
           )}
@@ -226,6 +255,8 @@ export default function Home() {
             companyName={company.name}
             tvLogoCorner={company.tvLogoCorner}
             googleDriveEnabled={company.googleDriveEnabled}
+            themeColor={company.themeColor}
+            logoSize={company.logoSize}
             onUpdateCompany={handleUpdateCompany}
           />
         )}

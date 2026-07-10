@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, FileText, FolderPlus, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import MiniFileGraph from "@/components/MiniFileGraph";
 import type { AiProvider, Chatbot, FileNodeRow } from "@/lib/types";
 
 const PROVIDERS: { id: AiProvider; label: string }[] = [
@@ -247,6 +248,13 @@ export default function ChatbotSection() {
             />
           </div>
         </div>
+        <div className="mb-3">
+          <MiniFileGraph files={files} height={220} />
+          <p className="text-[10px] text-gray-500 mt-1 text-center">
+            Grafo das pastas e arquivos que a IA acessa (bolinhas maiores = pastas).
+          </p>
+        </div>
+
         {files.length === 0 ? (
           <p className="text-[11px] text-gray-500 italic">Nenhum arquivo. Adicione materiais para o bot consultar.</p>
         ) : (
