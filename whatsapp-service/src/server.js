@@ -3,7 +3,15 @@ import QRCode from "qrcode";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage } from "baileys";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  downloadMediaMessage,
+  initAuthCreds,
+  BufferJSON,
+  makeCacheableSignalKeyStore,
+  proto,
+} from "baileys";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -313,6 +321,70 @@ async function runChatbotReply(chatbot, customerText) {
 }
 
 // ---------------------------------------------------------------------------
+// Auth state persistido no Supabase (sobrevive a reinícios/deploys)
+// ---------------------------------------------------------------------------
+async function useSupabaseAuthState(numberId) {
+  const readKey = async (key) => {
+    const { data } = await supabase
+      .from("wa_auth")
+      .select("value")
+      .eq("number_id", numberId)
+      .eq("key", key)
+      .maybeSingle();
+    if (!data?.value) return null;
+    return JSON.parse(JSON.stringify(data.value), BufferJSON.reviver);
+  };
+  const writeKey = async (key, value) => {
+    const stored = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
+    await supabase
+      .from("wa_auth")
+      .upsert({ number_id: numberId, key, value: stored, updated_at: new Date().toISOString() }, { onConflict: "number_id,key" });
+  };
+  const removeKey = async (key) => {
+    await supabase.from("wa_auth").delete().eq("number_id", numberId).eq("key", key);
+  };
+
+  const creds = (await readKey("creds")) || initAuthCreds();
+
+  const keys = {
+    get: async (type, ids) => {
+      const result = {};
+      await Promise.all(
+        ids.map(async (id) => {
+          let value = await readKey(`${type}-${id}`);
+          if (type === "app-state-sync-key" && value) {
+            value = proto.Message.AppStateSyncKeyData.fromObject(value);
+          }
+          result[id] = value;
+        })
+      );
+      return result;
+    },
+    set: async (data) => {
+      const tasks = [];
+      for (const category of Object.keys(data)) {
+        for (const id of Object.keys(data[category])) {
+          const value = data[category][id];
+          const key = `${category}-${id}`;
+          tasks.push(value ? writeKey(key, value) : removeKey(key));
+        }
+      }
+      await Promise.all(tasks);
+    },
+  };
+
+  return {
+    state: { creds, keys: makeCacheableSignalKeyStore(keys, noopLogger) },
+    saveCreds: () => writeKey("creds", creds),
+  };
+}
+
+async function clearSupabaseAuthState(numberId) {
+  if (!supabase) return;
+  await supabase.from("wa_auth").delete().eq("number_id", numberId);
+}
+
+// ---------------------------------------------------------------------------
 // Baileys session lifecycle (per number)
 // ---------------------------------------------------------------------------
 async function startSession(numberId) {
@@ -321,9 +393,14 @@ async function startSession(numberId) {
   s.starting = true;
   s.state.lastError = null;
   try {
-    const authDir = path.join(AUTH_ROOT, numberId);
-    if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
-    const { state: authState, saveCreds } = await useMultiFileAuthState(authDir);
+    let authState, saveCreds;
+    if (supabase) {
+      ({ state: authState, saveCreds } = await useSupabaseAuthState(numberId));
+    } else {
+      const authDir = path.join(AUTH_ROOT, numberId);
+      if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+      ({ state: authState, saveCreds } = await useMultiFileAuthState(authDir));
+    }
 
     s.state.status = "connecting";
     await setNumberStatus(numberId, "connecting");
@@ -466,7 +543,8 @@ async function disconnectSession(numberId) {
   }
   s.state = blankState(numberId);
   await setNumberStatus(numberId, "disconnected", null);
-  // wipe stored creds so the next connect asks for a fresh QR
+  // apaga a sessão salva para o próximo connect pedir um novo QR
+  await clearSupabaseAuthState(numberId);
   try {
     const authDir = path.join(AUTH_ROOT, numberId);
     if (fs.existsSync(authDir)) fs.rmSync(authDir, { recursive: true, force: true });
@@ -512,13 +590,14 @@ async function sendMessage(numberId, to, text, senderId, media) {
   }
 }
 
-// On boot, resume any number that was previously connected (creds on disk).
+// No boot, retoma automaticamente todo número que tem sessão salva no banco.
 async function resumeSessions() {
   if (!supabase) return;
-  const { data } = await supabase.from("whatsapp_numbers").select("id").eq("status", "connected");
-  for (const row of data ?? []) {
-    const authDir = path.join(AUTH_ROOT, row.id);
-    if (fs.existsSync(authDir)) void startSession(row.id);
+  const { data } = await supabase.from("wa_auth").select("number_id").eq("key", "creds");
+  const ids = [...new Set((data ?? []).map((r) => r.number_id))];
+  for (const id of ids) {
+    console.log(`Resuming WhatsApp session for number ${id}`);
+    void startSession(id);
   }
 }
 
