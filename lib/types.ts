@@ -7,7 +7,26 @@ export type Profile = {
   avatar_url: string | null;
   role: Role;
   sector_id: string | null;
+  company_id: string | null;
   whatsapp_number: string | null;
+  created_at: string;
+};
+
+export type Company = {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  theme_color: string;
+  logo_size: number;
+  cnpj: string | null;
+  razao_social: string | null;
+  company_type: string | null;
+  employee_count: number | null;
+  company_code: string;
+  plan: string;
+  ai_addon: boolean;
+  subscription_status: string;
+  owner_id: string | null;
   created_at: string;
 };
 

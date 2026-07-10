@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Bot, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
+import OnboardingScreen from "@/components/OnboardingScreen";
+import PlansScreen from "@/components/PlansScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
 import AppDrawer from "@/components/AppDrawer";
@@ -20,7 +22,7 @@ import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
-import type { Profile, Role } from "@/lib/types";
+import type { Company, Profile, Role } from "@/lib/types";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 
@@ -55,6 +57,7 @@ const ROLE_LABEL: Record<Role, string> = {
 
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [myCompany, setMyCompany] = useState<Company | null>(null);
   const [demoUser, setDemoUser] = useState<{ name: string } | null>(null);
   const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -93,6 +96,26 @@ export default function Home() {
     root.style.setProperty("--accent-hover", lightenHex(color, 18));
   }, [company.themeColor]);
 
+  async function loadCompany(companyId: string | null) {
+    if (!supabase || !companyId) {
+      setMyCompany(null);
+      return;
+    }
+    const { data } = await supabase.from("companies").select("*").eq("id", companyId).maybeSingle();
+    setMyCompany((data as Company | null) ?? null);
+  }
+
+  // Recarrega perfil + empresa após onboarding / escolha de plano.
+  async function refreshIdentity() {
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc("ensure_profile", { p_full_name: null, p_avatar_url: null });
+    if (!error && data) {
+      const p = data as Profile;
+      setProfile(p);
+      await loadCompany(p.company_id);
+    }
+  }
+
   useEffect(() => {
     if (!supabase) {
       setCheckingSession(false);
@@ -130,7 +153,10 @@ export default function Home() {
       if (!mounted) return;
       if (data.session?.user) {
         const p = await loadProfile(data.session.user);
-        if (mounted && p) setProfile(p);
+        if (mounted && p) {
+          setProfile(p);
+          await loadCompany(p.company_id);
+        }
       }
       setCheckingSession(false);
     });
@@ -140,7 +166,10 @@ export default function Home() {
       if (event === "SIGNED_IN" && session?.user) {
         const p = await loadProfile(session.user);
         if (!mounted) return;
-        if (p) setProfile(p);
+        if (p) {
+          setProfile(p);
+          await loadCompany(p.company_id);
+        }
         if (!sawInitialLogin) {
           sawInitialLogin = true;
           setShowSplash(true);
@@ -148,6 +177,7 @@ export default function Home() {
       }
       if (event === "SIGNED_OUT") {
         setProfile(null);
+        setMyCompany(null);
         setTab("inicio");
       }
     });
@@ -185,6 +215,16 @@ export default function Home() {
 
   if (!isAuthenticated) {
     return <LoginScreen onLogin={handleDemoLogin} externalError={authError} />;
+  }
+
+  // Usuário logado mas sem empresa → onboarding (criar empresa ou entrar com código)
+  if (profile && !profile.company_id) {
+    return <OnboardingScreen onDone={refreshIdentity} onLogout={handleLogout} />;
+  }
+
+  // Dono de empresa recém-criada ainda sem plano escolhido → tela de planos
+  if (profile && myCompany && myCompany.owner_id === profile.id && myCompany.subscription_status === "trial") {
+    return <PlansScreen company={myCompany} onDone={refreshIdentity} onLogout={handleLogout} />;
   }
 
   if (showSplash) {
@@ -253,6 +293,7 @@ export default function Home() {
         {tab === "config" && (
           <ConfigTab
             companyName={company.name}
+            companyCode={myCompany?.company_code}
             tvLogoCorner={company.tvLogoCorner}
             googleDriveEnabled={company.googleDriveEnabled}
             themeColor={company.themeColor}

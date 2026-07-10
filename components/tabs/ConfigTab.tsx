@@ -20,6 +20,7 @@ const THEME_PRESETS = ["#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#
 
 export default function ConfigTab({
   companyName,
+  companyCode,
   tvLogoCorner,
   googleDriveEnabled,
   themeColor,
@@ -27,6 +28,7 @@ export default function ConfigTab({
   onUpdateCompany,
 }: {
   companyName: string;
+  companyCode?: string | null;
   tvLogoCorner: Corner;
   googleDriveEnabled: boolean;
   themeColor: string;
@@ -69,6 +71,30 @@ export default function ConfigTab({
               className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
             />
           </div>
+
+          {companyCode && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                Código empresarial (para os funcionários entrarem)
+              </label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-black/30 border border-emerald-700/40 rounded-lg px-3 py-2 text-lg font-mono tracking-widest text-emerald-400">
+                  {companyCode}
+                </code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(companyCode);
+                  }}
+                  className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer"
+                >
+                  Copiar
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Compartilhe este código com seus colaboradores para eles acessarem a empresa no login.
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
               <ImageIcon size={14} /> Logotipo corporativo
