@@ -1,11 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, File as FileIcon, Folder, FolderPlus, Search, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { FileNodeRow, Profile } from "@/lib/types";
 
 type PositionedNode = FileNodeRow & { pos_x: number; pos_y: number };
+
+// Centro inicial (recalculado dinamicamente a partir do tamanho do container)
+const CENTER_X = 450;
+const CENTER_Y = 300;
+
+// Parâmetros da simulação de forças (estilo grafo do Obsidian)
+const CHARGE = 11000; // repulsão entre nós
+const LINK_LEN = 95; // comprimento de repouso das ligações
+const LINK_K = 0.045; // rigidez das ligações (mola)
+const GRAVITY = 0.03; // atração suave para o centro
+const FRICTION = 0.75; // amortecimento (quanto menor, mais "parado")
+const V_CLAMP = 40; // limite de velocidade
+const ALPHA_DECAY = 0.985;
+const ALPHA_MIN = 0.02;
 
 function computeMissingPositions(nodes: FileNodeRow[]): FileNodeRow[] {
   const byParent = new Map<string | null, FileNodeRow[]>();
@@ -15,8 +29,6 @@ function computeMissingPositions(nodes: FileNodeRow[]): FileNodeRow[] {
     byParent.set(n.parent_id, list);
   });
   const result = new Map(nodes.map((n) => [n.id, { ...n }]));
-  const centerX = 480;
-  const centerY = 320;
 
   function place(id: string | null, depth: number, angleStart: number, angleEnd: number) {
     const children = byParent.get(id) ?? [];
@@ -25,24 +37,54 @@ function computeMissingPositions(nodes: FileNodeRow[]): FileNodeRow[] {
       const node = result.get(child.id)!;
       if (node.pos_x === null || node.pos_y === null) {
         const angle = angleStart + step * (i + 0.5);
-        const radius = depth * 160;
-        node.pos_x = centerX + radius * Math.cos(angle);
-        node.pos_y = centerY + radius * Math.sin(angle);
+        const radius = depth * 150;
+        node.pos_x = CENTER_X + radius * Math.cos(angle);
+        node.pos_y = CENTER_Y + radius * Math.sin(angle);
       }
       place(child.id, depth + 1, angleStart + step * i, angleStart + step * (i + 1));
     });
   }
 
-  const root = nodes.find((n) => n.parent_id === null);
-  if (root) {
+  const roots = nodes.filter((n) => n.parent_id === null);
+  roots.forEach((root, idx) => {
     const rootNode = result.get(root.id)!;
     if (rootNode.pos_x === null || rootNode.pos_y === null) {
-      rootNode.pos_x = centerX;
-      rootNode.pos_y = centerY;
+      rootNode.pos_x = CENTER_X + (idx - (roots.length - 1) / 2) * 80;
+      rootNode.pos_y = CENTER_Y;
     }
     place(root.id, 1, 0, Math.PI * 2);
-  }
+  });
   return Array.from(result.values());
+}
+
+// Dados de exemplo para o modo demo (sem Supabase), só para visualizar o grafo.
+function demoNodes(): PositionedNode[] {
+  const mk = (id: string, name: string, type: "folder" | "file", parent: string | null): PositionedNode => ({
+    id,
+    name,
+    type,
+    parent_id: parent,
+    uploaded_by: null,
+    data_url: null,
+    drive_file_id: null,
+    chatbot_id: null,
+    pos_x: CENTER_X + (Math.random() - 0.5) * 200,
+    pos_y: CENTER_Y + (Math.random() - 0.5) * 200,
+    created_at: new Date().toISOString(),
+  });
+  return [
+    mk("r", "Empresa", "folder", null),
+    mk("a", "Financeiro", "folder", "r"),
+    mk("b", "Marketing", "folder", "r"),
+    mk("c", "Operações", "folder", "r"),
+    mk("a1", "Balanço.pdf", "file", "a"),
+    mk("a2", "Notas.xlsx", "file", "a"),
+    mk("b1", "Campanha.png", "file", "b"),
+    mk("b2", "Roteiro.doc", "file", "b"),
+    mk("c1", "Manual.pdf", "file", "c"),
+    mk("c2", "Escala.xlsx", "file", "c"),
+    mk("c3", "Checklist.txt", "file", "c"),
+  ];
 }
 
 export default function FilesGraphTab({ profile }: { profile: Profile | null }) {
@@ -57,12 +99,148 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     positions: Map<string, { x: number; y: number }>;
   } | null>(null);
 
-  async function load() {
+  // Estado da simulação de forças
+  const nodesRef = useRef<PositionedNode[]>([]);
+  const velRef = useRef<Map<string, { vx: number; vy: number }>>(new Map());
+  const fixedRef = useRef<Set<string>>(new Set());
+  const alphaRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const settledPersistRef = useRef(false);
+  const sizeRef = useRef({ w: CENTER_X * 2, h: CENTER_Y * 2 });
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  // Acompanha o tamanho real do container para centralizar/limitar o grafo.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      if (el.clientWidth && el.clientHeight) sizeRef.current = { w: el.clientWidth, h: el.clientHeight };
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const persistPositions = useCallback(async () => {
     if (!supabase) return;
+    const client = supabase;
+    await Promise.all(
+      nodesRef.current.map((n) =>
+        client.from("files").update({ pos_x: Math.round(n.pos_x), pos_y: Math.round(n.pos_y) }).eq("id", n.id)
+      )
+    ).catch(() => {});
+  }, []);
+
+  const tick = useCallback(() => {
+    const list = nodesRef.current;
+    if (list.length === 0) {
+      rafRef.current = null;
+      return;
+    }
+    const { w, h } = sizeRef.current;
+    const cx = w / 2;
+    const cy = h / 2;
+    const fx = new Map<string, number>();
+    const fy = new Map<string, number>();
+    for (const n of list) {
+      fx.set(n.id, (cx - n.pos_x) * GRAVITY);
+      fy.set(n.id, (cy - n.pos_y) * GRAVITY);
+    }
+    // Repulsão entre todos os pares (campo tipo elétrico/gravitacional)
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        let dx = a.pos_x - b.pos_x;
+        let dy = a.pos_y - b.pos_y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) {
+          dx = (Math.random() - 0.5) * 2;
+          dy = (Math.random() - 0.5) * 2;
+          d2 = dx * dx + dy * dy;
+        }
+        const d = Math.sqrt(d2);
+        const rep = CHARGE / d2;
+        const rx = (dx / d) * rep;
+        const ry = (dy / d) * rep;
+        fx.set(a.id, (fx.get(a.id) ?? 0) + rx);
+        fy.set(a.id, (fy.get(a.id) ?? 0) + ry);
+        fx.set(b.id, (fx.get(b.id) ?? 0) - rx);
+        fy.set(b.id, (fy.get(b.id) ?? 0) - ry);
+      }
+    }
+    // Molas nas ligações (pai -> filho)
+    const byIdLocal = new Map(list.map((n) => [n.id, n]));
+    for (const n of list) {
+      if (!n.parent_id) continue;
+      const p = byIdLocal.get(n.parent_id);
+      if (!p) continue;
+      const dx = n.pos_x - p.pos_x;
+      const dy = n.pos_y - p.pos_y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const force = (d - LINK_LEN) * LINK_K;
+      const ax = (dx / d) * force;
+      const ay = (dy / d) * force;
+      fx.set(n.id, (fx.get(n.id) ?? 0) - ax);
+      fy.set(n.id, (fy.get(n.id) ?? 0) - ay);
+      fx.set(p.id, (fx.get(p.id) ?? 0) + ax);
+      fy.set(p.id, (fy.get(p.id) ?? 0) + ay);
+    }
+
+    const alpha = alphaRef.current;
+    const next = list.map((n) => {
+      if (fixedRef.current.has(n.id)) return n; // nós arrastados ficam presos ao ponteiro
+      const v = velRef.current.get(n.id) ?? { vx: 0, vy: 0 };
+      let vx = (v.vx + (fx.get(n.id) ?? 0)) * FRICTION;
+      let vy = (v.vy + (fy.get(n.id) ?? 0)) * FRICTION;
+      vx = Math.max(-V_CLAMP, Math.min(V_CLAMP, vx));
+      vy = Math.max(-V_CLAMP, Math.min(V_CLAMP, vy));
+      velRef.current.set(n.id, { vx, vy });
+      const nx = Math.max(40, Math.min(w - 40, n.pos_x + vx * alpha));
+      const ny = Math.max(40, Math.min(h - 48, n.pos_y + vy * alpha));
+      return { ...n, pos_x: nx, pos_y: ny };
+    });
+    nodesRef.current = next;
+    setNodes(next);
+
+    alphaRef.current = alpha * ALPHA_DECAY;
+    if (alphaRef.current > ALPHA_MIN) {
+      rafRef.current = requestAnimationFrame(tick);
+    } else {
+      rafRef.current = null;
+      if (!settledPersistRef.current) {
+        settledPersistRef.current = true;
+        persistPositions();
+      }
+    }
+  }, [persistPositions]);
+
+  const kick = useCallback(
+    (energy = 1) => {
+      alphaRef.current = Math.max(alphaRef.current, energy);
+      settledPersistRef.current = false;
+      if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick);
+    },
+    [tick]
+  );
+
+  async function load() {
+    if (!supabase) {
+      const demo = demoNodes();
+      setNodes(demo);
+      nodesRef.current = demo;
+      kick(1);
+      return;
+    }
     const { data } = await supabase.from("files").select("*").order("created_at");
     if (!data) return;
     const withPositions = computeMissingPositions(data) as PositionedNode[];
     setNodes(withPositions);
+    nodesRef.current = withPositions;
     const toPersist = withPositions.filter((n) => {
       const original = data.find((d) => d.id === n.id);
       return original && (original.pos_x === null || original.pos_y === null);
@@ -70,10 +248,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     for (const n of toPersist) {
       await supabase.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", n.id);
     }
+    kick(0.6);
   }
 
   useEffect(() => {
     load();
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -88,7 +270,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       const targetFolder = nodes.find((n) => n.type === "folder")?.id;
       if (!targetFolder) return;
       const parent = byId.get(targetFolder)!;
-      const siblingCount = nodes.filter((n) => n.parent_id === targetFolder).length;
       const { data } = await client
         .from("files")
         .insert({
@@ -97,12 +278,15 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           parent_id: targetFolder,
           uploaded_by: profile?.id ?? null,
           data_url: reader.result as string,
-          pos_x: parent.pos_x + 120 + siblingCount * 20,
-          pos_y: parent.pos_y + 100,
+          pos_x: parent.pos_x + (Math.random() - 0.5) * 40,
+          pos_y: parent.pos_y + (Math.random() - 0.5) * 40,
         })
         .select("*")
         .single();
-      if (data) setNodes((prev) => [...prev, data as PositionedNode]);
+      if (data) {
+        setNodes((prev) => [...prev, data as PositionedNode]);
+        kick(1);
+      }
     };
     reader.readAsDataURL(file);
   }
@@ -112,7 +296,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const parentId = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.parent_id === null)?.id;
     if (!parentId) return;
     const parent = byId.get(parentId)!;
-    const siblingCount = nodes.filter((n) => n.parent_id === parentId).length;
     const { data } = await supabase
       .from("files")
       .insert({
@@ -120,14 +303,15 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
         type: "folder",
         parent_id: parentId,
         uploaded_by: profile?.id ?? null,
-        pos_x: parent.pos_x + 140 + siblingCount * 20,
-        pos_y: parent.pos_y + 140,
+        pos_x: parent.pos_x + (Math.random() - 0.5) * 40,
+        pos_y: parent.pos_y + (Math.random() - 0.5) * 40,
       })
       .select("*")
       .single();
     if (data) {
       setNodes((prev) => [...prev, data as PositionedNode]);
       setSelected(data.id);
+      kick(1);
     }
   }
 
@@ -142,11 +326,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     a.click();
   }
 
-  // Every node linked below the dragged one (its whole subtree) moves along
-  // with it, like dragging a node in Obsidian's graph view.
   function collectSubtree(rootId: string): string[] {
     const childrenByParent = new Map<string | null, string[]>();
-    nodes.forEach((n) => {
+    nodesRef.current.forEach((n) => {
       const list = childrenByParent.get(n.parent_id) ?? [];
       list.push(n.id);
       childrenByParent.set(n.parent_id, list);
@@ -164,16 +346,20 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   function onPointerDownNode(e: React.PointerEvent, id: string) {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
     const positions = new Map<string, { x: number; y: number }>();
-    for (const nodeId of collectSubtree(id)) {
+    const subtree = collectSubtree(id);
+    for (const nodeId of subtree) {
       const n = byId.get(nodeId);
-      if (n) positions.set(nodeId, { x: n.pos_x, y: n.pos_y });
+      if (n) {
+        positions.set(nodeId, { x: n.pos_x, y: n.pos_y });
+        fixedRef.current.add(nodeId);
+        velRef.current.set(nodeId, { vx: 0, vy: 0 });
+      }
     }
     dragStart.current = { pointerX: e.clientX, pointerY: e.clientY, positions };
     setDragging(id);
     setSelected(id);
+    kick(0.9); // deixa o resto do grafo reagir enquanto arrasta
   }
 
   function onPointerMove(e: React.PointerEvent) {
@@ -181,30 +367,21 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const { pointerX, pointerY, positions } = dragStart.current;
     const dx = e.clientX - pointerX;
     const dy = e.clientY - pointerY;
-    setNodes((prev) =>
-      prev.map((n) => {
-        const start = positions.get(n.id);
-        return start ? { ...n, pos_x: start.x + dx, pos_y: start.y + dy } : n;
-      })
-    );
+    const next = nodesRef.current.map((n) => {
+      const start = positions.get(n.id);
+      return start ? { ...n, pos_x: start.x + dx, pos_y: start.y + dy } : n;
+    });
+    nodesRef.current = next;
+    setNodes(next);
+    kick(0.9);
   }
 
-  async function onPointerUp() {
-    if (!dragging || !dragStart.current || !supabase) {
-      setDragging(null);
-      dragStart.current = null;
-      return;
-    }
-    const client = supabase;
-    const movedIds = Array.from(dragStart.current.positions.keys());
-    setDragging(null);
+  function onPointerUp() {
+    if (!dragging) return;
+    fixedRef.current.clear();
     dragStart.current = null;
-    await Promise.all(
-      movedIds.map((id) => {
-        const n = byId.get(id);
-        return n ? client.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", id) : null;
-      })
-    );
+    setDragging(null);
+    kick(0.7); // relaxa suavemente e persiste ao assentar
   }
 
   const matches = query
@@ -245,68 +422,68 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       </div>
 
       <div className="flex-1 liquid-glass rounded-2xl overflow-hidden relative">
-      <div
-        ref={containerRef}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-        className="w-full h-full overflow-auto custom-scroll relative"
-      >
-        <div style={{ position: "relative", minWidth: 1400, minHeight: 900 }}>
-          <svg className="absolute inset-0 pointer-events-none" style={{ width: 1400, height: 900 }}>
+        <div
+          ref={containerRef}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+          className="w-full h-full overflow-hidden relative touch-none"
+        >
+          <div className="absolute inset-0">
+            <svg className="absolute inset-0 pointer-events-none w-full h-full">
+              {nodes.map((n) => {
+                if (n.parent_id === null) return null;
+                const parent = byId.get(n.parent_id);
+                if (!parent) return null;
+                return (
+                  <line
+                    key={`edge-${n.id}`}
+                    x1={parent.pos_x}
+                    y1={parent.pos_y}
+                    x2={n.pos_x}
+                    y2={n.pos_y}
+                    stroke="rgba(16,185,129,0.25)"
+                    strokeWidth={1.5}
+                  />
+                );
+              })}
+            </svg>
             {nodes.map((n) => {
-              if (n.parent_id === null) return null;
-              const parent = byId.get(n.parent_id);
-              if (!parent) return null;
+              const dim = matches && !matches.has(n.id);
+              const radius = n.type === "folder" ? 24 : 14;
               return (
-                <line
-                  key={`edge-${n.id}`}
-                  x1={parent.pos_x}
-                  y1={parent.pos_y}
-                  x2={n.pos_x}
-                  y2={n.pos_y}
-                  stroke="rgba(16,185,129,0.25)"
-                  strokeWidth={1.5}
-                />
+                <div
+                  key={n.id}
+                  onPointerDown={(e) => onPointerDownNode(e, n.id)}
+                  style={{ left: n.pos_x - radius, top: n.pos_y - radius, width: radius * 2, height: radius * 2 }}
+                  className="absolute cursor-grab active:cursor-grabbing select-none touch-none"
+                >
+                  <div
+                    className="rounded-full flex items-center justify-center w-full h-full"
+                    style={{
+                      opacity: dim ? 0.25 : 1,
+                      background: n.type === "folder" ? "#064e3b" : "#111827",
+                      border: `1.5px solid ${selected === n.id ? "#10b981" : n.type === "folder" ? "#10b981" : "#374151"}`,
+                      borderWidth: selected === n.id ? 3 : 1.5,
+                    }}
+                  >
+                    {n.type === "folder" ? (
+                      <Folder size={radius} className="text-emerald-400" />
+                    ) : (
+                      <FileIcon size={radius} className="text-gray-400" />
+                    )}
+                  </div>
+                  <span
+                    className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[11px] text-gray-300 whitespace-nowrap select-none"
+                    style={{ opacity: dim ? 0.25 : 1 }}
+                  >
+                    {n.name.length > 18 ? `${n.name.slice(0, 16)}…` : n.name}
+                  </span>
+                </div>
               );
             })}
-          </svg>
-          {nodes.map((n) => {
-            const dim = matches && !matches.has(n.id);
-            const radius = n.type === "folder" ? 24 : 14;
-            return (
-              <div
-                key={n.id}
-                onPointerDown={(e) => onPointerDownNode(e, n.id)}
-                style={{ left: n.pos_x - radius, top: n.pos_y - radius, width: radius * 2, height: radius * 2 }}
-                className="absolute cursor-grab active:cursor-grabbing select-none"
-              >
-                <div
-                  className="rounded-full flex items-center justify-center w-full h-full"
-                  style={{
-                    opacity: dim ? 0.25 : 1,
-                    background: n.type === "folder" ? "#064e3b" : "#111827",
-                    border: `1.5px solid ${selected === n.id ? "#10b981" : n.type === "folder" ? "#10b981" : "#374151"}`,
-                    borderWidth: selected === n.id ? 3 : 1.5,
-                  }}
-                >
-                  {n.type === "folder" ? (
-                    <Folder size={radius} className="text-emerald-400" />
-                  ) : (
-                    <FileIcon size={radius} className="text-gray-400" />
-                  )}
-                </div>
-                <span
-                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[11px] text-gray-300 whitespace-nowrap select-none"
-                  style={{ opacity: dim ? 0.25 : 1 }}
-                >
-                  {n.name.length > 18 ? `${n.name.slice(0, 16)}…` : n.name}
-                </span>
-              </div>
-            );
-          })}
+          </div>
         </div>
-      </div>
 
         {selectedNode && (
           <div className="drawer-anim absolute bottom-4 right-4 liquid-glass rounded-xl p-4 w-64">
