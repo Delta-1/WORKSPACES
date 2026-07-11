@@ -674,7 +674,29 @@ app.post("/send", async (req, res) => {
   }
 });
 
+// Vigia: a cada 60s, garante que todo número com sessão salva esteja conectado.
+// Se a conexão caiu por qualquer motivo, reconecta sozinho (fica "sempre ligado").
+async function watchdog() {
+  if (!supabase) return;
+  try {
+    const { data } = await supabase.from("wa_auth").select("number_id").eq("key", "creds");
+    const ids = [...new Set((data ?? []).map((r) => r.number_id))];
+    for (const id of ids) {
+      const s = sessions.get(id);
+      const st = s?.state?.status;
+      const busy = s?.starting || st === "connecting" || st === "qr_pending";
+      if (st !== "connected" && !busy) {
+        console.log(`Watchdog: reconnecting ${id}`);
+        void startSession(id);
+      }
+    }
+  } catch (err) {
+    console.error("Watchdog error:", err);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on :${PORT}`);
   void resumeSessions();
+  setInterval(watchdog, 60000);
 });
