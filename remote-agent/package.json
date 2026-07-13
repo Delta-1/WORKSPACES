@@ -1,0 +1,30 @@
+{
+  "name": "workspace-remote-agent",
+  "version": "0.1.0",
+  "description": "Agente de acesso remoto (host) da plataforma Workspace — captura a tela e recebe controle de mouse/teclado via WebRTC.",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.workspace.remoteagent",
+    "productName": "Workspace Acesso Remoto",
+    "files": ["src/**/*", "config.json"],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  }
+}

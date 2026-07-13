@@ -3,12 +3,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Download, Monitor, MonitorSmartphone, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import RemoteViewer from "@/components/RemoteViewer";
 import type { Profile, RemoteAgent } from "@/lib/types";
+
+function isOnline(a: RemoteAgent) {
+  if (a.status !== "online" || !a.last_seen) return false;
+  return Date.now() - new Date(a.last_seen).getTime() < 60000;
+}
 
 export default function RemoteAccessTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [viewing, setViewing] = useState<RemoteAgent | null>(null);
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
 
@@ -50,9 +57,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       agentId: agent.id,
       name: agent.name,
       accessCode: agent.access_code,
-      signaling: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+      supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
       instrucoes:
-        "Instale o Agente de Acesso Remoto e importe este arquivo, ou informe o código de acesso quando solicitado.",
+        "Coloque este arquivo (renomeado para config.json) ao lado do Agente de Acesso Remoto e execute-o.",
       criadoEm: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
@@ -96,9 +104,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
         )}
       </div>
 
-      <div className="text-[11px] text-amber-300/90 bg-amber-950/20 border border-amber-800/30 rounded-lg px-3 py-2">
-        Fase 1: aqui você cadastra as máquinas e gera o arquivo de acesso por cliente. O <b>agente instalável</b> (que
-        captura e controla a tela) e o <b>visualizador ao vivo</b> entram na próxima etapa.
+      <div className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+        Gere o acesso, baixe o arquivo e renomeie para <b>config.json</b> ao lado do <b>Agente de Acesso Remoto</b> na
+        máquina do cliente. Quando ficar <b>Online</b>, clique em <b>Conectar</b> para ver e controlar a tela ao vivo
+        (na mesma VPN, conexão direta). O agente fica em <code>/remote-agent</code>.
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
@@ -108,7 +117,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           </p>
         )}
         {agents.map((a) => {
-          const online = a.status === "online";
+          const online = isOnline(a);
           return (
             <div key={a.id} className="liquid-glass rounded-2xl p-4 flex flex-col gap-3">
               <div className="flex items-start justify-between gap-2">
@@ -155,6 +164,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                   <Download size={13} /> Baixar arquivo
                 </button>
                 <button
+                  onClick={() => setViewing(a)}
                   disabled={!online}
                   title={online ? "Conectar" : "A máquina precisa estar online (agente instalado)"}
                   className="flex-1 flex items-center justify-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -166,6 +176,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           );
         })}
       </div>
+
+      {viewing && <RemoteViewer agent={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
