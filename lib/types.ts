@@ -54,6 +54,19 @@ export type WorkspaceTask = {
   updated_at: string;
 };
 
+export type RemoteAgent = {
+  id: string;
+  company_id: string | null;
+  name: string;
+  access_code: string;
+  pin: string | null;
+  status: string;
+  os: string | null;
+  last_seen: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 export type CalendarEvent = {
   id: string;
   company_id: string | null;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, CalendarDays, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
+import { Bot, CalendarDays, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, Sliders, SquareKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -18,6 +18,7 @@ import OrgChartTab from "@/components/tabs/OrgChartTab";
 import KanbanTab from "@/components/tabs/KanbanTab";
 import WhatsappHubTab from "@/components/tabs/WhatsappHubTab";
 import CalendarTab from "@/components/tabs/CalendarTab";
+import RemoteAccessTab from "@/components/tabs/RemoteAccessTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
@@ -37,6 +38,7 @@ const APPS: AppDef[] = [
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mural", label: "Mural", icon: Megaphone, accent: "bg-orange-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
 
@@ -293,6 +295,7 @@ export default function Home() {
         {tab === "chat" && <ChatTab />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "mural" && <AnnouncementsTab profile={profile} />}
+        {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "config" && (
           <ConfigTab
             companyName={company.name}
