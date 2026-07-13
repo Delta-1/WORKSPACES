@@ -1,44 +1,60 @@
 # Workspace — Agente de Acesso Remoto
 
-App desktop (Electron) que roda na máquina do cliente. Ele captura a tela e recebe
+App desktop (Electron) que roda na máquina do cliente. Captura a tela e recebe
 controle de mouse/teclado do operador via **WebRTC**, com sinalização pelo
-**Supabase Realtime**. Feito para uso na **mesma VPN/rede** (conexão direta, sem TURN).
+**Supabase Realtime**. Feito para a **mesma VPN/rede** (conexão direta, sem TURN).
 
-## Como funciona
-1. Na plataforma → aba **Acesso Remoto** → **Gerar acesso** com o nome do cliente.
-2. Clique em **Baixar arquivo** — isso baixa `NomeCliente-acesso-remoto.json`.
-3. Na máquina do cliente, renomeie o arquivo para **`config.json`** e coloque-o ao lado do agente instalado.
-4. Execute o agente. Ele fica **Online** na plataforma.
-5. Na plataforma, clique em **Conectar** para ver e controlar a tela.
+No 1º uso o cliente só **digita o código de acesso** (12 dígitos) que a empresa passou —
+igual AnyDesk/Google Remoto. Não precisa mexer em arquivo.
 
-## Rodar em desenvolvimento
+---
+
+## Passo a passo (o que VOCÊ, a empresa, faz UMA vez)
+
+Você gera o instalador uma vez, no seu computador, e reusa pra todos os clientes.
+
+1. Configure o `config.json` (valores públicos do Supabase — os mesmos do site):
+   ```bash
+   cd remote-agent
+   cp config.example.json config.json
+   # edite config.json com o supabaseUrl e a anon key (pública) do seu projeto
+   ```
+   > Dica: qualquer "arquivo de acesso" baixado na aba **Acesso Remoto** já contém
+   > `supabaseUrl` e `supabaseAnonKey` — pode renomear pra `config.json` (o agente
+   > ignora os campos de cliente e pede o código na máquina).
+2. Instale as dependências e gere o instalador:
+   ```bash
+   npm install
+   npm run dist:win     # Windows (.exe)   |   dist:mac (.dmg)   |   dist:linux (AppImage)
+   ```
+   O instalador sai em `remote-agent/dist/`.
+
+## O que o CLIENTE faz
+
+1. Você manda pro cliente **só o instalador** (ex.: `Workspace Acesso Remoto Setup.exe`)
+   e o **código de acesso** (aquele número de 12 dígitos que aparece no card da máquina
+   na aba Acesso Remoto).
+2. O cliente **instala** e **abre** o app.
+3. Na primeira vez, o app pede o **código** → o cliente digita → pronto, fica **Online**.
+4. Você, na plataforma, clica em **Conectar** e controla a tela.
+
+---
+
+## Rodar em desenvolvimento (teste rápido)
 ```bash
 cd remote-agent
 npm install
-# coloque um config.json aqui (baixado da plataforma)
+cp config.example.json config.json   # preencha url + anon key
 npm start
+# digite o código de acesso na janelinha que abrir
 ```
 
-## Gerar o instalador (.exe / .dmg / AppImage)
-```bash
-npm install
-npm run dist:win     # Windows (NSIS)
-npm run dist:mac     # macOS (DMG)
-npm run dist:linux   # Linux (AppImage)
-```
-O instalador sai em `remote-agent/dist/`.
-
-> Observações
-> - **Assinatura de código** é opcional. Sem assinar, o Windows/macOS mostram um aviso de
->   "app não verificado" na primeira execução (basta permitir). Para produção, use um
->   certificado de code signing.
-> - **macOS** exige conceder permissão de **Gravação de Tela** e **Acessibilidade** ao app
->   (Ajustes → Privacidade e Segurança) para captura e controle funcionarem.
-> - O `config.json` contém `agentId`, `accessCode`, `supabaseUrl` e `supabaseAnonKey`
->   (a anon key é pública por design). Não coloque a service_role aqui.
-
-## Segurança
-- O agente autentica-se pelo `accessCode` (código de acesso único do cliente).
-- A conexão de tela/controle é **ponta a ponta via WebRTC** (criptografada).
-- Recomendado: manter as máquinas na mesma VPN e girar o `accessCode` se necessário
-  (remova e gere um novo acesso na plataforma).
+## Observações importantes
+- **Windows/macOS** mostram aviso de "app não verificado" na 1ª execução (é só permitir).
+  Some se você assinar o app com um certificado de code signing.
+- **macOS**: conceda **Gravação de Tela** e **Acessibilidade** ao app em
+  Ajustes → Privacidade e Segurança (senão não captura/controla).
+- Precisa estar na **mesma VPN/rede** (conexão direta).
+- O `config.json` só tem valores **públicos** (url + anon key). **Nunca** coloque a
+  service_role aqui.
+- O pareamento do cliente (código) fica salvo em `userData/pairing.json` na máquina dele.

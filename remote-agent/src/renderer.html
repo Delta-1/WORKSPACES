@@ -4,12 +4,23 @@
     <meta charset="utf-8" />
     <title>Workspace Acesso Remoto</title>
     <style>
-      body { font-family: system-ui, sans-serif; background: #0b0f16; color: #cbd5e1; padding: 16px; }
-      #status { font-size: 13px; }
+      body { font-family: system-ui, sans-serif; background: #0b0f16; color: #cbd5e1; padding: 20px; text-align: center; }
+      h3 { margin: 6px 0 12px; color: #fff; }
+      input { width: 100%; box-sizing: border-box; padding: 12px; font-size: 20px; letter-spacing: 4px;
+        text-align: center; border-radius: 10px; border: 1px solid #334155; background: #111827; color: #fff; }
+      button { margin-top: 12px; width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #10b981;
+        color: #fff; font-weight: 600; cursor: pointer; font-size: 15px; }
+      #status { font-size: 13px; margin-top: 14px; color: #94a3b8; }
+      #code-box { display: none; }
     </style>
   </head>
   <body>
-    <p>Workspace — Agente de Acesso Remoto</p>
+    <h3>Workspace — Acesso Remoto</h3>
+    <div id="code-box">
+      <p style="font-size:13px">Digite o código de acesso que a empresa te passou:</p>
+      <input id="code" inputmode="numeric" maxlength="12" placeholder="000000000000" />
+      <button id="connect">Conectar</button>
+    </div>
     <p id="status">Iniciando…</p>
     <script src="./renderer.js"></script>
   </body>

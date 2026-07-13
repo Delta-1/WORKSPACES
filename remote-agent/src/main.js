@@ -1,6 +1,7 @@
 // Processo principal do agente de acesso remoto.
-// - Carrega a configuração de pareamento (config.json gerado pela plataforma).
-// - Abre uma janela oculta (renderer) que faz a captura de tela + WebRTC.
+// - Config pública (supabaseUrl + anonKey) vem de config.json embutido no app.
+// - O pareamento (agentId + accessCode) é digitado pelo usuário no 1º uso e
+//   salvo em userData/pairing.json (não precisa mexer em arquivo manualmente).
 // - Injeta mouse/teclado recebidos do operador usando nut.js.
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage } = require("electron");
 const fs = require("fs");
@@ -10,12 +11,11 @@ const os = require("os");
 let win = null;
 let tray = null;
 
-function loadConfig() {
-  // Procura config.json ao lado do executável e na pasta do app.
+function loadBundledConfig() {
   const candidates = [
     path.join(process.resourcesPath || ".", "config.json"),
-    path.join(path.dirname(process.execPath), "config.json"),
     path.join(__dirname, "..", "config.json"),
+    path.join(path.dirname(process.execPath), "config.json"),
   ];
   for (const p of candidates) {
     try {
@@ -24,33 +24,48 @@ function loadConfig() {
       /* ignore */
     }
   }
-  return null;
+  return {};
 }
 
-function createWindow(config) {
+function pairingPath() {
+  return path.join(app.getPath("userData"), "pairing.json");
+}
+function loadPairing() {
+  try {
+    return JSON.parse(fs.readFileSync(pairingPath(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function createWindow(payload, visible) {
   win = new BrowserWindow({
-    width: 480,
-    height: 320,
-    show: false, // roda em segundo plano
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      backgroundThrottling: false,
-    },
+    width: 460,
+    height: 300,
+    show: visible,
+    resizable: false,
+    title: "Workspace — Acesso Remoto",
+    webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
   win.loadFile(path.join(__dirname, "renderer.html"));
-  win.webContents.on("did-finish-load", () => {
-    win.webContents.send("config", { ...config, osName: `${os.type()} ${os.release()}` });
-  });
+  win.webContents.on("did-finish-load", () => win.webContents.send("config", payload));
 }
 
-// O renderer pede as fontes de captura (precisa rodar no main nas versões novas).
 ipcMain.handle("get-sources", async () => {
   const sources = await desktopCapturer.getSources({ types: ["screen"] });
   return sources.map((s) => ({ id: s.id, name: s.name }));
 });
 
-// Injeção de mouse/teclado vinda do operador (coordenadas normalizadas 0..1).
+ipcMain.on("save-pairing", (_e, pairing) => {
+  try {
+    fs.writeFileSync(pairingPath(), JSON.stringify(pairing));
+  } catch (err) {
+    console.error("save pairing", err);
+  }
+});
+ipcMain.on("hide-window", () => win?.hide());
+
+// Injeção de mouse/teclado (coordenadas normalizadas 0..1).
 let nut = null;
 async function ensureNut() {
   if (nut) return nut;
@@ -59,11 +74,9 @@ async function ensureNut() {
   nut.keyboard.config.autoDelayMs = 0;
   return nut;
 }
-
 ipcMain.on("input", async (_e, ev) => {
   try {
-    const n = await ensureNut();
-    const { mouse, keyboard, Point, Button, Key } = n;
+    const { mouse, keyboard, Point, Button, Key } = await ensureNut();
     const disp = screen.getPrimaryDisplay();
     const w = disp.size.width;
     const h = disp.size.height;
@@ -93,39 +106,33 @@ ipcMain.on("input", async (_e, ev) => {
 
 function mapKey(Key, name) {
   const map = {
-    Enter: Key.Enter,
-    Backspace: Key.Backspace,
-    Tab: Key.Tab,
-    Escape: Key.Escape,
-    " ": Key.Space,
-    ArrowLeft: Key.Left,
-    ArrowRight: Key.Right,
-    ArrowUp: Key.Up,
-    ArrowDown: Key.Down,
-    Delete: Key.Delete,
-    Home: Key.Home,
-    End: Key.End,
-    Control: Key.LeftControl,
-    Shift: Key.LeftShift,
-    Alt: Key.LeftAlt,
-    Meta: Key.LeftSuper,
+    Enter: Key.Enter, Backspace: Key.Backspace, Tab: Key.Tab, Escape: Key.Escape, " ": Key.Space,
+    ArrowLeft: Key.Left, ArrowRight: Key.Right, ArrowUp: Key.Up, ArrowDown: Key.Down,
+    Delete: Key.Delete, Home: Key.Home, End: Key.End,
+    Control: Key.LeftControl, Shift: Key.LeftShift, Alt: Key.LeftAlt, Meta: Key.LeftSuper,
   };
   return map[name] ?? null;
 }
 
 app.whenReady().then(() => {
-  const config = loadConfig();
-  if (!config || !config.agentId || !config.accessCode) {
-    console.error("config.json ausente ou inválido — coloque o arquivo de pareamento ao lado do agente.");
-  }
-  createWindow(config || {});
+  const bundled = loadBundledConfig();
+  const pairing = loadPairing();
+  const payload = {
+    supabaseUrl: bundled.supabaseUrl || "",
+    supabaseAnonKey: bundled.supabaseAnonKey || "",
+    osName: `${os.type()} ${os.release()}`,
+    agentId: pairing?.agentId || null,
+    accessCode: pairing?.accessCode || null,
+    needCode: !pairing,
+  };
+  createWindow(payload, !pairing); // visível só quando precisa digitar o código
 
   try {
     tray = new Tray(nativeImage.createEmpty());
     tray.setToolTip("Workspace — Acesso Remoto");
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: config?.name ? `Máquina: ${config.name}` : "Acesso Remoto", enabled: false },
+        { label: "Abrir", click: () => win?.show() },
         { label: "Sair", click: () => app.quit() },
       ])
     );
@@ -135,6 +142,5 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", (e) => {
-  // Mantém rodando em segundo plano.
-  e.preventDefault?.();
+  e.preventDefault?.(); // mantém rodando em segundo plano
 });
