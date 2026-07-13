@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Attendance, Profile, Sector, WorkspaceTask } from "@/lib/types";
+import type { Attendance, CalendarEvent, Profile, Sector, WorkspaceTask } from "@/lib/types";
 
 const CORNER_CLASS: Record<string, string> = {
   "top-left": "top-6 left-6",
@@ -28,6 +28,7 @@ export default function TVModeOverlay({
   const [tasks, setTasks] = useState<WorkspaceTask[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [presence, setPresence] = useState<Attendance[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date().toLocaleTimeString("pt-BR")), 1000);
@@ -37,16 +38,22 @@ export default function TVModeOverlay({
   useEffect(() => {
     if (!supabase) return;
     const today = new Date().toISOString().slice(0, 10);
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date();
+    dayEnd.setHours(23, 59, 59, 999);
     Promise.all([
       supabase.from("sectors").select("*"),
       supabase.from("tasks").select("*"),
       supabase.from("profiles").select("*"),
       supabase.from("attendance").select("*").eq("work_date", today).is("check_out", null),
-    ]).then(([s, t, p, a]) => {
+      supabase.from("events").select("*").gte("starts_at", dayStart.toISOString()).lte("starts_at", dayEnd.toISOString()).order("starts_at"),
+    ]).then(([s, t, p, a, e]) => {
       if (s.data) setSectors(s.data);
       if (t.data) setTasks(t.data);
       if (p.data) setProfiles(p.data);
       if (a.data) setPresence(a.data);
+      if (e.data) setEvents(e.data as CalendarEvent[]);
     });
 
     function handleKey(e: KeyboardEvent) {
@@ -131,6 +138,38 @@ export default function TVModeOverlay({
             </p>
           )}
         </div>
+
+        {/* Agenda de hoje */}
+        {(() => {
+          const now = new Date();
+          const tasksToday = tasks.filter(
+            (t) => t.due_date && new Date(t.due_date).toDateString() === now.toDateString()
+          );
+          if (events.length === 0 && tasksToday.length === 0) return null;
+          return (
+            <div className="w-full max-w-5xl bg-white/5 border border-white/10 rounded-2xl p-5">
+              <h4 className="font-bold uppercase tracking-wider text-sm mb-3 text-rose-300">📅 Agenda de hoje</h4>
+              <div className="flex flex-wrap gap-3">
+                {events.map((e) => (
+                  <div key={e.id} className="bg-emerald-950/40 border border-emerald-800/50 rounded-xl px-4 py-2">
+                    <p className="text-sm font-semibold">{e.title}</p>
+                    <p className="text-xs text-emerald-300">
+                      {e.all_day
+                        ? "Dia inteiro"
+                        : new Date(e.starts_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                ))}
+                {tasksToday.map((t) => (
+                  <div key={t.id} className="bg-sky-950/40 border border-sky-800/50 rounded-xl px-4 py-2">
+                    <p className="text-sm font-semibold">📋 {t.title}</p>
+                    <p className="text-xs text-sky-300">Tarefa (prazo hoje)</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

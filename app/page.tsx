@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
+import { Bot, CalendarDays, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, Network, Sliders, SquareKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -17,6 +17,7 @@ import ConfigTab from "@/components/tabs/ConfigTab";
 import OrgChartTab from "@/components/tabs/OrgChartTab";
 import KanbanTab from "@/components/tabs/KanbanTab";
 import WhatsappHubTab from "@/components/tabs/WhatsappHubTab";
+import CalendarTab from "@/components/tabs/CalendarTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
@@ -30,6 +31,7 @@ const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "calendario", label: "Calendário", icon: CalendarDays, accent: "bg-rose-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "whatsapp", label: "WhatsApp", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -285,6 +287,7 @@ export default function Home() {
         {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
+        {tab === "calendario" && <CalendarTab profile={profile} />}
         {tab === "whatsapp" && <WhatsappHubTab profile={profile} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}

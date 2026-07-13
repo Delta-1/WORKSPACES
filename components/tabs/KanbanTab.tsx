@@ -19,6 +19,7 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
   const [showModal, setShowModal] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
   const [modalSectorId, setModalSectorId] = useState("");
+  const [modalDue, setModalDue] = useState("");
 
   const isGestor = profile?.role === "gestor";
   const isGerente = profile?.role === "gerente";
@@ -71,10 +72,16 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
     if (!modalTitle.trim() || !modalSectorId || !supabase) return;
     const { data } = await supabase
       .from("tasks")
-      .insert({ title: modalTitle.trim(), sector_id: modalSectorId, column_name: "a_fazer" })
+      .insert({
+        title: modalTitle.trim(),
+        sector_id: modalSectorId,
+        column_name: "a_fazer",
+        due_date: modalDue ? new Date(modalDue).toISOString() : null,
+      })
       .select("*")
       .single();
     if (data && data.sector_id === targetSector) setTasks((prev) => [...prev, data]);
+    setModalDue("");
     setShowModal(false);
   }
 
@@ -212,6 +219,17 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+                  Prazo (opcional — aparece no calendário)
+                </label>
+                <input
+                  type="date"
+                  value={modalDue}
+                  onChange={(e) => setModalDue(e.target.value)}
+                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+                />
               </div>
               <button
                 onClick={submitModal}

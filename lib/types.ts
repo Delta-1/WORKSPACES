@@ -49,8 +49,23 @@ export type WorkspaceTask = {
   sector_id: string;
   assignee_id: string | null;
   column_name: TaskColumn;
+  due_date: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type CalendarEvent = {
+  id: string;
+  company_id: string | null;
+  title: string;
+  description: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  all_day: boolean;
+  location: string | null;
+  google_event_id: string | null;
+  created_by: string | null;
+  created_at: string;
 };
 
 export type Attendance = {
