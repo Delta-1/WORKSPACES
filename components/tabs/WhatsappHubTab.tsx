@@ -282,7 +282,7 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
     setSending(true);
     try {
       const { data } = await supabase.auth.getSession();
-      const token = data.session?.provider_token;
+      const token = (await driveAccessToken(data.session?.access_token)) || data.session?.provider_token;
       if (!token) {
         alert("Reconecte o Google Drive nas Configurações para enviar do Drive.");
         return;
@@ -949,6 +949,22 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
   );
 }
 
+// Pede ao servidor um access token permanente do Drive (refresh token).
+// Retorna null se o modo permanente não estiver configurado (aí usa a sessão).
+async function driveAccessToken(accessToken?: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/drive/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.accessToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Navegador simples do Google Drive (só a pasta da empresa, escopo drive.file).
 function fmtSize(n: number | null): string {
   if (!n) return "";
@@ -982,19 +998,14 @@ function DrivePicker({
       setError(null);
       try {
         const { data } = await supabase.auth.getSession();
-        const token = data.session?.provider_token;
-        if (!token) {
-          setError("Reconecte o Google Drive nas Configurações (a sessão do Google expirou).");
-          setLoading(false);
-          return;
-        }
+        // O servidor prefere o token permanente; a sessão é só fallback.
         const res = await fetch("/api/drive/list", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}),
           },
-          body: JSON.stringify({ providerToken: token, folderId: current.id ?? undefined }),
+          body: JSON.stringify({ providerToken: data.session?.provider_token, folderId: current.id ?? undefined }),
         });
         const json = await res.json();
         if (cancel) return;

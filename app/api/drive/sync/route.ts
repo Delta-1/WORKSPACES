@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseForRequest } from "@/lib/supabase-server";
+import { getDriveAccessToken } from "@/lib/google-drive";
 
 type DriveFolder = { id: string };
 
@@ -27,7 +28,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
   }
   const { providerToken } = (await request.json()) as { providerToken?: string };
-  if (!providerToken) {
+  const token = (await getDriveAccessToken()) || providerToken;
+  if (!token) {
     return NextResponse.json({ error: "Token do Google ausente. Reconecte o Google Drive." }, { status: 400 });
   }
 
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
         // user's Drive (My Drive is not a creatable parent via this API).
         const res = await fetch("https://www.googleapis.com/drive/v3/files", {
           method: "POST",
-          headers: { Authorization: `Bearer ${providerToken}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ name: company?.name ?? root.name, mimeType: "application/vnd.google-apps.folder" }),
         });
         if (!res.ok) throw new Error(`Drive API error (${res.status}): ${(await res.text()).slice(0, 300)}`);
@@ -87,7 +89,7 @@ export async function POST(request: Request) {
           stillPending.push(folder);
           continue;
         }
-        const driveId = await createDriveFolder(providerToken, folder.name, parentDriveId);
+        const driveId = await createDriveFolder(token, folder.name, parentDriveId);
         created++;
         idToDriveId.set(folder.id, driveId);
         await supabase.from("files").update({ drive_file_id: driveId }).eq("id", folder.id);
@@ -100,7 +102,7 @@ export async function POST(request: Request) {
     if (!botFolderId) {
       const res = await fetch("https://www.googleapis.com/drive/v3/files", {
         method: "POST",
-        headers: { Authorization: `Bearer ${providerToken}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           name: `${company?.name ?? "Empresa"} — Memórias do Robô`,
           mimeType: "application/vnd.google-apps.folder",

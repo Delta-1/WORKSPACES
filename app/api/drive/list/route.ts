@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseForRequest } from "@/lib/supabase-server";
+import { getDriveAccessToken } from "@/lib/google-drive";
 
 type DriveFile = { id: string; name: string; mimeType: string; size?: string };
 
@@ -14,7 +15,9 @@ export async function POST(request: Request) {
     providerToken?: string;
     folderId?: string;
   };
-  if (!providerToken) {
+  // Prefere o token permanente do servidor; senão usa o token da sessão.
+  const token = (await getDriveAccessToken()) || providerToken;
+  if (!token) {
     return NextResponse.json({ error: "Token do Google ausente. Reconecte o Google Drive." }, { status: 400 });
   }
 
@@ -32,7 +35,7 @@ export async function POST(request: Request) {
   const q = encodeURIComponent(`'${parent}' in parents and trashed = false`);
   const fields = encodeURIComponent("files(id,name,mimeType,size)");
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&pageSize=200&orderBy=folder,name`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${providerToken}` } });
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     return NextResponse.json({ error: `Drive API (${res.status}): ${text.slice(0, 200)}` }, { status: 502 });

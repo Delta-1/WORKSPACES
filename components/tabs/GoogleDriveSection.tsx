@@ -24,9 +24,25 @@ export default function GoogleDriveSection({
     window.history.replaceState({}, "", window.location.pathname);
     supabase.auth.getSession().then(async ({ data }) => {
       const providerToken = data.session?.provider_token;
+      const refreshToken = data.session?.provider_refresh_token;
       if (!providerToken) {
         setStatus("Não recebi permissão do Google. Tente conectar de novo.");
         return;
+      }
+      // Guarda o refresh_token no servidor -> acesso permanente ao Drive.
+      if (refreshToken) {
+        try {
+          await fetch("/api/drive/connect", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}),
+            },
+            body: JSON.stringify({ refreshToken }),
+          });
+        } catch {
+          /* segue mesmo sem persistir */
+        }
       }
       await runSync(providerToken);
     });
