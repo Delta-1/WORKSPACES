@@ -96,7 +96,7 @@ async function ensureNovoContatoTag(companyId) {
   return id;
 }
 
-async function upsertContact(phone, name = null, companyId = null) {
+async function upsertContact(phone, name = null, companyId = null, jid = null) {
   if (!supabase) return null;
   const { data: existing } = await supabase
     .from("contacts")
@@ -105,15 +105,18 @@ async function upsertContact(phone, name = null, companyId = null) {
     .eq("company_id", companyId)
     .maybeSingle();
   if (existing) {
-    if (name && !existing.name) {
-      await supabase.from("contacts").update({ name }).eq("id", existing.id);
-      existing.name = name;
+    const patch = {};
+    if (name && !existing.name) patch.name = name;
+    if (jid && !existing.jid) patch.jid = jid; // guarda o JID real p/ envio confiável
+    if (Object.keys(patch).length) {
+      await supabase.from("contacts").update(patch).eq("id", existing.id);
+      Object.assign(existing, patch);
     }
     return existing;
   }
   const { data } = await supabase
     .from("contacts")
-    .insert({ phone, name, company_id: companyId })
+    .insert({ phone, name, company_id: companyId, jid })
     .select("*")
     .single();
   // Auto-etiqueta o contato recém-criado.
@@ -141,8 +144,8 @@ async function syncContacts(list, companyId) {
     if (!phone || seen.has(phone)) continue;
     seen.add(phone);
     const name = c.name || c.notify || c.verifiedName || null;
-    if (name) withName.push({ phone, name, company_id: companyId });
-    else phoneOnly.push({ phone, company_id: companyId });
+    if (name) withName.push({ phone, name, jid: id, company_id: companyId });
+    else phoneOnly.push({ phone, jid: id, company_id: companyId });
   }
   try {
     for (let i = 0; i < withName.length; i += 200) {
@@ -558,12 +561,18 @@ async function startSession(numberId) {
         }
 
         if (!text && !media) continue;
-        const phone = jid.split("@")[0];
+        // No WhatsApp novo o remoteJid pode ser um LID (@lid). Guardamos o JID
+        // real (para responder certo) e, quando dá, o telefone verdadeiro que
+        // vem em remoteJidAlt.
+        const isLid = jid.endsWith("@lid");
+        const altJid = msg.key.remoteJidAlt || null;
+        const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
+        const contactJid = jid; // responde pelo mesmo canal que recebeu
 
         try {
           const { number, chatbot } = await getNumberConfig(numberId);
           const cid = number?.company_id ?? null;
-          const contact = await upsertContact(phone, msg.pushName || null, cid);
+          const contact = await upsertContact(phone, msg.pushName || null, cid, contactJid);
           const { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
             numberId,
@@ -632,7 +641,26 @@ async function sendMessage(numberId, to, text, senderId, media) {
     s = getSession(fid);
   }
 
-  const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
+  // Resolve o JID de destino. O WhatsApp novo entrega/recebe por "@lid"
+  // (identificador interno), não pelo telefone. Enviar um LID como
+  // "<numero>@s.whatsapp.net" faz a mensagem "sumir" (aparece enviada, não chega).
+  let jid;
+  if (to.includes("@")) {
+    // Já veio um JID completo (o app manda contact.jid) — usa como está.
+    jid = to;
+  } else {
+    // Só dígitos: tenta confirmar como telefone real no WhatsApp.
+    let resolved = null;
+    try {
+      const results = await s.sock.onWhatsApp(`${to}@s.whatsapp.net`);
+      const hit = Array.isArray(results) ? results.find((r) => r?.exists) : null;
+      if (hit) resolved = hit.jid; // JID canônico (corrige 9º dígito, etc.)
+    } catch {
+      /* verificação indisponível — cai no fallback abaixo */
+    }
+    // Se não é telefone válido e tem 14+ dígitos, é LID; senão assume telefone.
+    jid = resolved || (to.replace(/\D/g, "").length >= 14 ? `${to}@lid` : `${to}@s.whatsapp.net`);
+  }
 
   if (media?.url) {
     const resp = await fetch(media.url);
@@ -652,7 +680,7 @@ async function sendMessage(numberId, to, text, senderId, media) {
   const phone = jid.split("@")[0];
   const { number } = await getNumberConfig(numberId);
   const cid = number?.company_id ?? null;
-  const contact = await upsertContact(phone, null, cid);
+  const contact = await upsertContact(phone, null, cid, jid);
   if (contact) {
     const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
     await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid);

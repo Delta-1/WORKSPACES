@@ -132,6 +132,7 @@ export type AiConfigRow = {
 export type Contact = {
   id: string;
   phone: string;
+  jid: string | null;
   name: string | null;
   avatar_url: string | null;
   created_at: string;

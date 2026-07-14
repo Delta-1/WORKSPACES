@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 
-type ConvRow = Conversation & { contacts: Pick<Contact, "id" | "name" | "phone" | "avatar_url"> | null };
+type ConvRow = Conversation & { contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url"> | null };
 type Mode = "espera" | "atendendo" | "todos" | "contatos" | "interno";
 
 const MODES: { id: Mode; label: string }[] = [
@@ -83,7 +83,7 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
     if (!supabase) return;
     const { data } = await supabase
       .from("conversations")
-      .select("*, contacts(id, name, phone, avatar_url)")
+      .select("*, contacts(id, name, phone, jid, avatar_url)")
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .order("updated_at", { ascending: false });
     if (data) setConversations(data as unknown as ConvRow[]);
@@ -312,7 +312,7 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
-          to: selConv.contacts.phone,
+          to: selConv.contacts.jid || selConv.contacts.phone,
           text: input.trim(),
           senderId: profile?.id,
           numberId: selConv.number_id,
@@ -354,7 +354,7 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({
-        to: selConv.contacts.phone,
+        to: selConv.contacts.jid || selConv.contacts.phone,
         senderId: profile?.id,
         numberId: selConv.number_id,
         media,
