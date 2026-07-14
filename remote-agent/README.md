@@ -4,57 +4,54 @@ App desktop (Electron) que roda na máquina do cliente. Captura a tela e recebe
 controle de mouse/teclado do operador via **WebRTC**, com sinalização pelo
 **Supabase Realtime**. Feito para a **mesma VPN/rede** (conexão direta, sem TURN).
 
-No 1º uso o cliente só **digita o código de acesso** (12 dígitos) que a empresa passou —
-igual AnyDesk/Google Remoto. Não precisa mexer em arquivo.
+Sai **um único .exe portátil** (sem instalador). O cliente só dá dois cliques.
 
 ---
 
-## Passo a passo (o que VOCÊ, a empresa, faz UMA vez)
+## 1) Gerar o .exe (você, a empresa, UMA vez)
 
-Você gera o instalador uma vez, no seu computador, e reusa pra todos os clientes.
+Precisa de **Node.js** no seu computador.
 
-1. Configure o `config.json` (valores públicos do Supabase — os mesmos do site):
-   ```bash
-   cd remote-agent
-   cp config.example.json config.json
-   # edite config.json com o supabaseUrl e a anon key (pública) do seu projeto
-   ```
-   > Dica: qualquer "arquivo de acesso" baixado na aba **Acesso Remoto** já contém
-   > `supabaseUrl` e `supabaseAnonKey` — pode renomear pra `config.json` (o agente
-   > ignora os campos de cliente e pede o código na máquina).
-2. Instale as dependências e gere o instalador:
-   ```bash
-   npm install
-   npm run dist:win     # Windows (.exe)   |   dist:mac (.dmg)   |   dist:linux (AppImage)
-   ```
-   O instalador sai em `remote-agent/dist/`.
+```bash
+cd remote-agent
+cp config.example.json config.json
+# edite config.json com o supabaseUrl e a anon key (PÚBLICA) do seu projeto
+#   (qualquer "arquivo de acesso" baixado na aba já traz esses 2 valores)
+npm install
+npm run dist:win     # -> remote-agent/dist/WorkspaceAcessoRemoto.exe
+```
 
-## O que o CLIENTE faz
+> `dist:mac` gera .dmg e `dist:linux` gera AppImage.
 
-1. Você manda pro cliente **só o instalador** (ex.: `Workspace Acesso Remoto Setup.exe`)
-   e o **código de acesso** (aquele número de 12 dígitos que aparece no card da máquina
-   na aba Acesso Remoto).
-2. O cliente **instala** e **abre** o app.
-3. Na primeira vez, o app pede o **código** → o cliente digita → pronto, fica **Online**.
-4. Você, na plataforma, clica em **Conectar** e controla a tela.
+## 2) Mandar pro cliente (um único .exe, sem digitar nada)
+
+1. Na aba **Acesso Remoto**, gere o acesso do cliente e copie o **código** (12 dígitos).
+2. **Renomeie** o exe incluindo o código:
+   `WorkspaceAcessoRemoto-123456789012.exe`
+3. Mande **só esse .exe** pro cliente.
+4. O cliente **dá dois cliques** → o app lê o código do nome do arquivo e **conecta
+   sozinho** (fica um ícone na bandeja). Nada de instalar nem digitar.
+5. Você clica em **Conectar** na plataforma e controla a tela.
+
+> Alternativa: mande o exe **sem renomear**. Aí, na 1ª vez, o cliente digita o código de
+> 12 dígitos numa janelinha (depois fica salvo).
 
 ---
 
-## Rodar em desenvolvimento (teste rápido)
+## Rodar em desenvolvimento
 ```bash
 cd remote-agent
 npm install
 cp config.example.json config.json   # preencha url + anon key
-npm start
-# digite o código de acesso na janelinha que abrir
+npm start                            # digite o código quando pedir
 ```
 
 ## Observações importantes
-- **Windows/macOS** mostram aviso de "app não verificado" na 1ª execução (é só permitir).
-  Some se você assinar o app com um certificado de code signing.
+- **Windows** mostra "app não verificado" na 1ª execução (Mais informações → Executar
+  assim mesmo). Some se você assinar o app com um certificado de code signing.
 - **macOS**: conceda **Gravação de Tela** e **Acessibilidade** ao app em
-  Ajustes → Privacidade e Segurança (senão não captura/controla).
-- Precisa estar na **mesma VPN/rede** (conexão direta).
-- O `config.json` só tem valores **públicos** (url + anon key). **Nunca** coloque a
+  Ajustes → Privacidade e Segurança.
+- Precisa estar na **mesma VPN/rede** (conexão direta, sem custo de relay).
+- O `config.json` só tem valores **públicos** (url + anon key). **Nunca** ponha a
   service_role aqui.
-- O pareamento do cliente (código) fica salvo em `userData/pairing.json` na máquina dele.
+- O pareamento do cliente fica salvo em `userData/pairing.json` na máquina dele.

@@ -23,24 +23,29 @@ ipcRenderer.on("config", async (_e, config) => {
     return;
   }
   supabase = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: false } });
-  if (cfg.needCode || !cfg.agentId) {
+  if (!cfg.needCode && cfg.agentId) {
+    startAgent(); // já pareado
+  } else if (cfg.codeFromFilename) {
+    setStatus("Conectando…");
+    await pairWithCode(cfg.codeFromFilename, true); // código veio no nome do arquivo → automático
+  } else {
     codeBox.style.display = "block";
     setStatus("");
-  } else {
-    startAgent();
   }
 });
 
-connectBtn?.addEventListener("click", async () => {
-  const code = (codeInput.value || "").replace(/\D/g, "");
+async function pairWithCode(rawCode, silent) {
+  const code = (rawCode || "").replace(/\D/g, "");
   if (code.length < 6) {
-    setStatus("Código inválido.");
+    if (!silent) setStatus("Código inválido.");
+    else codeBox.style.display = "block";
     return;
   }
   setStatus("Verificando código…");
   const { data, error } = await supabase.rpc("get_agent_by_code", { p_access_code: code });
   if (error || !data) {
     setStatus("Código não encontrado. Confira com a empresa.");
+    if (silent) codeBox.style.display = "block";
     return;
   }
   cfg.agentId = data;
@@ -49,7 +54,9 @@ connectBtn?.addEventListener("click", async () => {
   codeBox.style.display = "none";
   startAgent();
   ipcRenderer.send("hide-window");
-});
+}
+
+connectBtn?.addEventListener("click", () => pairWithCode(codeInput.value, false));
 
 async function startAgent() {
   await heartbeat();

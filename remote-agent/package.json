@@ -23,7 +23,8 @@
     "appId": "com.workspace.remoteagent",
     "productName": "Workspace Acesso Remoto",
     "files": ["src/**/*", "config.json"],
-    "win": { "target": "nsis" },
+    "win": { "target": "portable" },
+    "portable": { "artifactName": "WorkspaceAcessoRemoto.exe" },
     "mac": { "target": "dmg" },
     "linux": { "target": "AppImage" }
   }

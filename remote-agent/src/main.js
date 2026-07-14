@@ -117,15 +117,23 @@ function mapKey(Key, name) {
 app.whenReady().then(() => {
   const bundled = loadBundledConfig();
   const pairing = loadPairing();
+  // Permite "zero digitação": o código pode vir no nome do .exe
+  // (ex.: WorkspaceAcessoRemoto-123456789012.exe).
+  const exeName = path.basename(process.execPath);
+  const m = exeName.match(/(\d{6,})/);
+  const codeFromFilename = m ? m[1] : null;
   const payload = {
     supabaseUrl: bundled.supabaseUrl || "",
     supabaseAnonKey: bundled.supabaseAnonKey || "",
     osName: `${os.type()} ${os.release()}`,
     agentId: pairing?.agentId || null,
     accessCode: pairing?.accessCode || null,
+    codeFromFilename,
     needCode: !pairing,
   };
-  createWindow(payload, !pairing); // visível só quando precisa digitar o código
+  // Só mostra a janela se precisar digitar o código manualmente.
+  const askManually = !pairing && !codeFromFilename;
+  createWindow(payload, askManually);
 
   try {
     tray = new Tray(nativeImage.createEmpty());
