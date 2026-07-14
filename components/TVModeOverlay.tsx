@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Attendance, CalendarEvent, Profile, Sector, WorkspaceTask } from "@/lib/types";
@@ -35,33 +35,52 @@ export default function TVModeOverlay({
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!supabase) return;
     const today = new Date().toISOString().slice(0, 10);
     const dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date();
     dayEnd.setHours(23, 59, 59, 999);
-    Promise.all([
+    const [s, t, p, a, e] = await Promise.all([
       supabase.from("sectors").select("*"),
       supabase.from("tasks").select("*"),
       supabase.from("profiles").select("*"),
       supabase.from("attendance").select("*").eq("work_date", today).is("check_out", null),
       supabase.from("events").select("*").gte("starts_at", dayStart.toISOString()).lte("starts_at", dayEnd.toISOString()).order("starts_at"),
-    ]).then(([s, t, p, a, e]) => {
-      if (s.data) setSectors(s.data);
-      if (t.data) setTasks(t.data);
-      if (p.data) setProfiles(p.data);
-      if (a.data) setPresence(a.data);
-      if (e.data) setEvents(e.data as CalendarEvent[]);
-    });
+    ]);
+    if (s.data) setSectors(s.data);
+    if (t.data) setTasks(t.data);
+    if (p.data) setProfiles(p.data);
+    if (a.data) setPresence(a.data);
+    if (e.data) setEvents(e.data as CalendarEvent[]);
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+    load();
+    // Realtime: qualquer mudança nas tabelas exibidas atualiza a TV na hora.
+    const ch = supabase
+      .channel("tv-mode-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "sectors" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => load())
+      .subscribe();
+    // Rede de segurança: recarrega a cada 30s (cobre o virar do dia e eventos perdidos).
+    const poll = setInterval(load, 30000);
 
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      clearInterval(poll);
+      if (supabase) supabase.removeChannel(ch);
+    };
+  }, [onClose, load]);
 
   const profileById = new Map(profiles.map((p) => [p.id, p]));
   const presentProfiles = presence.map((a) => profileById.get(a.profile_id)).filter(Boolean) as Profile[];
