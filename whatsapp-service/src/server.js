@@ -98,12 +98,27 @@ async function ensureNovoContatoTag(companyId) {
 
 async function upsertContact(phone, name = null, companyId = null, jid = null) {
   if (!supabase) return null;
-  const { data: existing } = await supabase
-    .from("contacts")
-    .select("*")
-    .eq("phone", phone)
-    .eq("company_id", companyId)
-    .maybeSingle();
+  // Dedup: casa pelo telefone OU pelo JID (mesma pessoa pode chegar como
+  // telefone e como @lid). Assim NÃO cria contato/conversa duplicados.
+  let existing = null;
+  {
+    const { data } = await supabase
+      .from("contacts")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("phone", phone)
+      .maybeSingle();
+    existing = data;
+  }
+  if (!existing && jid) {
+    const { data } = await supabase
+      .from("contacts")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("jid", jid)
+      .maybeSingle();
+    existing = data;
+  }
   if (existing) {
     const patch = {};
     if (name && !existing.name) patch.name = name;
@@ -166,15 +181,28 @@ async function syncContacts(list, companyId) {
 
 async function findOrCreateOpenConversation(contactId, numberId, sectorId, companyId) {
   if (!supabase) return { conversation: null, created: false };
+  // Estilo WhatsApp: UMA conversa por pessoa. Reaproveita a conversa mais
+  // recente do contato (qualquer status) em vez de abrir um novo "chamado".
   const { data: existing } = await supabase
     .from("conversations")
     .select("*")
     .eq("contact_id", contactId)
-    .in("status", ["espera", "atendendo"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (existing) return { conversation: existing, created: false };
+  if (existing) {
+    // Se estava fechada, reabre a MESMA conversa (não duplica).
+    if (existing.status === "fechado" || existing.status === "cancelado") {
+      const { data: reopened } = await supabase
+        .from("conversations")
+        .update({ status: "espera", closed_at: null, number_id: numberId ?? existing.number_id })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      return { conversation: reopened ?? existing, created: false };
+    }
+    return { conversation: existing, created: false };
+  }
   const { data } = await supabase
     .from("conversations")
     .insert({
