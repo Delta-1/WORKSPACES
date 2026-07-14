@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   const { data: company } = await supabase
     .from("company_settings")
-    .select("google_drive_root_folder_id, name")
+    .select("google_drive_root_folder_id, google_drive_bot_folder_id, name")
     .eq("id", true)
     .maybeSingle();
 
@@ -95,7 +95,25 @@ export async function POST(request: Request) {
       pending = stillPending;
     }
 
-    return NextResponse.json({ success: true, created, skipped: pending.length });
+    // Pasta SEPARADA (fora da pasta da empresa) só para as memórias do robô.
+    let botFolderId = company?.google_drive_bot_folder_id ?? null;
+    if (!botFolderId) {
+      const res = await fetch("https://www.googleapis.com/drive/v3/files", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${providerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `${company?.name ?? "Empresa"} — Memórias do Robô`,
+          mimeType: "application/vnd.google-apps.folder",
+        }),
+      });
+      if (res.ok) {
+        botFolderId = ((await res.json()) as DriveFolder).id;
+        created++;
+        await supabase.from("company_settings").update({ google_drive_bot_folder_id: botFolderId }).eq("id", true);
+      }
+    }
+
+    return NextResponse.json({ success: true, created, skipped: pending.length, rootDriveId, botFolderId });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro ao sincronizar com o Google Drive.";
     return NextResponse.json({ error: message }, { status: 502 });

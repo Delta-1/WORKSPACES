@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, ChevronLeft, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, FileText, Folder, HardDrive, Loader2, Mic, Monitor, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -266,10 +266,43 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
     return colleagues.filter((c) => (c.full_name ?? c.email).toLowerCase().includes(q));
   }, [colleagues, query]);
 
+  const [attachMenu, setAttachMenu] = useState(false);
+  const [driveOpen, setDriveOpen] = useState(false);
+
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
   // No celular: mostra a lista OU a conversa (master-detail), como no WhatsApp.
   const hasSelection = Boolean(selConvId || selColleagueId);
+
+  // Envia um arquivo do Google Drive: baixa no navegador (aguenta arquivo
+  // grande, é streaming) e reaproveita o pipeline de mídia do WhatsApp.
+  async function sendDriveFile(file: { id: string; name: string; mimeType: string }) {
+    if (!supabase || !selConv?.contacts) return;
+    setDriveOpen(false);
+    setSending(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.provider_token;
+      if (!token) {
+        alert("Reconecte o Google Drive nas Configurações para enviar do Drive.");
+        return;
+      }
+      const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) {
+        alert("Não consegui baixar o arquivo do Drive (a sessão do Google pode ter expirado).");
+        return;
+      }
+      const blob = await resp.blob();
+      const mime = file.mimeType || blob.type || "application/octet-stream";
+      const uploaded = await uploadMedia(blob, file.name, mime);
+      if (uploaded) await sendWithMedia({ type: mediaTypeFromMime(mime), ...uploaded }, input.trim());
+      setInput("");
+    } finally {
+      setSending(false);
+    }
+  }
 
   function backToList() {
     setSelConvId(null);
@@ -822,14 +855,41 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                       e.currentTarget.value = "";
                     }}
                   />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={sending}
-                    title="Anexar arquivo, foto ou vídeo"
-                    className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50"
-                  >
-                    <Paperclip size={18} />
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setAttachMenu((v) => !v)}
+                      disabled={sending}
+                      title="Anexar arquivo, foto ou vídeo"
+                      className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50"
+                    >
+                      <Paperclip size={18} />
+                    </button>
+                    {attachMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setAttachMenu(false)} />
+                        <div className="absolute z-20 bottom-12 left-0 w-52 bg-[#11161f] border border-white/10 rounded-xl p-1.5 shadow-2xl">
+                          <button
+                            onClick={() => {
+                              setAttachMenu(false);
+                              fileInputRef.current?.click();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer text-sm"
+                          >
+                            <Monitor size={16} className="text-emerald-400" /> Do computador
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAttachMenu(false);
+                              setDriveOpen(true);
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer text-sm"
+                          >
+                            <HardDrive size={16} className="text-sky-400" /> Do Google Drive
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <button
                     onClick={toggleRecord}
                     disabled={sending}
@@ -883,6 +943,147 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
           </div>
         </div>
       )}
+
+      {driveOpen && <DrivePicker onClose={() => setDriveOpen(false)} onPick={sendDriveFile} />}
+    </div>
+  );
+}
+
+// Navegador simples do Google Drive (só a pasta da empresa, escopo drive.file).
+function fmtSize(n: number | null): string {
+  if (!n) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+type DriveEntry = { id: string; name: string; mimeType?: string; size?: number | null };
+
+function DrivePicker({
+  onClose,
+  onPick,
+}: {
+  onClose: () => void;
+  onPick: (f: { id: string; name: string; mimeType: string }) => void;
+}) {
+  const [folders, setFolders] = useState<DriveEntry[]>([]);
+  const [files, setFiles] = useState<DriveEntry[]>([]);
+  const [stack, setStack] = useState<{ id: string | null; name: string }[]>([{ id: null, name: "Pasta da empresa" }]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const current = stack[stack.length - 1];
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      if (!supabase) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.provider_token;
+        if (!token) {
+          setError("Reconecte o Google Drive nas Configurações (a sessão do Google expirou).");
+          setLoading(false);
+          return;
+        }
+        const res = await fetch("/api/drive/list", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ providerToken: token, folderId: current.id ?? undefined }),
+        });
+        const json = await res.json();
+        if (cancel) return;
+        if (!res.ok) {
+          setError(json.error ?? "Erro ao listar o Drive.");
+        } else {
+          setFolders(json.folders ?? []);
+          setFiles(json.files ?? []);
+        }
+      } catch {
+        if (!cancel) setError("Erro de rede ao acessar o Drive.");
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [current.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-lg h-[70vh] bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <HardDrive size={16} className="text-sky-400" /> Enviar do Google Drive
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Breadcrumb */}
+        <div className="px-4 py-2 border-b border-white/10 flex items-center gap-1 text-xs text-gray-400 flex-wrap shrink-0">
+          {stack.map((s, i) => (
+            <span key={i} className="flex items-center gap-1">
+              {i > 0 && <span className="text-gray-600">/</span>}
+              <button
+                onClick={() => setStack((st) => st.slice(0, i + 1))}
+                className={`hover:text-white cursor-pointer ${i === stack.length - 1 ? "text-white font-medium" : ""}`}
+              >
+                {s.name}
+              </button>
+            </span>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scroll p-2">
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-gray-500 gap-2 text-sm">
+              <Loader2 size={16} className="animate-spin" /> Carregando...
+            </div>
+          ) : error ? (
+            <p className="text-sm text-amber-400 p-4 text-center">{error}</p>
+          ) : folders.length === 0 && files.length === 0 ? (
+            <p className="text-sm text-gray-500 p-4 text-center">Pasta vazia.</p>
+          ) : (
+            <>
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setStack((st) => [...st, { id: f.id, name: f.name }])}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer text-sm"
+                >
+                  <Folder size={16} className="text-sky-400 shrink-0" />
+                  <span className="truncate">{f.name}</span>
+                </button>
+              ))}
+              {files.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => onPick({ id: f.id, name: f.name, mimeType: f.mimeType || "application/octet-stream" })}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-emerald-950/30 cursor-pointer text-sm"
+                >
+                  <FileText size={16} className="text-gray-400 shrink-0" />
+                  <span className="truncate flex-1 text-left">{f.name}</span>
+                  <span className="text-[10px] text-gray-500 shrink-0">{fmtSize(f.size ?? null)}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+        <p className="text-[11px] text-gray-500 px-4 py-2 border-t border-white/10 shrink-0">
+          Só aparecem os arquivos da pasta da empresa no Drive — o app não acessa o resto do seu Drive.
+        </p>
+      </div>
     </div>
   );
 }
