@@ -40,3 +40,27 @@ jobs:
           name: WorkspaceAcessoRemoto-exe
           path: remote-agent/dist/WorkspaceAcessoRemoto.exe
           if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: remote-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Preparar config.json (valores públicos)
+        shell: bash
+        run: cp config.public.json config.json
+      - name: Instalar dependências
+        run: npm install
+      - name: Gerar AppImage (Linux)
+        run: npm run dist:linux
+      - name: Publicar o AppImage como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkspaceAcessoRemoto-linux
+          path: remote-agent/dist/*.AppImage
+          if-no-files-found: error

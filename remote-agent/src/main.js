@@ -86,6 +86,36 @@ ipcMain.on("save-pairing", (_e, pairing) => {
   }
 });
 ipcMain.on("hide-window", () => win?.hide());
+
+// ---- Gerenciador de arquivos remoto (o operador navega/baixa/envia) ----
+ipcMain.handle("fs-home", () => os.homedir());
+ipcMain.handle("fs-list", (_e, dir) => {
+  const target = dir && dir !== "~" ? dir : os.homedir();
+  const entries = fs.readdirSync(target, { withFileTypes: true }).map((d) => {
+    let size = 0;
+    try {
+      if (d.isFile()) size = fs.statSync(path.join(target, d.name)).size;
+    } catch {
+      /* ignore */
+    }
+    return { name: d.name, isDir: d.isDirectory(), size };
+  });
+  // pastas primeiro, depois arquivos, ambos ordenados
+  entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+  return { dir: target, parent: path.dirname(target), sep: path.sep, entries };
+});
+ipcMain.handle("fs-read", (_e, filePath) => {
+  const stat = fs.statSync(filePath);
+  if (stat.size > 60 * 1024 * 1024) throw new Error("Arquivo muito grande (limite 60 MB).");
+  return { name: path.basename(filePath), base64: fs.readFileSync(filePath).toString("base64") };
+});
+ipcMain.handle("fs-write", (_e, { dir, name, base64 }) => {
+  const safeName = path.basename(name || "arquivo");
+  const dest = path.join(dir || os.homedir(), safeName);
+  fs.writeFileSync(dest, Buffer.from(base64, "base64"));
+  return { path: dest };
+});
+
 ipcMain.on("copy-code", (_e, code) => {
   try {
     clipboard.writeText(String(code || ""));

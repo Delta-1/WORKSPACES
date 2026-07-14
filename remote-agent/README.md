@@ -58,6 +58,20 @@ cp config.public.json config.json
 npm start
 ```
 
+## Gerenciador de arquivos remoto
+
+Durante uma sessão (botão **Conectar**), o operador tem um painel **Arquivos**:
+navega nas pastas da máquina do cliente, **baixa** arquivos dela pro próprio PC e
+**envia** arquivos do PC dele pra máquina do cliente. Tudo direto (P2P) pelo mesmo
+canal WebRTC — nada passa por servidor de arquivos.
+
+## Windows e Linux
+
+O mesmo agente roda nos dois. Baixe o artefato certo em **Actions**:
+- **Windows:** `WorkspaceAcessoRemoto-exe` → `WorkspaceAcessoRemoto.exe`
+- **Linux:** `WorkspaceAcessoRemoto-linux` → arquivo `.AppImage`
+  (`chmod +x *.AppImage` e execute; no Linux o controle de mouse/teclado usa X11).
+
 ## Como funciona o "sempre disponível"
 
 - No 1º uso o app registra-se pra **iniciar automaticamente com o sistema**

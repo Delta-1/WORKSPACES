@@ -132,6 +132,11 @@ async function startStreaming() {
     }
   };
 
+  // Canal de arquivos: o operador navega, baixa e envia arquivos p/ esta máquina.
+  const files = pc.createDataChannel("files");
+  files.binaryType = "arraybuffer";
+  files.onmessage = (ev) => handleFileOp(files, ev.data);
+
   pc.onicecandidate = (e) => {
     if (e.candidate) send({ to: "operator", type: "ice", candidate: e.candidate });
   };
@@ -144,6 +149,50 @@ async function startStreaming() {
   await pc.setLocalDescription(offer);
   send({ to: "operator", type: "offer", sdp: offer });
   setStatus("Transmitindo a tela para o suporte…");
+}
+
+// Transfere respostas grandes em pedaços (o data channel tem limite ~16KB).
+function sendChunked(ch, meta, base64) {
+  const CHUNK = 12000;
+  ch.send(JSON.stringify({ ...meta, kind: "begin", total: base64.length }));
+  for (let i = 0; i < base64.length; i += CHUNK) {
+    ch.send(JSON.stringify({ id: meta.id, kind: "chunk", data: base64.slice(i, i + CHUNK) }));
+  }
+  ch.send(JSON.stringify({ id: meta.id, kind: "end" }));
+}
+
+const incoming = new Map(); // uploads em andamento (operador -> máquina)
+
+async function handleFileOp(ch, raw) {
+  let m;
+  try {
+    m = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  try {
+    if (m.op === "list") {
+      const res = await ipcRenderer.invoke("fs-list", m.dir);
+      ch.send(JSON.stringify({ op: "list-result", id: m.id, ...res }));
+    } else if (m.op === "get") {
+      const { name, base64 } = await ipcRenderer.invoke("fs-read", m.path);
+      sendChunked(ch, { op: "get-result", id: m.id, name }, base64);
+    } else if (m.op === "put-begin") {
+      incoming.set(m.id, { dir: m.dir, name: m.name, buf: "" });
+    } else if (m.op === "put-chunk") {
+      const it = incoming.get(m.id);
+      if (it) it.buf += m.data;
+    } else if (m.op === "put-end") {
+      const it = incoming.get(m.id);
+      if (it) {
+        const saved = await ipcRenderer.invoke("fs-write", { dir: it.dir, name: it.name, base64: it.buf });
+        incoming.delete(m.id);
+        ch.send(JSON.stringify({ op: "put-done", id: m.id, path: saved.path }));
+      }
+    }
+  } catch (e) {
+    ch.send(JSON.stringify({ op: "error", id: m.id, message: e.message }));
+  }
 }
 
 function cleanup() {
