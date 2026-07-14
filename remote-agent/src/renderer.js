@@ -61,7 +61,29 @@ async function registerSelf() {
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
+  uploadThumb();
+  setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)
   join();
+}
+
+// Sobe uma miniatura da tela para a listagem de computadores mostrar ao vivo.
+let thumbBusy = false;
+async function uploadThumb() {
+  if (thumbBusy || !supabase || !cfg?.agentId) return;
+  thumbBusy = true;
+  try {
+    const base64 = await ipcRenderer.invoke("get-thumbnail");
+    if (base64) {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      await supabase.storage
+        .from("agent-thumbs")
+        .upload(`${cfg.agentId}.jpg`, bytes, { contentType: "image/jpeg", upsert: true });
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    thumbBusy = false;
+  }
 }
 
 async function heartbeat() {

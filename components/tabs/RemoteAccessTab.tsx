@@ -17,9 +17,17 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [label, setLabel] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
+  const [tick, setTick] = useState(0);
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
+  const thumbBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
+
+  // Atualiza as prévias ao vivo a cada 6s (o agente sobe um print nesse ritmo).
+  useEffect(() => {
+    const i = setInterval(() => setTick((t) => t + 1), 6000);
+    return () => clearInterval(i);
+  }, []);
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
@@ -140,6 +148,38 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                   </button>
                 )}
               </div>
+
+              {/* Prévia ao vivo da tela */}
+              <button
+                onClick={() => online && setViewing(a)}
+                disabled={!online}
+                className={`relative aspect-video w-full rounded-lg overflow-hidden bg-black/40 border border-white/10 ${
+                  online ? "cursor-pointer group" : "cursor-default"
+                }`}
+                title={online ? "Clique para conectar" : "Offline"}
+              >
+                {online ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`${thumbBase}/${a.id}.jpg?v=${tick}`}
+                      alt="Tela ao vivo"
+                      className="w-full h-full object-cover"
+                      onError={(e) => ((e.currentTarget.style.visibility = "hidden"))}
+                    />
+                    <span className="absolute top-1.5 left-1.5 flex items-center gap-1 text-[9px] font-medium bg-black/60 text-red-300 px-1.5 py-0.5 rounded-full">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> AO VIVO
+                    </span>
+                    <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
+                      <Monitor size={22} className="text-white" />
+                    </span>
+                  </>
+                ) : (
+                  <span className="absolute inset-0 flex items-center justify-center text-[11px] text-gray-600">
+                    Sem prévia (offline)
+                  </span>
+                )}
+              </button>
 
               <div className="bg-black/20 rounded-lg px-3 py-2">
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider">Código de acesso</p>

@@ -78,6 +78,21 @@ ipcMain.handle("get-sources", async () => {
   return sources.map((s) => ({ id: s.id, name: s.name }));
 });
 
+// Miniatura da tela (para a prévia ao vivo na listagem de computadores).
+ipcMain.handle("get-thumbnail", async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 320, height: 180 },
+    });
+    const thumb = sources[0]?.thumbnail;
+    if (!thumb || thumb.isEmpty()) return null;
+    return thumb.toJPEG(60).toString("base64");
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.on("save-pairing", (_e, pairing) => {
   try {
     fs.writeFileSync(pairingPath(), JSON.stringify(pairing));
