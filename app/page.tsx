@@ -260,7 +260,7 @@ export default function Home() {
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
-      <header className="h-16 px-6 flex items-center justify-between shrink-0 border-b border-white/5">
+      <header className="h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
         <div className="flex items-center gap-3">
           {company.logoDataUrl ? (
             <img
@@ -291,7 +291,7 @@ export default function Home() {
         />
       </header>
 
-      <main className="flex-1 overflow-hidden p-6 pb-28">
+      <main className="flex-1 overflow-hidden p-3 sm:p-6 pb-24 sm:pb-28">
         {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -268,6 +268,15 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
+  // No celular: mostra a lista OU a conversa (master-detail), como no WhatsApp.
+  const hasSelection = Boolean(selConvId || selColleagueId);
+
+  function backToList() {
+    setSelConvId(null);
+    setSelColleagueId(null);
+    selConvRef.current = null;
+    selColleagueRef.current = null;
+  }
   const selTags = selConv?.contacts ? tagsByContact.get(selConv.contacts.id) ?? [] : [];
 
   function isUnread(c: ConvRow) {
@@ -483,7 +492,7 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-0 overflow-hidden rounded-2xl liquid-glass">
         {/* Sidebar */}
-        <div className="flex flex-col overflow-hidden border-r border-white/10">
+        <div className={`${hasSelection ? "hidden lg:flex" : "flex"} flex-col overflow-hidden border-r border-white/10`}>
           <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
             <div className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
               <Search size={14} className="text-gray-400" />
@@ -604,10 +613,13 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
         </div>
 
         {/* Painel de conversa */}
-        <div className="flex flex-col overflow-hidden bg-[#0b0f16]/40">
+        <div className={`${hasSelection ? "flex" : "hidden lg:flex"} flex-col overflow-hidden bg-[#0b0f16]/40`}>
           {selColleague ? (
             <>
               <div className="px-4 py-3 border-b border-white/10 shrink-0 flex items-center gap-3">
+                <button onClick={backToList} className="lg:hidden text-gray-400 hover:text-white cursor-pointer -ml-1">
+                  <ChevronLeft size={20} />
+                </button>
                 <Users size={16} className="text-emerald-400" />
                 <div>
                   <p className="text-sm font-bold">{selColleague.full_name ?? selColleague.email}</p>
@@ -634,6 +646,9 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
             <>
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
+                  <button onClick={backToList} className="lg:hidden text-gray-400 hover:text-white cursor-pointer -ml-1 shrink-0">
+                    <ChevronLeft size={20} />
+                  </button>
                   <div className="w-9 h-9 rounded-full bg-emerald-900/60 flex items-center justify-center text-sm font-bold shrink-0">
                     {(selConv.contacts?.name ?? selConv.contacts?.phone ?? "?").charAt(0).toUpperCase()}
                   </div>
