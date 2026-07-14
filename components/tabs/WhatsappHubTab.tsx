@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
+import { Bot, Check, FileText, Mic, Paperclip, Plug, Search, Send, Square, Tag as TagIcon, User, UserCheck, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, Tag, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -277,6 +277,15 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
   }
 
   const connectedCount = numbers.filter((n) => n.status === "connected").length;
+  const selNumber = selConv?.number_id ? numbers.find((n) => n.id === selConv.number_id) ?? null : null;
+  const botOn = Boolean(selNumber?.auto_reply);
+
+  async function toggleBot() {
+    if (!supabase || !selNumber) return;
+    const next = !selNumber.auto_reply;
+    setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: next } : n)));
+    await supabase.from("whatsapp_numbers").update({ auto_reply: next }).eq("id", selNumber.id);
+  }
 
   async function authHeaders(): Promise<Record<string, string>> {
     if (!supabase) return {};
@@ -680,7 +689,20 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-2 shrink-0">
+                <div className="flex gap-2 shrink-0 items-center">
+                  {selNumber && (
+                    <button
+                      onClick={toggleBot}
+                      title={botOn ? "Bot ligado — responde os clientes automaticamente. Clique para desligar." : "Bot desligado. Clique para o robô responder automaticamente."}
+                      className={`flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-md cursor-pointer border ${
+                        botOn
+                          ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                          : "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10"
+                      }`}
+                    >
+                      <Bot size={12} /> {botOn ? "Bot ON" : "Bot OFF"}
+                    </button>
+                  )}
                   {selConv.status === "espera" && (
                     <button
                       onClick={assume}

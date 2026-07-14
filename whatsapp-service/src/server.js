@@ -189,6 +189,65 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
   return { conversation: data, created: true };
 }
 
+// Traz as conversas que já existem no WhatsApp para o site poder mostrá-las
+// (entrar e continuar). Cria conversas como "atendendo" — nunca "espera" —
+// para NÃO disparar notificação de "novo cliente". Roda ao conectar.
+async function ingestHistory(messages, numberId, companyId, sectorId) {
+  if (!supabase || !Array.isArray(messages) || messages.length === 0) return;
+  // Agrupa por chat 1:1 e guarda a mensagem mais recente de cada um.
+  const latestByJid = new Map();
+  for (const m of messages) {
+    const jid = m?.key?.remoteJid;
+    if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+    const ts = Number(m.messageTimestamp || 0);
+    const prev = latestByJid.get(jid);
+    if (!prev || ts > prev.ts) latestByJid.set(jid, { m, ts });
+  }
+  let done = 0;
+  for (const [jid, { m }] of latestByJid) {
+    if (done >= 200) break; // limite de segurança
+    try {
+      const inner = m.message?.documentWithCaptionMessage?.message ?? m.message ?? {};
+      const preview =
+        inner.conversation ||
+        inner.extendedTextMessage?.text ||
+        (inner.imageMessage ? "📷 Foto" : inner.audioMessage ? "🎵 Áudio" : inner.videoMessage ? "🎥 Vídeo" : inner.documentMessage ? "📄 Arquivo" : "");
+      if (!preview) continue;
+      const isLid = jid.endsWith("@lid");
+      const altJid = m.key.remoteJidAlt || null;
+      const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
+      const contact = await upsertContact(phone, m.pushName || null, companyId, jid);
+      if (!contact) continue;
+      // Já existe alguma conversa (qualquer status)? então não recria.
+      const { data: existing } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("contact_id", contact.id)
+        .limit(1)
+        .maybeSingle();
+      if (existing) continue;
+      const { data: conv } = await supabase
+        .from("conversations")
+        .insert({
+          contact_id: contact.id,
+          status: "atendendo",
+          number_id: numberId ?? null,
+          sector_id: sectorId ?? null,
+          company_id: companyId ?? null,
+        })
+        .select("id")
+        .single();
+      if (conv) {
+        await logMessage(conv.id, m.key.fromMe ? "out" : "in", preview, null, null, companyId);
+        done++;
+      }
+    } catch {
+      /* pula esse chat */
+    }
+  }
+  if (done) console.log(`Ingeridas ${done} conversas do histórico do WhatsApp`);
+}
+
 function mediaLabel(media, fallbackText) {
   if (fallbackText) return fallbackText;
   if (!media) return null;
@@ -331,40 +390,44 @@ async function buildBotBrain(chatbot) {
   }
 }
 
-async function runChatbotReply(chatbot, customerText) {
+// history: array de { role: 'user'|'assistant', text } com as mensagens
+// anteriores da conversa — dá contexto ao bot p/ responder no mesmo tom/padrão.
+async function runChatbotReply(chatbot, customerText, history = []) {
   const name = await companyName();
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${knowledge}${brain}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}\nUse o histórico da conversa para manter contexto e coerência com o atendimento anterior.${knowledge}${brain}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
   if (!key) return null;
 
+  const hist = Array.isArray(history) ? history.filter((h) => h && h.text) : [];
+
   try {
     if (provider === "anthropic") {
       const client = new Anthropic({ apiKey: key });
-      const res = await client.messages.create({
-        model: "claude-sonnet-5",
-        max_tokens: 512,
-        system,
-        messages: [{ role: "user", content: [{ type: "text", text: customerText }] }],
-      });
+      const messages = [
+        ...hist.map((h) => ({ role: h.role, content: [{ type: "text", text: h.text }] })),
+        { role: "user", content: [{ type: "text", text: customerText }] },
+      ];
+      const res = await client.messages.create({ model: "claude-sonnet-5", max_tokens: 512, system, messages });
       const block = res.content.find((b) => b.type === "text");
       return block && "text" in block ? block.text : null;
     }
     if (provider === "gemini") {
+      const contents = [
+        ...hist.map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] })),
+        { role: "user", parts: [{ text: customerText }] },
+      ];
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: system }] },
-            contents: [{ role: "user", parts: [{ text: customerText }] }],
-          }),
+          body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents }),
         }
       );
       const data = await res.json();
@@ -378,6 +441,7 @@ async function runChatbotReply(chatbot, customerText) {
           model: "gpt-4o-mini",
           messages: [
             { role: "system", content: system },
+            ...hist.map((h) => ({ role: h.role, content: h.text })),
             { role: "user", content: customerText },
           ],
         }),
@@ -476,15 +540,23 @@ async function startSession(numberId) {
 
     s.state.status = "connecting";
     await setNumberStatus(numberId, "connecting");
-    const sock = makeWASocket({ auth: authState, printQRInTerminal: false });
+    const sock = makeWASocket({
+      auth: authState,
+      printQRInTerminal: false,
+      // Traz o histórico recente das conversas ao conectar (para o site mostrar
+      // as conversas que já existem no WhatsApp).
+      syncFullHistory: true,
+    });
     s.sock = sock;
 
     sock.ev.on("creds.update", saveCreds);
 
     // Sincroniza a agenda de contatos do WhatsApp assim que conectar e a cada atualização.
-    sock.ev.on("messaging-history.set", async ({ contacts }) => {
+    sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null);
+      const cid = number?.company_id ?? null;
+      await syncContacts(contacts, cid);
+      await ingestHistory(messages, numberId, cid, number?.sector_id ?? null);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
@@ -588,7 +660,23 @@ async function startSession(numberId) {
               await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid);
             }
-            const reply = text ? await runChatbotReply(chatbot, text) : null;
+            // Puxa as últimas mensagens desta conversa p/ dar contexto ao bot.
+            let history = [];
+            try {
+              const { data: prior } = await supabase
+                .from("whatsapp_messages")
+                .select("direction,text")
+                .eq("conversation_id", conversation.id)
+                .order("at", { ascending: false })
+                .limit(12);
+              history = (prior ?? [])
+                .reverse()
+                .filter((m) => m.text)
+                .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.text }));
+            } catch {
+              /* sem histórico, segue sem contexto */
+            }
+            const reply = text ? await runChatbotReply(chatbot, text, history) : null;
             if (reply) {
               await sock.sendMessage(jid, { text: reply });
               await logMessage(conversation.id, "out", reply, null, null, cid);
