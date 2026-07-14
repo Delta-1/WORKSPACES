@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, File as FileIcon, Folder, FolderPlus, Search, Upload } from "lucide-react";
+import { Bot, Check, Download, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { FileNodeRow, Profile } from "@/lib/types";
 
@@ -68,6 +68,9 @@ function demoNodes(): PositionedNode[] {
     data_url: null,
     drive_file_id: null,
     chatbot_id: null,
+    bot_share_status: "none",
+    bot_share_requested_by: null,
+    text_content: null,
     pos_x: CENTER_X + (Math.random() - 0.5) * 200,
     pos_y: CENTER_Y + (Math.random() - 0.5) * 200,
     created_at: new Date().toISOString(),
@@ -88,6 +91,7 @@ function demoNodes(): PositionedNode[] {
 }
 
 export default function FilesGraphTab({ profile }: { profile: Profile | null }) {
+  const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const [nodes, setNodes] = useState<PositionedNode[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -262,14 +266,27 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected ? byId.get(selected) ?? null : null;
 
+  async function readTextContent(file: File): Promise<string | null> {
+    const textLike = /\.(txt|md|csv|json|log|html?|xml|yml|yaml|js|ts|css)$/i.test(file.name) ||
+      file.type.startsWith("text/");
+    if (!textLike || file.size > 200_000) return null;
+    try {
+      return await file.text();
+    } catch {
+      return null;
+    }
+  }
+
   async function handleUpload(file: File) {
     const client = supabase;
     if (!client) return;
+    // Alvo: pasta selecionada, senão a primeira pasta.
+    const targetFolder = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.type === "folder")?.id;
+    if (!targetFolder) return;
+    const parent = byId.get(targetFolder)!;
+    const textContent = await readTextContent(file);
     const reader = new FileReader();
     reader.onload = async () => {
-      const targetFolder = nodes.find((n) => n.type === "folder")?.id;
-      if (!targetFolder) return;
-      const parent = byId.get(targetFolder)!;
       const { data } = await client
         .from("files")
         .insert({
@@ -278,6 +295,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           parent_id: targetFolder,
           uploaded_by: profile?.id ?? null,
           data_url: reader.result as string,
+          text_content: textContent,
           pos_x: parent.pos_x + (Math.random() - 0.5) * 40,
           pos_y: parent.pos_y + (Math.random() - 0.5) * 40,
         })
@@ -291,8 +309,77 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     reader.readAsDataURL(file);
   }
 
+  async function handleRename(node: PositionedNode) {
+    if (!supabase) return;
+    if (node.type === "folder" && !canManage) {
+      alert("Apenas gestores e gerentes podem renomear pastas.");
+      return;
+    }
+    const name = prompt("Novo nome:", node.name)?.trim();
+    if (!name || name === node.name) return;
+    const { error } = await supabase.from("files").update({ name }).eq("id", node.id);
+    if (error) {
+      alert("Não foi possível renomear: " + error.message);
+      return;
+    }
+    setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, name } : n)));
+  }
+
+  async function handleDelete(node: PositionedNode) {
+    if (!supabase) return;
+    if (node.type === "folder" && !canManage) {
+      alert("Apenas gestores e gerentes podem apagar pastas.");
+      return;
+    }
+    const ids = collectSubtree(node.id);
+    const label = node.type === "folder" ? `a pasta "${node.name}" e todo o seu conteúdo` : `o arquivo "${node.name}"`;
+    if (!confirm(`Apagar ${label}?`)) return;
+    const { error } = await supabase.from("files").delete().in("id", ids);
+    if (error) {
+      alert("Não foi possível apagar: " + error.message);
+      return;
+    }
+    setNodes((prev) => prev.filter((n) => !ids.includes(n.id)));
+    setSelected(null);
+    kick(0.6);
+  }
+
+  // Compartilhar pasta com o robô de IA (passa por aprovação do gestor/gerente).
+  async function requestBotShare(node: PositionedNode) {
+    if (!supabase || node.type !== "folder") return;
+    // Gerenciadores aprovam direto; funcionários enviam pedido.
+    const status = canManage ? "approved" : "pending";
+    const { error } = await supabase
+      .from("files")
+      .update({ bot_share_status: status, bot_share_requested_by: profile?.id ?? null })
+      .eq("id", node.id);
+    if (error) {
+      alert("Não foi possível compartilhar: " + error.message);
+      return;
+    }
+    setNodes((prev) =>
+      prev.map((n) => (n.id === node.id ? { ...n, bot_share_status: status, bot_share_requested_by: profile?.id ?? null } : n))
+    );
+    alert(canManage ? "Pasta liberada para o robô de IA." : "Pedido enviado ao gestor para aprovação.");
+  }
+
+  async function reviewBotShare(node: PositionedNode, approve: boolean) {
+    if (!supabase || !canManage) return;
+    const status = approve ? "approved" : "rejected";
+    const { error } = await supabase.from("files").update({ bot_share_status: status }).eq("id", node.id);
+    if (error) {
+      alert("Falha ao atualizar: " + error.message);
+      return;
+    }
+    setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, bot_share_status: status } : n)));
+  }
+
   async function handleNewFolder() {
     if (!supabase) return;
+    if (!canManage) {
+      alert("Apenas gestores e gerentes podem criar pastas.");
+      return;
+    }
     const parentId = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.parent_id === null)?.id;
     if (!parentId) return;
     const parent = byId.get(parentId)!;
@@ -404,12 +491,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               className="bg-transparent outline-none text-xs w-48"
             />
           </div>
-          <button
-            onClick={handleNewFolder}
-            className="flex items-center gap-2 liquid-glass text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
-          >
-            <FolderPlus size={14} /> Nova pasta
-          </button>
+          {canManage && (
+            <button
+              onClick={handleNewFolder}
+              className="flex items-center gap-2 liquid-glass text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
+            >
+              <FolderPlus size={14} /> Nova pasta
+            </button>
+          )}
           <label className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
             <Upload size={14} /> Upload
             <input
@@ -496,14 +585,77 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               <p className="text-sm font-semibold truncate">{selectedNode.name}</p>
             </div>
             <p className="text-xs text-gray-500 mb-3">{new Date(selectedNode.created_at).toLocaleString("pt-BR")}</p>
-            {selectedNode.type === "file" && (
-              <button
-                onClick={() => download(selectedNode)}
-                className="flex items-center gap-2 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
-              >
-                <Download size={12} /> Baixar
-              </button>
+
+            {/* Estado de compartilhamento com o robô (só pastas) */}
+            {selectedNode.type === "folder" && selectedNode.bot_share_status !== "none" && (
+              <div className="mb-3 text-[11px] flex items-center gap-1.5">
+                <Bot size={12} className="text-indigo-400" />
+                {selectedNode.bot_share_status === "approved" && (
+                  <span className="text-emerald-400">No cérebro do robô de IA</span>
+                )}
+                {selectedNode.bot_share_status === "pending" && (
+                  <span className="text-amber-400">Aguardando aprovação do gestor</span>
+                )}
+                {selectedNode.bot_share_status === "rejected" && (
+                  <span className="text-gray-500">Compartilhamento recusado</span>
+                )}
+              </div>
             )}
+
+            {/* Aprovação (gerenciadores) */}
+            {selectedNode.type === "folder" && selectedNode.bot_share_status === "pending" && canManage && (
+              <div className="flex items-center gap-2 mb-2">
+                <button
+                  onClick={() => reviewBotShare(selectedNode, true)}
+                  className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <Check size={12} /> Aprovar p/ robô
+                </button>
+                <button
+                  onClick={() => reviewBotShare(selectedNode, false)}
+                  className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-2.5 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <X size={12} /> Recusar
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {selectedNode.type === "file" && (
+                <button
+                  onClick={() => download(selectedNode)}
+                  className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <Download size={12} /> Baixar
+                </button>
+              )}
+              {selectedNode.type === "folder" &&
+                (selectedNode.bot_share_status === "none" || selectedNode.bot_share_status === "rejected") && (
+                  <button
+                    onClick={() => requestBotShare(selectedNode)}
+                    className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                    title="Adicionar o conteúdo desta pasta ao cérebro do robô de IA"
+                  >
+                    <Bot size={12} /> {canManage ? "Dar ao robô" : "Pedir p/ robô"}
+                  </button>
+                )}
+              {(selectedNode.type === "file" || canManage) && (
+                <button
+                  onClick={() => handleRename(selectedNode)}
+                  className="flex items-center gap-1.5 text-xs liquid-glass px-3 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <Pencil size={12} /> Renomear
+                </button>
+              )}
+              {(selectedNode.type === "file" || canManage) && (
+                <button
+                  onClick={() => handleDelete(selectedNode)}
+                  className="flex items-center gap-1.5 text-xs bg-red-600/80 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <Trash2 size={12} /> Apagar
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

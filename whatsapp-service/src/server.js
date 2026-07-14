@@ -260,12 +260,81 @@ async function setNumberStatus(numberId, status, phoneNumber) {
 // ---------------------------------------------------------------------------
 // AI providers (chatbot auto-reply)
 // ---------------------------------------------------------------------------
+// Monta o "cérebro" do robô a partir dos arquivos: a pasta do próprio chatbot
+// (chatbot.folder_id e sua subárvore) + pastas liberadas pelo gestor
+// (bot_share_status = 'approved'). Usa o texto dos arquivos e os nomes.
+async function buildBotBrain(chatbot) {
+  if (!supabase) return "";
+  try {
+    const { data: allFiles } = await supabase
+      .from("files")
+      .select("id,name,type,parent_id,text_content,chatbot_id,bot_share_status");
+    if (!allFiles || allFiles.length === 0) return "";
+
+    const byParent = new Map();
+    for (const f of allFiles) {
+      const list = byParent.get(f.parent_id) ?? [];
+      list.push(f);
+      byParent.set(f.parent_id, list);
+    }
+    const subtree = (rootId) => {
+      const out = [];
+      const stack = [rootId];
+      while (stack.length) {
+        const cur = stack.pop();
+        for (const child of byParent.get(cur) ?? []) {
+          out.push(child);
+          stack.push(child.id);
+        }
+      }
+      return out;
+    };
+
+    // Pastas-raiz do cérebro: a pasta do chatbot + pastas aprovadas.
+    const rootIds = new Set();
+    if (chatbot?.folder_id) rootIds.add(chatbot.folder_id);
+    for (const f of allFiles) {
+      if (f.type === "folder" && f.bot_share_status === "approved") rootIds.add(f.id);
+    }
+    // Arquivos marcados diretamente com este chatbot também entram.
+    const files = [];
+    for (const f of allFiles) {
+      if (f.type === "file" && chatbot?.id && f.chatbot_id === chatbot.id) files.push(f);
+    }
+    for (const rootId of rootIds) {
+      for (const node of subtree(rootId)) {
+        if (node.type === "file") files.push(node);
+      }
+    }
+
+    const seen = new Set();
+    const parts = [];
+    let budget = 12000; // limite de caracteres para não estourar o contexto
+    for (const f of files) {
+      if (seen.has(f.id)) continue;
+      seen.add(f.id);
+      if (f.text_content && budget > 0) {
+        const snippet = f.text_content.slice(0, Math.min(3000, budget));
+        parts.push(`### ${f.name}\n${snippet}`);
+        budget -= snippet.length;
+      } else {
+        parts.push(`### ${f.name} (documento anexado)`);
+      }
+    }
+    return parts.length ? `\n\nConhecimento das pastas da empresa (use como base de verdade):\n${parts.join("\n\n")}` : "";
+  } catch (err) {
+    console.error("buildBotBrain failed:", err);
+    return "";
+  }
+}
+
 async function runChatbotReply(chatbot, customerText) {
   const name = await companyName();
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${knowledge}`;
+  const brain = await buildBotBrain(chatbot);
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${knowledge}${brain}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);

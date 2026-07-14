@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, CalendarDays, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, Sliders, SquareKanban } from "lucide-react";
+import { Bot, CalendarDays, ClipboardList, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, Sliders, SquareKanban, Users } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -21,6 +21,7 @@ import CalendarTab from "@/components/tabs/CalendarTab";
 import RemoteAccessTab from "@/components/tabs/RemoteAccessTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
+import EmployeesTab from "@/components/tabs/EmployeesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
@@ -38,6 +39,7 @@ const APPS: AppDef[] = [
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mural", label: "Mural", icon: Megaphone, accent: "bg-orange-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "funcionarios", label: "Funcionários", icon: Users, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
@@ -295,6 +297,7 @@ export default function Home() {
         {tab === "chat" && <ChatTab />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "mural" && <AnnouncementsTab profile={profile} />}
+        {tab === "funcionarios" && <EmployeesTab profile={profile} />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "config" && (
           <ConfigTab

@@ -110,6 +110,9 @@ export type FileNodeRow = {
   data_url: string | null;
   drive_file_id: string | null;
   chatbot_id: string | null;
+  bot_share_status: "none" | "pending" | "approved" | "rejected";
+  bot_share_requested_by: string | null;
+  text_content: string | null;
   pos_x: number | null;
   pos_y: number | null;
   created_at: string;

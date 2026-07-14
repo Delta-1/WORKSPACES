@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Image as ImageIcon, Sliders } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, Image as ImageIcon, Sliders } from "lucide-react";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
 import ChatbotSection from "./ChatbotSection";
@@ -43,6 +43,25 @@ export default function ConfigTab({
   }) => void;
 }) {
   const [name, setName] = useState(companyName);
+  const [notifMuted, setNotifMuted] = useState(false);
+
+  useEffect(() => {
+    try {
+      setNotifMuted(localStorage.getItem("notif:muted") === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function toggleNotif(v: boolean) {
+    setNotifMuted(v);
+    try {
+      localStorage.setItem("notif:muted", v ? "1" : "0");
+      window.dispatchEvent(new StorageEvent("storage", { key: "notif:muted", newValue: v ? "1" : "0" }));
+    } catch {
+      /* ignore */
+    }
+  }
 
   function handleLogo(file: File) {
     const reader = new FileReader();
@@ -159,6 +178,23 @@ export default function ConfigTab({
                 className="w-8 h-8 rounded cursor-pointer bg-transparent border border-white/10"
               />
             </div>
+          </div>
+
+          <div className="border-t border-white/10 pt-4">
+            <label className="flex items-center justify-between gap-2 cursor-pointer">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                <Bell size={14} /> Som de notificação de novo cliente
+              </span>
+              <input
+                type="checkbox"
+                checked={!notifMuted}
+                onChange={(e) => toggleNotif(!e.target.checked)}
+                className="accent-emerald-600 w-4 h-4"
+              />
+            </label>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Desmarque para silenciar o som e a notificação quando entra um cliente novo no WhatsApp.
+            </p>
           </div>
         </div>
 

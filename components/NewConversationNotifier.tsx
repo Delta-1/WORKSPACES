@@ -6,17 +6,46 @@ import { supabase } from "@/lib/supabase-client";
 
 // Toca um sino sintetizado (sem depender de arquivo de áudio) e dispara uma
 // notificação do navegador sempre que entra um novo cliente na fila de espera.
+const MUTE_KEY = "notif:muted";
+
 export default function NewConversationNotifier({ onOpen }: { onOpen?: () => void }) {
   const [waiting, setWaiting] = useState(0);
   const [muted, setMuted] = useState(false);
   const prevCount = useRef(0);
   const audioCtx = useRef<AudioContext | null>(null);
-  const ringTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const mutedRef = useRef(false);
 
+  function applyMuted(v: boolean) {
+    setMuted(v);
+    mutedRef.current = v;
+    try {
+      localStorage.setItem(MUTE_KEY, v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+
   useEffect(() => {
-    mutedRef.current = muted;
-  }, [muted]);
+    const saved = (() => {
+      try {
+        return localStorage.getItem(MUTE_KEY) === "1";
+      } catch {
+        return false;
+      }
+    })();
+    setMuted(saved);
+    mutedRef.current = saved;
+    // mantém sincronizado se a preferência mudar em outra aba/config
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === MUTE_KEY) {
+        const v = e.newValue === "1";
+        setMuted(v);
+        mutedRef.current = v;
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -59,8 +88,9 @@ export default function NewConversationNotifier({ onOpen }: { onOpen?: () => voi
       .eq("status", "espera");
     const n = count ?? 0;
     setWaiting(n);
-    if (n > prevCount.current) {
-      if (!mutedRef.current) chime();
+    // Toca/notifica só quando entra alguém novo (sem loop repetitivo).
+    if (n > prevCount.current && !mutedRef.current) {
+      chime();
       if ("Notification" in window && Notification.permission === "granted") {
         try {
           new Notification("Novo cliente no WhatsApp", {
@@ -90,17 +120,6 @@ export default function NewConversationNotifier({ onOpen }: { onOpen?: () => voi
     };
   }, [check]);
 
-  // Enquanto houver fila, mantém um toque suave a cada 10s até alguém atender.
-  useEffect(() => {
-    if (ringTimer.current) clearInterval(ringTimer.current);
-    if (waiting > 0 && !muted) {
-      ringTimer.current = setInterval(() => chime(), 10000);
-    }
-    return () => {
-      if (ringTimer.current) clearInterval(ringTimer.current);
-    };
-  }, [waiting, muted]);
-
   if (waiting === 0) return null;
 
   return (
@@ -113,8 +132,8 @@ export default function NewConversationNotifier({ onOpen }: { onOpen?: () => voi
         {waiting} cliente(s) aguardando
       </button>
       <button
-        onClick={() => setMuted((m) => !m)}
-        title={muted ? "Reativar som" : "Silenciar"}
+        onClick={() => applyMuted(!muted)}
+        title={muted ? "Reativar som das notificações" : "Silenciar notificações"}
         className="p-1.5 rounded-full hover:bg-white/10 cursor-pointer text-gray-300"
       >
         {muted ? <BellOff size={14} /> : <Bell size={14} />}
