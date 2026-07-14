@@ -57,12 +57,25 @@ export type WorkspaceTask = {
 export type RemoteAgent = {
   id: string;
   company_id: string | null;
+  client_id: string | null;
   name: string;
   access_code: string;
   pin: string | null;
   status: string;
   os: string | null;
   last_seen: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type Client = {
+  id: string;
+  company_id: string;
+  name: string;
+  phone: string | null;
+  document: string | null;
+  email: string | null;
+  notes: string | null;
   created_by: string | null;
   created_at: string;
 };
