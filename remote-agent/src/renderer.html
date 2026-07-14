@@ -4,24 +4,38 @@
     <meta charset="utf-8" />
     <title>Workspace Acesso Remoto</title>
     <style>
-      body { font-family: system-ui, sans-serif; background: #0b0f16; color: #cbd5e1; padding: 20px; text-align: center; }
-      h3 { margin: 6px 0 12px; color: #fff; }
-      input { width: 100%; box-sizing: border-box; padding: 12px; font-size: 20px; letter-spacing: 4px;
-        text-align: center; border-radius: 10px; border: 1px solid #334155; background: #111827; color: #fff; }
-      button { margin-top: 12px; width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #10b981;
-        color: #fff; font-weight: 600; cursor: pointer; font-size: 15px; }
-      #status { font-size: 13px; margin-top: 14px; color: #94a3b8; }
-      #code-box { display: none; }
+      body { font-family: system-ui, sans-serif; background: #0b0f16; color: #cbd5e1; padding: 22px; text-align: center; }
+      h3 { margin: 4px 0 4px; color: #fff; font-size: 17px; }
+      .sub { font-size: 12px; color: #94a3b8; margin: 0 0 16px; }
+      .code-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
+      .code {
+        font-size: 34px; font-weight: 800; letter-spacing: 6px; color: #34d399;
+        background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 16px 10px;
+        user-select: all; font-variant-numeric: tabular-nums;
+      }
+      .copy { margin-top: 10px; padding: 9px 14px; border: 0; border-radius: 9px; background: #1f2937;
+        color: #e5e7eb; font-weight: 600; cursor: pointer; font-size: 13px; }
+      .copy:hover { background: #374151; }
+      #status { font-size: 12px; margin-top: 16px; color: #64748b; }
+      .hint { font-size: 11px; color: #64748b; margin-top: 14px; line-height: 1.5; }
     </style>
   </head>
   <body>
-    <h3>Workspace — Acesso Remoto</h3>
-    <div id="code-box">
-      <p style="font-size:13px">Digite o código de acesso que a empresa te passou:</p>
-      <input id="code" inputmode="numeric" maxlength="12" placeholder="000000000000" />
-      <button id="connect">Conectar</button>
-    </div>
+    <h3>Workspace — Suporte Remoto</h3>
+    <p class="sub">Este computador está pronto para receber suporte técnico.</p>
+
+    <div class="code-label">Seu código de suporte</div>
+    <div class="code" id="my-code">— — —</div>
+    <button class="copy" id="copy">Copiar código</button>
+
     <p id="status">Iniciando…</p>
+
+    <p class="hint">
+      Informe este código ao seu suporte.<br />
+      O programa continua rodando na bandeja e sobe junto com o Windows —
+      não precisa deixar esta janela aberta.
+    </p>
+
     <script src="./renderer.js"></script>
   </body>
 </html>

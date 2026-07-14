@@ -3,10 +3,32 @@
 // - O pareamento (agentId + accessCode) é digitado pelo usuário no 1º uso e
 //   salvo em userData/pairing.json (não precisa mexer em arquivo manualmente).
 // - Injeta mouse/teclado recebidos do operador usando nut.js.
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage, clipboard } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
+
+// Gera um código de suporte estável, derivado desta máquina (hostname + MAC).
+// Mesmo PC => sempre o mesmo código de 9 dígitos.
+function machineCode() {
+  let mac = "";
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const ni of ifaces[name] || []) {
+      if (!ni.internal && ni.mac && ni.mac !== "00:00:00:00:00:00") {
+        mac = ni.mac;
+        break;
+      }
+    }
+    if (mac) break;
+  }
+  const seed = `${os.hostname()}|${mac}|workspace-remote`;
+  const hash = crypto.createHash("sha256").update(seed).digest();
+  // 9 dígitos a partir do hash (fácil de ditar por telefone).
+  const num = hash.readUInt32BE(0) % 1000000000;
+  return String(num).padStart(9, "0");
+}
 
 let win = null;
 let tray = null;
@@ -64,6 +86,13 @@ ipcMain.on("save-pairing", (_e, pairing) => {
   }
 });
 ipcMain.on("hide-window", () => win?.hide());
+ipcMain.on("copy-code", (_e, code) => {
+  try {
+    clipboard.writeText(String(code || ""));
+  } catch {
+    /* ignore */
+  }
+});
 
 // Injeção de mouse/teclado (coordenadas normalizadas 0..1).
 let nut = null;
@@ -118,6 +147,13 @@ function mapKey(Key, name) {
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (win) {
+      win.show();
+      win.focus();
+    }
+  });
 }
 
 // Faz o app subir sozinho junto com o Windows/macOS (acesso sempre disponível,
@@ -139,23 +175,20 @@ app.whenReady().then(() => {
   enableAutoStart();
   const bundled = loadBundledConfig();
   const pairing = loadPairing();
-  // Permite "zero digitação": o código pode vir no nome do .exe
-  // (ex.: WorkspaceAcessoRemoto-123456789012.exe).
-  const exeName = path.basename(process.execPath);
-  const m = exeName.match(/(\d{6,})/);
-  const codeFromFilename = m ? m[1] : null;
+  // O código é derivado da máquina (estável). Guardamos junto o agentId após o
+  // 1º registro para não recriar linha à toa.
+  const code = pairing?.accessCode || machineCode();
   const payload = {
     supabaseUrl: bundled.supabaseUrl || "",
     supabaseAnonKey: bundled.supabaseAnonKey || "",
     osName: `${os.type()} ${os.release()}`,
+    hostName: os.hostname(),
     agentId: pairing?.agentId || null,
-    accessCode: pairing?.accessCode || null,
-    codeFromFilename,
-    needCode: !pairing,
+    accessCode: code,
   };
-  // Só mostra a janela se precisar digitar o código manualmente.
-  const askManually = !pairing && !codeFromFilename;
-  createWindow(payload, askManually);
+  // Abre a janela na 1ª vez (pra mostrar o código); depois pode subir oculto.
+  const hidden = process.argv.includes("--hidden");
+  createWindow(payload, !hidden);
 
   try {
     tray = new Tray(nativeImage.createEmpty());

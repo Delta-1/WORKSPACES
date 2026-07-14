@@ -1,13 +1,14 @@
-// Renderer do agente: captura de tela + WebRTC + sinalização via Supabase Realtime.
-// Se ainda não pareado, pede o código de acesso e salva.
+// Renderer do agente (host). Fluxo estilo AnyDesk:
+// 1) A máquina se registra sozinha com um código próprio (derivado dela).
+// 2) Mostra o código na tela — o cliente informa ao suporte.
+// 3) Fica online (heartbeat) e aguardando o operador conectar via WebRTC.
 const { ipcRenderer } = require("electron");
 const { createClient } = require("@supabase/supabase-js");
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 const statusEl = document.getElementById("status");
-const codeBox = document.getElementById("code-box");
-const codeInput = document.getElementById("code");
-const connectBtn = document.getElementById("connect");
+const codeEl = document.getElementById("my-code");
+const copyBtn = document.getElementById("copy");
 const setStatus = (t) => (statusEl.textContent = t);
 
 let supabase = null;
@@ -16,47 +17,46 @@ let channel = null;
 let pc = null;
 let stream = null;
 
+function fmtCode(c) {
+  return String(c || "").replace(/(\d{3})(?=\d)/g, "$1 ").trim();
+}
+
 ipcRenderer.on("config", async (_e, config) => {
   cfg = config;
+  codeEl.textContent = fmtCode(cfg.accessCode);
   if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
     setStatus("Configuração ausente (config.json embutido).");
     return;
   }
   supabase = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: false } });
-  if (!cfg.needCode && cfg.agentId) {
-    startAgent(); // já pareado
-  } else if (cfg.codeFromFilename) {
-    setStatus("Conectando…");
-    await pairWithCode(cfg.codeFromFilename, true); // código veio no nome do arquivo → automático
-  } else {
-    codeBox.style.display = "block";
-    setStatus("");
-  }
+  await registerSelf();
 });
 
-async function pairWithCode(rawCode, silent) {
-  const code = (rawCode || "").replace(/\D/g, "");
-  if (code.length < 6) {
-    if (!silent) setStatus("Código inválido.");
-    else codeBox.style.display = "block";
-    return;
-  }
-  setStatus("Verificando código…");
-  const { data, error } = await supabase.rpc("get_agent_by_code", { p_access_code: code });
-  if (error || !data) {
-    setStatus("Código não encontrado. Confira com a empresa.");
-    if (silent) codeBox.style.display = "block";
-    return;
-  }
-  cfg.agentId = data;
-  cfg.accessCode = code;
-  ipcRenderer.send("save-pairing", { agentId: data, accessCode: code });
-  codeBox.style.display = "none";
-  startAgent();
-  ipcRenderer.send("hide-window");
-}
+copyBtn?.addEventListener("click", () => {
+  ipcRenderer.send("copy-code", cfg?.accessCode);
+  copyBtn.textContent = "Copiado!";
+  setTimeout(() => (copyBtn.textContent = "Copiar código"), 1500);
+});
 
-connectBtn?.addEventListener("click", () => pairWithCode(codeInput.value, false));
+async function registerSelf() {
+  setStatus("Registrando este computador…");
+  try {
+    const { data, error } = await supabase.rpc("register_self_agent", {
+      p_code: cfg.accessCode,
+      p_name: cfg.hostName || null,
+      p_os: cfg.osName || null,
+    });
+    if (error || !data) {
+      setStatus("Falha ao registrar: " + (error?.message || "sem resposta"));
+      return;
+    }
+    cfg.agentId = data;
+    ipcRenderer.send("save-pairing", { agentId: data, accessCode: cfg.accessCode });
+    startAgent();
+  } catch (e) {
+    setStatus("Erro de rede ao registrar: " + e.message);
+  }
+}
 
 async function startAgent() {
   await heartbeat();
@@ -71,7 +71,7 @@ async function heartbeat() {
       p_access_code: cfg.accessCode,
       p_os: cfg.osName || null,
     });
-    setStatus("Online — aguardando conexão do operador.");
+    setStatus("Online — pronto para o suporte se conectar.");
   } catch (e) {
     setStatus("Falha ao registrar online: " + e.message);
   }
@@ -100,7 +100,7 @@ async function onSignal(msg) {
 
 async function startStreaming() {
   cleanup();
-  setStatus("Operador conectando… iniciando captura.");
+  setStatus("Suporte conectando… iniciando captura.");
   const sources = await ipcRenderer.invoke("get-sources");
   const src = sources[0];
   if (!src) {
@@ -143,7 +143,7 @@ async function startStreaming() {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   send({ to: "operator", type: "offer", sdp: offer });
-  setStatus("Transmitindo a tela…");
+  setStatus("Transmitindo a tela para o suporte…");
 }
 
 function cleanup() {

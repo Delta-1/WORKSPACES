@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Download, Monitor, MonitorSmartphone, Plus, Trash2 } from "lucide-react";
+import { Copy, Link2, Monitor, MonitorSmartphone, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Profile, RemoteAgent } from "@/lib/types";
@@ -13,17 +13,24 @@ function isOnline(a: RemoteAgent) {
 
 export default function RemoteAccessTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
-  const [name, setName] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [code, setCode] = useState("");
+  const [label, setLabel] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
+  const companyId = profile?.company_id ?? null;
 
   const load = useCallback(async () => {
-    if (!supabase) return;
-    const { data } = await supabase.from("remote_agents").select("*").order("created_at", { ascending: false });
+    if (!supabase || !companyId) return;
+    // Só as máquinas já sincronizadas com esta empresa (não as pendentes de terceiros).
+    const { data } = await supabase
+      .from("remote_agents")
+      .select("*")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
     if (data) setAgents(data as RemoteAgent[]);
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
     load();
@@ -37,38 +44,24 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     };
   }, [load]);
 
-  async function createAgent() {
-    if (!supabase || !name.trim()) return;
-    setCreating(true);
+  async function syncAgent() {
+    const clean = code.replace(/\D/g, "");
+    if (!supabase || clean.length < 6) return;
+    setSyncing(true);
     try {
-      const { data, error } = await supabase.rpc("create_remote_agent", { p_name: name.trim(), p_pin: null });
+      const { data, error } = await supabase.rpc("claim_agent", {
+        p_code: clean,
+        p_name: label.trim() || null,
+      });
       if (error) alert(error.message);
       else if (data) {
-        setName("");
+        setCode("");
+        setLabel("");
         await load();
       }
     } finally {
-      setCreating(false);
+      setSyncing(false);
     }
-  }
-
-  function downloadFile(agent: RemoteAgent) {
-    const config = {
-      agentId: agent.id,
-      name: agent.name,
-      accessCode: agent.access_code,
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-      supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
-      instrucoes:
-        "Coloque este arquivo (renomeado para config.json) ao lado do Agente de Acesso Remoto e execute-o.",
-      criadoEm: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${agent.name.replace(/[^\w-]+/g, "_")}-acesso-remoto.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
   }
 
   async function remove(id: string) {
@@ -85,35 +78,43 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           <MonitorSmartphone className="text-emerald-400" size={20} /> Acesso Remoto
         </h3>
         {canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && createAgent()}
-              placeholder="Nome do cliente / máquina"
-              className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-56"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Nome do cliente (opcional)"
+              className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-44"
+            />
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && syncAgent()}
+              placeholder="Código do cliente"
+              inputMode="numeric"
+              className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-40 tracking-widest font-mono"
             />
             <button
-              onClick={createAgent}
-              disabled={creating || !name.trim()}
+              onClick={syncAgent}
+              disabled={syncing || code.replace(/\D/g, "").length < 6}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50"
             >
-              <Plus size={14} /> Gerar acesso
+              <Link2 size={14} /> Sincronizar
             </button>
           </div>
         )}
       </div>
 
       <div className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
-        Gere o acesso, baixe o arquivo e renomeie para <b>config.json</b> ao lado do <b>Agente de Acesso Remoto</b> na
-        máquina do cliente. Quando ficar <b>Online</b>, clique em <b>Conectar</b> para ver e controlar a tela ao vivo
-        (na mesma VPN, conexão direta). O agente fica em <code>/remote-agent</code>.
+        O cliente abre o <b>Workspace Acesso Remoto</b> (.exe) na máquina dele e te informa o <b>código de suporte</b>{" "}
+        que aparece na tela. Digite o código acima e clique em <b>Sincronizar</b>. A máquina entra na lista e, sempre que
+        estiver <b>Online</b>, você clica em <b>Conectar</b> para ver e controlar a tela — sem pedir permissão, pela mesma
+        VPN. O app do cliente fica rodando em segundo plano e sobe junto com o Windows.
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
         {agents.length === 0 && (
           <p className="text-sm text-gray-500 italic col-span-full text-center py-8">
-            Nenhuma máquina cadastrada. Gere um acesso para um cliente acima.
+            Nenhuma máquina sincronizada. Peça o código de suporte ao cliente e sincronize acima.
           </p>
         )}
         {agents.map((a) => {
@@ -156,22 +157,14 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => downloadFile(a)}
-                  className="flex-1 flex items-center justify-center gap-1.5 text-xs bg-white/5 hover:bg-white/10 py-2 rounded-lg cursor-pointer"
-                >
-                  <Download size={13} /> Baixar arquivo
-                </button>
-                <button
-                  onClick={() => setViewing(a)}
-                  disabled={!online}
-                  title={online ? "Conectar" : "A máquina precisa estar online (agente instalado)"}
-                  className="flex-1 flex items-center justify-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Monitor size={13} /> Conectar
-                </button>
-              </div>
+              <button
+                onClick={() => setViewing(a)}
+                disabled={!online}
+                title={online ? "Conectar" : "A máquina precisa estar online (app aberto)"}
+                className="w-full flex items-center justify-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Monitor size={13} /> Conectar
+              </button>
             </div>
           );
         })}

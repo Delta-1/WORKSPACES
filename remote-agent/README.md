@@ -21,21 +21,20 @@ Você **não precisa** de Node no seu PC. O .exe é gerado automaticamente no Gi
 
 Esse .exe já vem com a configuração pública (URL + anon key) embutida. Pronto pra usar.
 
-## Mandar pro cliente (um único .exe, sem digitar nada)
+## Fluxo de suporte (estilo AnyDesk)
 
-1. Na aba **Acesso Remoto** da plataforma, gere o acesso do cliente e copie o
-   **código** (12 dígitos).
-2. **Renomeie** o exe incluindo o código:
-   `WorkspaceAcessoRemoto-123456789012.exe`
-3. Mande **só esse .exe** pro cliente.
-4. O cliente **dá dois cliques** → o app lê o código do nome do arquivo, **conecta
-   sozinho**, some pra bandeja e **passa a subir junto com o Windows**. Nada de
-   instalar, digitar ou aprovar depois.
-5. Você clica em **Conectar** na plataforma e controla a tela — a qualquer momento,
-   sem o cliente precisar aceitar.
+1. Mande **o mesmo .exe pra todos os clientes** (não precisa personalizar).
+2. O cliente **dá dois cliques**. O app gera um **código de suporte** próprio
+   (derivado da máquina, sempre o mesmo naquele PC), **mostra na tela** e já fica
+   online — depois some pra bandeja e **passa a subir junto com o Windows**.
+3. O cliente **te informa esse código** (telefone/WhatsApp).
+4. No seu Workspace → aba **Acesso Remoto**, digite o código em **Sincronizar**.
+   A máquina entra na sua lista de clientes.
+5. Sempre que precisar, clique em **Conectar** — vê e controla a tela, **sem o
+   cliente precisar aceitar**, pela mesma VPN (conexão direta).
 
-> Alternativa: mande o exe **sem renomear**. Na 1ª vez o cliente digita o código de
-> 12 dígitos numa janelinha; depois fica salvo e nunca mais aparece.
+> O cliente **nunca acessa o site do Workspace** — só o .exe. A sincronização é só
+> um vínculo do código dele com a sua empresa.
 
 ---
 
