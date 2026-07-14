@@ -1,0 +1,42 @@
+name: Build Remote Agent (.exe)
+
+# Gera o .exe do agente de Acesso Remoto automaticamente.
+# Rode manualmente em Actions -> "Build Remote Agent (.exe)" -> Run workflow,
+# ou automaticamente quando algo em remote-agent/ muda.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "remote-agent/**"
+      - ".github/workflows/build-remote-agent.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: remote-agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Preparar config.json (valores públicos)
+        shell: bash
+        run: cp config.public.json config.json
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Gerar .exe portátil
+        run: npm run dist:win
+
+      - name: Publicar o .exe como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkspaceAcessoRemoto-exe
+          path: remote-agent/dist/WorkspaceAcessoRemoto.exe
+          if-no-files-found: error

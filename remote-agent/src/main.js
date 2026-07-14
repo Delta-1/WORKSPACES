@@ -114,7 +114,29 @@ function mapKey(Key, name) {
   return map[name] ?? null;
 }
 
+// Garante uma única instância rodando (evita duplicar quando abre de novo).
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
+// Faz o app subir sozinho junto com o Windows/macOS (acesso sempre disponível,
+// sem o cliente precisar reabrir nada depois de reiniciar a máquina).
+function enableAutoStart() {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      openAsHidden: true,
+      path: process.execPath,
+      args: ["--hidden"],
+    });
+  } catch (err) {
+    console.error("auto-start", err);
+  }
+}
+
 app.whenReady().then(() => {
+  enableAutoStart();
   const bundled = loadBundledConfig();
   const pairing = loadPairing();
   // Permite "zero digitação": o código pode vir no nome do .exe
