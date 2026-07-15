@@ -106,8 +106,8 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
   }
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 overflow-hidden">
-      <div className="liquid-glass rounded-2xl overflow-hidden relative flex flex-col">
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 overflow-y-auto lg:overflow-hidden">
+      <div className="liquid-glass rounded-2xl overflow-hidden relative flex flex-col min-h-[55vh] lg:min-h-0">
         <div className="flex items-center justify-between p-4 border-b border-white/10">
           <h3 className="text-lg font-bold flex items-center gap-2">
             <Network className="text-emerald-400" size={20} /> Organograma

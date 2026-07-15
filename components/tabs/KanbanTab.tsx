@@ -134,13 +134,13 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 overflow-y-auto md:overflow-hidden pb-2">
         {COLUMNS.map((col) => (
           <div
             key={col.id}
             onDragOver={(e) => e.preventDefault()}
             onDrop={() => dragTaskId && moveTask(dragTaskId, col.id)}
-            className="liquid-glass rounded-xl p-3 flex flex-col overflow-hidden"
+            className="liquid-glass rounded-xl p-3 flex flex-col overflow-hidden min-h-[45vh] md:min-h-0"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
               <span className="text-xs font-bold uppercase text-gray-400 flex items-center gap-1.5">
@@ -176,11 +176,11 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
 
       {showModal && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
           onClick={() => setShowModal(false)}
         >
           <div
-            className="drawer-anim liquid-glass rounded-2xl p-6 w-full max-w-sm"
+            className="drawer-anim liquid-glass rounded-2xl p-5 sm:p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
