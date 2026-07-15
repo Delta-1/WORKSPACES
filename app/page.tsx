@@ -75,6 +75,7 @@ export default function Home() {
   const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [quickIds, setQuickIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [company, setCompany] = useState<CompanyInfo>({
     name: "Configuração Pendente",
@@ -219,6 +220,26 @@ export default function Home() {
 
   const visibleApps = APPS.filter((a) => a.roles.includes(role));
 
+  // Barra de acesso rápido personalizável (salva por navegador).
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("dock:quickApps") || "[]");
+      if (Array.isArray(saved) && saved.length) setQuickIds(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function saveQuick(ids: string[]) {
+    setQuickIds(ids);
+    try {
+      localStorage.setItem("dock:quickApps", JSON.stringify(ids));
+    } catch {
+      /* ignore */
+    }
+  }
+  const validQuick = quickIds.filter((id) => visibleApps.some((a) => a.id === id));
+  const dockApps = validQuick.length ? (validQuick.map((id) => visibleApps.find((a) => a.id === id)!) ) : visibleApps.slice(0, 5);
+
   if (checkingSession) {
     return <div className="fixed inset-0 bg-[#060a12]" />;
   }
@@ -320,8 +341,15 @@ export default function Home() {
 
       {profile && <NewConversationNotifier onOpen={() => setTab("whatsapp")} />}
 
-      <Dock apps={visibleApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
-      <AppDrawer apps={visibleApps} open={drawerOpen} onClose={() => setDrawerOpen(false)} onSelect={setTab} />
+      <Dock apps={dockApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
+      <AppDrawer
+        apps={visibleApps}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onSelect={setTab}
+        quickIds={dockApps.map((a) => a.id)}
+        onSaveQuick={saveQuick}
+      />
     </div>
   );
 }
