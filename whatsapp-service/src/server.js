@@ -1,8 +1,11 @@
 import express from "express";
 import QRCode from "qrcode";
 import fs from "fs";
+import os from "os";
 import path from "path";
+import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import ffmpegPath from "ffmpeg-static";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -387,6 +390,41 @@ async function synthesizeSpeech(text, key, voiceId) {
     lastElevenError = "TTS exception: " + (err?.message || String(err));
     console.error("synthesizeSpeech failed:", err);
     return null;
+  }
+}
+
+// Converte o MP3 do ElevenLabs em OGG/Opus (formato que o WhatsApp toca como
+// nota de voz). Sem isto, o WhatsApp diz "problema com o arquivo de áudio".
+async function mp3ToOpusOgg(mp3Buffer) {
+  if (!ffmpegPath) return null;
+  const tmp = os.tmpdir();
+  const inFile = path.join(tmp, `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
+  const outFile = inFile.replace(/\.mp3$/, ".ogg");
+  try {
+    fs.writeFileSync(inFile, mp3Buffer);
+    await new Promise((resolve, reject) => {
+      const ff = spawn(ffmpegPath, [
+        "-y",
+        "-i", inFile,
+        "-c:a", "libopus",
+        "-b:a", "32k",
+        "-ar", "48000",
+        "-ac", "1",
+        outFile,
+      ]);
+      let err = "";
+      ff.stderr.on("data", (d) => (err += d.toString()));
+      ff.on("error", reject);
+      ff.on("close", (code) => (code === 0 ? resolve() : reject(new Error("ffmpeg " + code + ": " + err.slice(-200)))));
+    });
+    return fs.readFileSync(outFile);
+  } catch (err) {
+    lastElevenError = "ffmpeg: " + (err?.message || String(err));
+    console.error("mp3ToOpusOgg failed:", err);
+    return null;
+  } finally {
+    try { fs.unlinkSync(inFile); } catch { /* */ }
+    try { fs.unlinkSync(outFile); } catch { /* */ }
   }
 }
 
@@ -777,15 +815,17 @@ async function startSession(numberId) {
               let sentAsAudio = false;
               if (wasAudio && voiceReplyOn && botElevenKey) {
                 const speech = await synthesizeSpeech(reply, botElevenKey, chatbot?.elevenlabs_voice_id);
-                if (speech) {
-                  await sock.sendMessage(jid, { audio: speech, mimetype: "audio/mpeg", ptt: true });
-                  const audioUrl = await uploadMedia(speech, "audio/mpeg", "out");
+                // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
+                const ogg = speech ? await mp3ToOpusOgg(speech) : null;
+                if (ogg) {
+                  await sock.sendMessage(jid, { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true });
+                  const audioUrl = await uploadMedia(ogg, "audio/ogg", "out");
                   await logMessage(
                     conversation.id,
                     "out",
                     reply,
                     null,
-                    audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/mpeg" } : null,
+                    audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/ogg" } : null,
                     cid
                   );
                   sentAsAudio = true;
