@@ -369,6 +369,23 @@ async function transcribeAudio(buffer, mime, key) {
   }
 }
 
+// Limpa o texto antes de virar voz: tira rótulos/rubricas que o TTS leria
+// literalmente ("áudio", "(risada)", "(rindo)", "[pausa]"...) e transforma
+// risadas descritas em risada de verdade ("hahaha").
+function sanitizeForSpeech(text) {
+  let t = String(text || "");
+  // "áudio"/"audio" no comecinho (rótulo) — remove.
+  t = t.replace(/^\s*[áa]udio[:\-–.\s]+/i, "");
+  // Risadas descritas -> som de risada real.
+  t = t.replace(/[([]\s*(risada[s]?|rindo|risos|gargalhada[s]?|kk+|haha[ha]*)\s*[)\]]/gi, "hahaha");
+  // Outras rubricas entre parênteses/colchetes (pausa, suspiro, tom, voz...) — remove.
+  t = t.replace(/[([]\s*(pausa|suspiro|silêncio|silencio|tom\b[^)\]]*|voz\b[^)\]]*|sussurr[^)\]]*|em voz[^)\]]*|com [^)\]]*)\s*[)\]]/gi, "");
+  // Colchetes remanescentes (quase sempre rubrica) — remove.
+  t = t.replace(/\[[^\]]*\]/g, "");
+  // Espaços/limpeza final.
+  return t.replace(/\s{2,}/g, " ").trim();
+}
+
 // ElevenLabs Text-to-Speech (gera a resposta do robô em áudio). Retorna Buffer mp3.
 async function synthesizeSpeech(text, key, voiceId) {
   const apiKey = key || elevenKey;
@@ -822,7 +839,7 @@ async function startSession(numberId) {
               // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
               let sentAsAudio = false;
               if (wasAudio && voiceReplyOn && botElevenKey) {
-                const speech = await synthesizeSpeech(reply, botElevenKey, chatbot?.elevenlabs_voice_id);
+                const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, chatbot?.elevenlabs_voice_id);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
                 if (ogg) {
