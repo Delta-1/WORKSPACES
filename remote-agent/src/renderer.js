@@ -63,7 +63,55 @@ async function startAgent() {
   setInterval(heartbeat, 20000);
   uploadThumb();
   setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)
+  runAutomations();
+  setInterval(runAutomations, 60000); // rotinas de automação (a cada 1 min)
   join();
+}
+
+// Executa as rotinas de automação vencidas: lê o arquivo local e sobe pro
+// bucket "automation"; o servidor depois leva pro Google Drive.
+let autoBusy = false;
+async function runAutomations() {
+  if (autoBusy || !supabase || !cfg?.agentId) return;
+  autoBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_due_routines", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+    });
+    for (const r of data || []) {
+      try {
+        const { name, base64 } = await ipcRenderer.invoke("fs-read", r.source_path);
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        const path = `${cfg.agentId}/${Date.now()}-${name}`;
+        const { error } = await supabase.storage
+          .from("automation")
+          .upload(path, bytes, { contentType: "application/octet-stream", upsert: true });
+        if (error) throw error;
+        await supabase.rpc("agent_record_run", {
+          p_agent_id: cfg.agentId,
+          p_access_code: cfg.accessCode,
+          p_routine_id: r.id,
+          p_storage_path: path,
+          p_status: "uploaded",
+          p_error: null,
+        });
+      } catch (e) {
+        await supabase.rpc("agent_record_run", {
+          p_agent_id: cfg.agentId,
+          p_access_code: cfg.accessCode,
+          p_routine_id: r.id,
+          p_storage_path: null,
+          p_status: "error",
+          p_error: String(e?.message || e).slice(0, 300),
+        });
+      }
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    autoBusy = false;
+  }
 }
 
 // Sobe uma miniatura da tela para a listagem de computadores mostrar ao vivo.

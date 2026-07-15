@@ -24,6 +24,7 @@ import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import TeamChatTab from "@/components/tabs/TeamChatTab";
+import AutomationTab from "@/components/tabs/AutomationTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
@@ -45,6 +46,7 @@ const APPS: AppDef[] = [
   { id: "funcionarios", label: "Funcionários", icon: Users, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes", label: "Clientes", icon: Building2, accent: "bg-lime-800/60", roles: ["gestor", "gerente"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
+  { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
 
@@ -326,6 +328,7 @@ export default function Home() {
         {tab === "funcionarios" && <EmployeesTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
+        {tab === "automacao" && <AutomationTab profile={profile} />}
         {tab === "config" && (
           <ConfigTab
             companyName={company.name}
