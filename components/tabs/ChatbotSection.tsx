@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, FileText, FolderPlus, Trash2, Upload } from "lucide-react";
+import { Bot, FileText, FolderPlus, Trash2, Upload, Volume2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import MiniFileGraph from "@/components/MiniFileGraph";
 import type { AiProvider, Chatbot, FileNodeRow } from "@/lib/types";
@@ -15,6 +15,7 @@ const PROVIDERS: { id: AiProvider; label: string }[] = [
 export default function ChatbotSection() {
   const [bot, setBot] = useState<Chatbot | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [elevKey, setElevKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
   const [files, setFiles] = useState<FileNodeRow[]>([]);
@@ -71,12 +72,16 @@ export default function ChatbotSection() {
       knowledge: bot.knowledge,
       provider: bot.provider,
       enabled: bot.enabled,
+      voice_reply: bot.voice_reply !== false,
+      elevenlabs_voice_id: bot.elevenlabs_voice_id,
       updated_at: new Date().toISOString(),
     };
     if (apiKey.trim()) update.api_key = apiKey.trim();
+    if (elevKey.trim()) update.elevenlabs_key = elevKey.trim();
     await supabase.from("chatbots").update(update).eq("id", bot.id);
     await ensureFolder(bot.id);
     setApiKey("");
+    setElevKey("");
     setSavedMsg(true);
     setTimeout(() => setSavedMsg(false), 2500);
     setSaving(false);
@@ -219,6 +224,50 @@ export default function ChatbotSection() {
             className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
           />
         </div>
+      </div>
+
+      {/* Voz do robô (ElevenLabs) */}
+      <div className="border-t border-white/10 pt-4 space-y-3">
+        <label className="flex items-center justify-between gap-2 cursor-pointer">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+            <Volume2 size={14} /> Responder por áudio quando o cliente mandar áudio
+          </span>
+          <input
+            type="checkbox"
+            checked={bot.voice_reply !== false}
+            onChange={(e) => patch({ voice_reply: e.target.checked })}
+            className="accent-emerald-600 w-4 h-4"
+          />
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Chave ElevenLabs {bot.elevenlabs_key && <span className="text-emerald-400 normal-case">(configurada)</span>}
+            </label>
+            <input
+              type="password"
+              value={elevKey}
+              onChange={(e) => setElevKey(e.target.value)}
+              placeholder={bot.elevenlabs_key ? "•••••••• (deixe em branco p/ manter)" : "sk_..."}
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Voice ID (opcional)
+            </label>
+            <input
+              value={bot.elevenlabs_voice_id ?? ""}
+              onChange={(e) => patch({ elevenlabs_voice_id: e.target.value || null })}
+              placeholder="21m00Tcm4TlvDq8ikWAM"
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
+            />
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-500">
+          Pegue a chave em elevenlabs.io → API Keys. O plano grátis pode bloquear voz a partir de servidores; se a voz
+          não sair, use um plano pago (o mais barato já resolve).
+        </p>
       </div>
 
       {/* Pasta / grafo próprio do chatbot */}

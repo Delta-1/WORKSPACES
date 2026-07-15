@@ -195,6 +195,9 @@ export type Chatbot = {
   api_key: string | null;
   enabled: boolean;
   folder_id: string | null;
+  elevenlabs_key: string | null;
+  elevenlabs_voice_id: string | null;
+  voice_reply: boolean;
   created_at: string;
   updated_at: string;
 };
