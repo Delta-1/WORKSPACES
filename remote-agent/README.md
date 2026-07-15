@@ -74,8 +74,9 @@ O mesmo agente roda nos dois. Baixe o artefato certo em **Actions**:
 
 ## Como funciona o "sempre disponível"
 
-- No 1º uso o app registra-se pra **iniciar automaticamente com o sistema**
-  (`openAtLogin`), então após reiniciar a máquina ele volta sozinho e fica online.
+- No 1º uso o app registra-se pra **iniciar automaticamente com o sistema** —
+  **Windows/macOS** via `openAtLogin`, **Linux** via um arquivo `.desktop` em
+  `~/.config/autostart`. Após reiniciar a máquina ele volta sozinho e fica online.
 - Fica um **ícone na bandeja** (Abrir / Sair). Fechar a janela **não** encerra —
   segue rodando em segundo plano.
 - Manda um **heartbeat** a cada 20s; a plataforma mostra a máquina como Online.

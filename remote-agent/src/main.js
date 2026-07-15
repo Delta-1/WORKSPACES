@@ -34,6 +34,11 @@ let win = null;
 let tray = null;
 let lastPayload = null;
 
+// Linux/Wayland: habilita a captura de tela via PipeWire (no X11 já funciona).
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
+}
+
 function loadBundledConfig() {
   const candidates = [
     path.join(process.resourcesPath || ".", "config.json"),
@@ -223,16 +228,33 @@ process.on("unhandledRejection", (err) => {
   console.error("unhandledRejection:", err);
 });
 
-// Faz o app subir sozinho junto com o Windows/macOS (acesso sempre disponível,
-// sem o cliente precisar reabrir nada depois de reiniciar a máquina).
+// Faz o app subir sozinho junto com o sistema (Windows, macOS e Linux).
 function enableAutoStart() {
   try {
-    app.setLoginItemSettings({
-      openAtLogin: true,
-      openAsHidden: true,
-      path: process.execPath,
-      args: ["--hidden"],
-    });
+    if (process.platform === "linux") {
+      // No Linux o setLoginItemSettings não funciona: cria um .desktop em
+      // ~/.config/autostart apontando para o executável.
+      const dir = path.join(app.getPath("home"), ".config", "autostart");
+      fs.mkdirSync(dir, { recursive: true });
+      const exec = process.execPath;
+      const desktop = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Workspace Acesso Remoto",
+        `Exec="${exec}" --hidden`,
+        "X-GNOME-Autostart-enabled=true",
+        "NoDisplay=true",
+        "Terminal=false",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "workspace-remote-agent.desktop"), desktop);
+    } else {
+      app.setLoginItemSettings({
+        openAtLogin: true,
+        openAsHidden: true,
+        path: process.execPath,
+        args: ["--hidden"],
+      });
+    }
   } catch (err) {
     console.error("auto-start", err);
   }
