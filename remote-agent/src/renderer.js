@@ -110,6 +110,7 @@ function send(payload) {
 async function onSignal(msg) {
   if (!msg || msg.to !== "agent") return;
   if (msg.type === "connect") await startStreaming();
+  else if (msg.type === "select-screen") await switchScreen(msg.sourceId);
   else if (msg.type === "answer") await pc?.setRemoteDescription(msg.sdp);
   else if (msg.type === "ice" && msg.candidate) {
     try {
@@ -120,30 +121,42 @@ async function onSignal(msg) {
   } else if (msg.type === "stop") cleanup();
 }
 
-async function startStreaming() {
-  cleanup();
-  setStatus("Suporte conectando… iniciando captura.");
-  const sources = await ipcRenderer.invoke("get-sources");
-  const src = sources[0];
-  if (!src) {
-    setStatus("Nenhuma tela encontrada.");
-    return;
-  }
-  stream = await navigator.mediaDevices.getUserMedia({
+let videoSender = null;
+let screens = [];
+
+async function captureScreen(sourceId) {
+  return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       mandatory: {
         chromeMediaSource: "desktop",
-        chromeMediaSourceId: src.id,
-        maxWidth: 1920,
-        maxHeight: 1080,
-        maxFrameRate: 15,
+        chromeMediaSourceId: sourceId,
+        // Resolução alta (tela nítida) + 30 fps (menos travado/menos lag).
+        maxWidth: 2560,
+        maxHeight: 1440,
+        maxFrameRate: 30,
       },
     },
   });
+}
+
+async function startStreaming() {
+  cleanup();
+  setStatus("Suporte conectando… iniciando captura.");
+  screens = await ipcRenderer.invoke("get-sources");
+  const src = screens[0];
+  if (!src) {
+    setStatus("Nenhuma tela encontrada.");
+    return;
+  }
+  ipcRenderer.send("set-display", src.display_id);
+  stream = await captureScreen(src.id);
 
   pc = new RTCPeerConnection({ iceServers: ICE });
-  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+  stream.getTracks().forEach((t) => {
+    const sender = pc.addTrack(t, stream);
+    if (t.kind === "video") videoSender = sender;
+  });
 
   const control = pc.createDataChannel("control");
   control.onmessage = (ev) => {
@@ -170,7 +183,30 @@ async function startStreaming() {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   send({ to: "operator", type: "offer", sdp: offer });
+  // Informa ao operador quantos monitores existem (para trocar de tela).
+  send({ to: "operator", type: "screens", list: screens.map((s, i) => ({ id: s.id, name: s.name || `Monitor ${i + 1}` })) });
   setStatus("Transmitindo a tela para o suporte…");
+}
+
+// Troca o monitor transmitido sem reconectar (replaceTrack).
+async function switchScreen(sourceId) {
+  const src = screens.find((s) => s.id === sourceId);
+  if (!src || !videoSender) return;
+  try {
+    const newStream = await captureScreen(src.id);
+    const newTrack = newStream.getVideoTracks()[0];
+    await videoSender.replaceTrack(newTrack);
+    try {
+      stream?.getTracks().forEach((t) => t.stop());
+    } catch {
+      /* ignore */
+    }
+    stream = newStream;
+    ipcRenderer.send("set-display", src.display_id);
+    setStatus("Monitor trocado.");
+  } catch (e) {
+    setStatus("Falha ao trocar de monitor: " + e.message);
+  }
 }
 
 // Transfere respostas grandes em pedaços (o data channel tem limite ~16KB).

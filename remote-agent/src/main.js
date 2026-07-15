@@ -96,8 +96,18 @@ function showWindow() {
 
 ipcMain.handle("get-sources", async () => {
   const sources = await desktopCapturer.getSources({ types: ["screen"] });
-  return sources.map((s) => ({ id: s.id, name: s.name }));
+  return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
 });
+
+// Qual monitor está sendo controlado (para mapear mouse/teclado no lugar certo).
+let activeDisplayId = null;
+ipcMain.on("set-display", (_e, displayId) => {
+  activeDisplayId = displayId != null ? String(displayId) : null;
+});
+function activeDisplay() {
+  const all = screen.getAllDisplays();
+  return all.find((d) => String(d.id) === activeDisplayId) || screen.getPrimaryDisplay();
+}
 
 // Miniatura da tela (para a prévia ao vivo na listagem de computadores).
 ipcMain.handle("get-thumbnail", async () => {
@@ -174,13 +184,16 @@ async function ensureNut() {
 ipcMain.on("input", async (_e, ev) => {
   try {
     const { mouse, keyboard, Point, Button, Key } = await ensureNut();
-    const disp = screen.getPrimaryDisplay();
-    const w = disp.size.width;
-    const h = disp.size.height;
+    // Mapeia para o monitor que está sendo controlado (bounds inclui o offset,
+    // então o mouse vai pro monitor certo mesmo com vários monitores).
+    const disp = activeDisplay();
+    const b = disp.bounds;
+    const absX = (nx) => Math.round(b.x + nx * b.width);
+    const absY = (ny) => Math.round(b.y + ny * b.height);
     if (ev.kind === "move") {
-      await mouse.setPosition(new Point(Math.round(ev.x * w), Math.round(ev.y * h)));
+      await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
     } else if (ev.kind === "down") {
-      await mouse.setPosition(new Point(Math.round(ev.x * w), Math.round(ev.y * h)));
+      await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
       await mouse.pressButton(ev.button === 2 ? Button.RIGHT : Button.LEFT);
     } else if (ev.kind === "up") {
       await mouse.releaseButton(ev.button === 2 ? Button.RIGHT : Button.LEFT);

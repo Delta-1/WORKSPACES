@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Download, File as FileIcon, Folder, FolderOpen, Upload, X } from "lucide-react";
+import { ArrowUp, Download, File as FileIcon, Folder, FolderOpen, Monitor as MonitorIcon, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { RemoteAgent } from "@/lib/types";
 
@@ -16,6 +16,13 @@ export default function RemoteViewer({ agent, onClose }: { agent: RemoteAgent; o
   const filesRef = useRef<RTCDataChannel | null>(null);
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const [status, setStatus] = useState("Conectando ao agente...");
+  const [screens, setScreens] = useState<{ id: string; name: string }[]>([]);
+  const [activeScreen, setActiveScreen] = useState<string>("");
+
+  function selectScreen(sourceId: string) {
+    setActiveScreen(sourceId);
+    channelRef.current?.send({ type: "broadcast", event: "signal", payload: { to: "agent", type: "select-screen", sourceId } });
+  }
 
   // Gerenciador de arquivos remoto
   const [showFiles, setShowFiles] = useState(false);
@@ -121,9 +128,12 @@ export default function RemoteViewer({ agent, onClose }: { agent: RemoteAgent; o
 
     channel
       .on("broadcast", { event: "signal" }, async ({ payload }) => {
-        const msg = payload as { to?: string; type?: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
+        const msg = payload as { to?: string; type?: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; list?: { id: string; name: string }[] };
         if (msg.to !== "operator") return;
-        if (msg.type === "offer" && msg.sdp) {
+        if (msg.type === "screens" && msg.list) {
+          setScreens(msg.list);
+          setActiveScreen((prev) => prev || msg.list?.[0]?.id || "");
+        } else if (msg.type === "offer" && msg.sdp) {
           await pc.setRemoteDescription(msg.sdp);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -174,6 +184,23 @@ export default function RemoteViewer({ agent, onClose }: { agent: RemoteAgent; o
         <p className="text-sm font-bold">Acesso remoto — {agent.name}</p>
         <div className="flex items-center gap-3">
           {status && <span className="text-xs text-amber-400">{status}</span>}
+          {screens.length > 1 && (
+            <div className="flex items-center gap-1.5">
+              <MonitorIcon size={14} className="text-gray-400" />
+              <select
+                value={activeScreen}
+                onChange={(e) => selectScreen(e.target.value)}
+                className="text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 outline-none cursor-pointer"
+                title="Trocar de monitor"
+              >
+                {screens.map((s, i) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name || `Monitor ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <button
             onClick={() => (showFiles ? setShowFiles(false) : openFiles())}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${
