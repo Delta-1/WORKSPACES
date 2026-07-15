@@ -342,7 +342,15 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
     if (!bot) {
       const { data: created } = await supabase
         .from("chatbots")
-        .insert({ name: "Assistente", enabled: true, provider: "anthropic" })
+        .insert({
+          name: "Assistente",
+          enabled: true,
+          provider: "anthropic",
+          persona: "assistente virtual de atendimento",
+          greeting: "Olá! 👋 Sou o assistente virtual. Como posso te ajudar hoje?",
+          instructions:
+            "Fale em português do Brasil, simpático e natural. Mensagens CURTAS (1-2 frases), como no WhatsApp. Uma pergunta por vez. Entenda rápido o que a pessoa precisa e com quem quer falar (setor/assunto). Quando entender, confirme em uma frase e diga que vai encaminhar. Nunca invente; se não souber, chame um atendente humano.",
+        })
         .select("*")
         .single();
       bot = created ?? undefined;

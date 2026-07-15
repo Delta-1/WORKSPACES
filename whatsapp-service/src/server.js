@@ -29,6 +29,9 @@ const supabase =
 
 // Fallback env key used only if a chatbot has no key of its own.
 const fallbackAnthropicKey = process.env.ANTHROPIC_API_KEY || null;
+// ElevenLabs: transcrição de áudio (STT) + voz do robô (TTS). Opcional.
+const elevenKey = process.env.ELEVENLABS_API_KEY || null;
+const elevenVoiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // voz padrão
 
 // One live Baileys socket per WhatsApp number id.
 // sessions: Map<numberId, { sock, state, starting }>
@@ -331,6 +334,50 @@ async function uploadMedia(buffer, mime, prefix) {
   }
   const { data } = supabase.storage.from("wa-media").getPublicUrl(path);
   return data?.publicUrl ?? null;
+}
+
+// ElevenLabs Speech-to-Text (transcreve o áudio do cliente).
+async function transcribeAudio(buffer, mime) {
+  if (!elevenKey || !buffer) return null;
+  try {
+    const fd = new FormData();
+    fd.append("model_id", "scribe_v1");
+    fd.append("file", new Blob([buffer], { type: mime || "audio/ogg" }), "audio.ogg");
+    const res = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+      method: "POST",
+      headers: { "xi-api-key": elevenKey },
+      body: fd,
+    });
+    if (!res.ok) {
+      console.error("ElevenLabs STT error:", res.status, (await res.text()).slice(0, 200));
+      return null;
+    }
+    const json = await res.json();
+    return json?.text?.trim() || null;
+  } catch (err) {
+    console.error("transcribeAudio failed:", err);
+    return null;
+  }
+}
+
+// ElevenLabs Text-to-Speech (gera a resposta do robô em áudio). Retorna Buffer mp3.
+async function synthesizeSpeech(text) {
+  if (!elevenKey || !text) return null;
+  try {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elevenVoiceId}`, {
+      method: "POST",
+      headers: { "xi-api-key": elevenKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
+      body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+    });
+    if (!res.ok) {
+      console.error("ElevenLabs TTS error:", res.status, (await res.text()).slice(0, 200));
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    console.error("synthesizeSpeech failed:", err);
+    return null;
+  }
 }
 
 function firstConnectedNumberId() {
@@ -645,6 +692,7 @@ async function startSession(numberId) {
           inner.conversation || inner.extendedTextMessage?.text || node?.caption || "";
 
         let media = null;
+        let audioBuffer = null;
         if (mediaKind) {
           try {
             const buffer = await downloadMediaMessage(
@@ -653,6 +701,7 @@ async function startSession(numberId) {
               {},
               { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
             );
+            if (mediaKind === "audio") audioBuffer = buffer; // guarda p/ transcrever
             const url = await uploadMedia(buffer, node?.mimetype || null, "in");
             if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
           } catch (err) {
@@ -683,6 +732,12 @@ async function startSession(numberId) {
 
           const botOn = number?.auto_reply && chatbot?.enabled;
           if (botOn) {
+            // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para o bot "ouvir".
+            const wasAudio = mediaKind === "audio";
+            let customerText = text;
+            if (!customerText && wasAudio && audioBuffer) {
+              customerText = await transcribeAudio(audioBuffer, node?.mimetype);
+            }
             // Saudação apenas na abertura da conversa.
             if (created && chatbot?.greeting) {
               await sock.sendMessage(jid, { text: chatbot.greeting });
@@ -704,10 +759,30 @@ async function startSession(numberId) {
             } catch {
               /* sem histórico, segue sem contexto */
             }
-            const reply = text ? await runChatbotReply(chatbot, text, history) : null;
+            const reply = customerText ? await runChatbotReply(chatbot, customerText, history) : null;
             if (reply) {
-              await sock.sendMessage(jid, { text: reply });
-              await logMessage(conversation.id, "out", reply, null, null, cid);
+              // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
+              let sentAsAudio = false;
+              if (wasAudio && elevenKey) {
+                const speech = await synthesizeSpeech(reply);
+                if (speech) {
+                  await sock.sendMessage(jid, { audio: speech, mimetype: "audio/mpeg", ptt: true });
+                  const audioUrl = await uploadMedia(speech, "audio/mpeg", "out");
+                  await logMessage(
+                    conversation.id,
+                    "out",
+                    reply,
+                    null,
+                    audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/mpeg" } : null,
+                    cid
+                  );
+                  sentAsAudio = true;
+                }
+              }
+              if (!sentAsAudio) {
+                await sock.sendMessage(jid, { text: reply });
+                await logMessage(conversation.id, "out", reply, null, null, cid);
+              }
             }
           }
         } catch (err) {
@@ -830,6 +905,8 @@ app.get("/health", (_req, res) => {
     hasUrl: Boolean(process.env.SUPABASE_URL),
     hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     hasSecret: Boolean(process.env.WHATSAPP_SERVICE_SECRET),
+    hasAnthropic: Boolean(fallbackAnthropicKey),
+    hasElevenLabs: Boolean(elevenKey),
     serviceKeyRole: (() => {
       try {
         const k = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
