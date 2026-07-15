@@ -106,10 +106,10 @@ export default function AtendimentosTab({ profile }: { profile: Profile | null }
         </div>
       </div>
 
-      <div className="flex-1 liquid-glass rounded-2xl overflow-hidden flex flex-col">
+      <div className="flex-1 liquid-glass rounded-2xl overflow-auto custom-scroll flex flex-col">
         <table className="w-full text-left text-sm border-collapse">
-          <thead>
-            <tr className="bg-black/20 border-b border-white/10 text-gray-400 text-xs uppercase font-medium">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-[#11161f] border-b border-white/10 text-gray-400 text-xs uppercase font-medium">
               <th className="p-3">Protocolo</th>
               <th className="p-3">Contato</th>
               <th className="p-3">Telefone</th>

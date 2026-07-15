@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Building2, Monitor, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
 
 function isOnline(a: RemoteAgent) {
@@ -15,6 +16,7 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
+  const [viewing, setViewing] = useState<RemoteAgent | null>(null);
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
@@ -129,23 +131,36 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
                   <p className="text-[11px] text-gray-600">Nenhum vinculado.</p>
                 ) : (
                   <ul className="space-y-1">
-                    {machines.map((m) => (
-                      <li key={m.id} className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          <span className={`w-1.5 h-1.5 rounded-full ${isOnline(m) ? "bg-emerald-400" : "bg-gray-600"}`} />
-                          <span className="truncate">{m.name}</span>
-                        </span>
-                        {canManage && (
-                          <button
-                            onClick={() => linkAgent(m.id, null)}
-                            className="text-gray-500 hover:text-red-400 cursor-pointer"
-                            title="Desvincular"
-                          >
-                            <X size={12} />
-                          </button>
-                        )}
-                      </li>
-                    ))}
+                    {machines.map((m) => {
+                      const online = isOnline(m);
+                      return (
+                        <li key={m.id} className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-emerald-400" : "bg-gray-600"}`} />
+                            <span className="truncate">{m.name}</span>
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => online && setViewing(m)}
+                              disabled={!online}
+                              title={online ? "Acessar esta máquina" : "Offline"}
+                              className="flex items-center gap-1 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Monitor size={10} /> Acessar
+                            </button>
+                            {canManage && (
+                              <button
+                                onClick={() => linkAgent(m.id, null)}
+                                className="text-gray-500 hover:text-red-400 cursor-pointer"
+                                title="Desvincular"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
 
@@ -170,6 +185,7 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} />}
+      {viewing && <RemoteViewer agent={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
