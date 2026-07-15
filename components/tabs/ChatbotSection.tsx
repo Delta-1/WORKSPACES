@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, FileText, FolderPlus, Trash2, Upload, Volume2 } from "lucide-react";
+import { extractText } from "@/lib/extract-text";
 import { supabase } from "@/lib/supabase-client";
 import MiniFileGraph from "@/components/MiniFileGraph";
 import type { AiProvider, Chatbot, FileNodeRow } from "@/lib/types";
@@ -99,25 +100,16 @@ export default function ChatbotSection() {
   async function handleUpload(file: File) {
     if (!supabase || !bot) return;
     const parent = await ensureFolder(bot.id);
-    // Arquivos de texto: guarda o conteúdo p/ o robô LER (cérebro).
-    const textLike =
-      /\.(txt|md|csv|json|log|html?|xml|yml|yaml)$/i.test(file.name) || file.type.startsWith("text/");
-    let textContent: string | null = null;
-    if (textLike && file.size <= 200_000) {
-      try {
-        textContent = await file.text();
-      } catch {
-        /* ignore */
-      }
-    }
     const reader = new FileReader();
     reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      const textContent = await extractText(file, dataUrl);
       await supabase!.from("files").insert({
         name: file.name,
         type: "file",
         parent_id: parent,
         chatbot_id: bot.id,
-        data_url: reader.result as string,
+        data_url: dataUrl,
         text_content: textContent,
       });
       loadFiles(bot.id);

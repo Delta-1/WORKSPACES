@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, Download, File as FileIcon, Folder, FolderPlus, Link2, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { extractText } from "@/lib/extract-text";
 import type { FileNodeRow, Profile } from "@/lib/types";
 
 type PositionedNode = FileNodeRow & { pos_x: number; pos_y: number };
@@ -93,8 +94,10 @@ function demoNodes(): PositionedNode[] {
 export default function FilesGraphTab({ profile }: { profile: Profile | null }) {
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const [nodes, setNodes] = useState<PositionedNode[]>([]);
+  const [links, setLinks] = useState<{ id: string; source_id: string; target_id: string }[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [linkPick, setLinkPick] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStart = useRef<{
@@ -240,7 +243,11 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       kick(1);
       return;
     }
-    const { data } = await supabase.from("files").select("*").order("created_at");
+    const [{ data }, { data: linkRows }] = await Promise.all([
+      supabase.from("files").select("*").order("created_at"),
+      supabase.from("file_links").select("id,source_id,target_id"),
+    ]);
+    setLinks(linkRows ?? []);
     if (!data) return;
     const withPositions = computeMissingPositions(data) as PositionedNode[];
     setNodes(withPositions);
@@ -266,17 +273,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected ? byId.get(selected) ?? null : null;
 
-  async function readTextContent(file: File): Promise<string | null> {
-    const textLike = /\.(txt|md|csv|json|log|html?|xml|yml|yaml|js|ts|css)$/i.test(file.name) ||
-      file.type.startsWith("text/");
-    if (!textLike || file.size > 200_000) return null;
-    try {
-      return await file.text();
-    } catch {
-      return null;
-    }
-  }
-
   async function handleUpload(file: File) {
     const client = supabase;
     if (!client) return;
@@ -284,9 +280,10 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const targetFolder = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.type === "folder")?.id;
     if (!targetFolder) return;
     const parent = byId.get(targetFolder)!;
-    const textContent = await readTextContent(file);
     const reader = new FileReader();
     reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      const textContent = await extractText(file, dataUrl); // lê txt/pdf/word p/ o cérebro
       const { data } = await client
         .from("files")
         .insert({
@@ -294,7 +291,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           type: "file",
           parent_id: targetFolder,
           uploaded_by: profile?.id ?? null,
-          data_url: reader.result as string,
+          data_url: dataUrl,
           text_content: textContent,
           pos_x: parent.pos_x + (Math.random() - 0.5) * 40,
           pos_y: parent.pos_y + (Math.random() - 0.5) * 40,
@@ -361,6 +358,28 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       prev.map((n) => (n.id === node.id ? { ...n, bot_share_status: status, bot_share_requested_by: profile?.id ?? null } : n))
     );
     alert(canManage ? "Pasta liberada para o robô de IA." : "Pedido enviado ao gestor para aprovação.");
+  }
+
+  // Liga uma pasta a outra (ex.: pasta do robô <-> pasta da empresa).
+  async function connectFolders(sourceId: string, targetId: string) {
+    if (!supabase || !canManage || sourceId === targetId) return;
+    const { data, error } = await supabase
+      .from("file_links")
+      .insert({ source_id: sourceId, target_id: targetId, created_by: profile?.id ?? null })
+      .select("id,source_id,target_id")
+      .single();
+    if (error) {
+      alert("Não foi possível conectar: " + error.message);
+      return;
+    }
+    if (data) setLinks((prev) => [...prev, data]);
+    setLinkPick("");
+  }
+
+  async function removeLink(linkId: string) {
+    if (!supabase) return;
+    await supabase.from("file_links").delete().eq("id", linkId);
+    setLinks((prev) => prev.filter((l) => l.id !== linkId));
   }
 
   async function reviewBotShare(node: PositionedNode, approve: boolean) {
@@ -541,6 +560,24 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   />
                 );
               })}
+              {/* Ligações manuais entre pastas (ex.: pasta do robô <-> empresa) */}
+              {links.map((l) => {
+                const a = byId.get(l.source_id);
+                const b = byId.get(l.target_id);
+                if (!a || !b) return null;
+                return (
+                  <line
+                    key={`link-${l.id}`}
+                    x1={a.pos_x}
+                    y1={a.pos_y}
+                    x2={b.pos_x}
+                    y2={b.pos_y}
+                    stroke="rgba(129,140,248,0.7)"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                  />
+                );
+              })}
             </svg>
             {nodes.map((n) => {
               const dim = matches && !matches.has(n.id);
@@ -604,6 +641,67 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                 {selectedNode.bot_share_status === "rejected" && (
                   <span className="text-gray-500">Compartilhamento recusado</span>
                 )}
+              </div>
+            )}
+
+            {/* Ligações de pasta (conectar a outra pasta) */}
+            {selectedNode.type === "folder" && (
+              <div className="mb-3">
+                {(() => {
+                  const myLinks = links.filter(
+                    (l) => l.source_id === selectedNode.id || l.target_id === selectedNode.id
+                  );
+                  return (
+                    <>
+                      {myLinks.length > 0 && (
+                        <div className="mb-1.5 space-y-1">
+                          <p className="text-[10px] text-indigo-300 uppercase tracking-wider">Conectada a</p>
+                          {myLinks.map((l) => {
+                            const otherId = l.source_id === selectedNode.id ? l.target_id : l.source_id;
+                            const other = byId.get(otherId);
+                            return (
+                              <div key={l.id} className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="flex items-center gap-1 truncate">
+                                  <Link2 size={11} className="text-indigo-400 shrink-0" />
+                                  {other?.name ?? "—"}
+                                </span>
+                                {canManage && (
+                                  <button
+                                    onClick={() => removeLink(l.id)}
+                                    className="text-gray-500 hover:text-red-400 cursor-pointer"
+                                  >
+                                    <X size={11} />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {canManage && (
+                        <select
+                          value={linkPick}
+                          onChange={(e) => e.target.value && connectFolders(selectedNode.id, e.target.value)}
+                          className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none cursor-pointer"
+                        >
+                          <option value="">🔗 Conectar a outra pasta…</option>
+                          {nodes
+                            .filter(
+                              (n) =>
+                                n.type === "folder" &&
+                                n.id !== selectedNode.id &&
+                                !myLinks.some((l) => l.source_id === n.id || l.target_id === n.id)
+                            )
+                            .map((n) => (
+                              <option key={n.id} value={n.id}>
+                                {n.name}
+                              </option>
+                            ))}
+                        </select>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 

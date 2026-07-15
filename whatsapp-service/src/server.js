@@ -481,6 +481,14 @@ async function buildBotBrain(chatbot) {
     for (const f of allFiles) {
       if (f.type === "folder" && f.bot_share_status === "approved") rootIds.add(f.id);
     }
+    // Pastas conectadas (file_links) à pasta do robô também entram no cérebro.
+    if (chatbot?.folder_id) {
+      const { data: linkRows } = await supabase.from("file_links").select("source_id,target_id");
+      for (const l of linkRows ?? []) {
+        if (l.source_id === chatbot.folder_id) rootIds.add(l.target_id);
+        if (l.target_id === chatbot.folder_id) rootIds.add(l.source_id);
+      }
+    }
     // Arquivos marcados diretamente com este chatbot também entram.
     const files = [];
     for (const f of allFiles) {
