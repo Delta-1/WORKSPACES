@@ -32,6 +32,7 @@ function machineCode() {
 
 let win = null;
 let tray = null;
+let lastPayload = null;
 
 function loadBundledConfig() {
   const candidates = [
@@ -70,7 +71,22 @@ function createWindow(payload, visible) {
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
   win.loadFile(path.join(__dirname, "renderer.html"));
-  win.webContents.on("did-finish-load", () => win.webContents.send("config", payload));
+  win.webContents.on("did-finish-load", () => {
+    if (win && !win.isDestroyed()) win.webContents.send("config", payload);
+  });
+  // Evita usar referência de janela destruída (fonte do erro "Object destroyed").
+  win.on("closed", () => {
+    win = null;
+  });
+}
+
+function showWindow() {
+  if (win && !win.isDestroyed()) {
+    win.show();
+    win.focus();
+  } else if (lastPayload) {
+    createWindow(lastPayload, true); // recria se já foi fechada
+  }
 }
 
 ipcMain.handle("get-sources", async () => {
@@ -100,7 +116,9 @@ ipcMain.on("save-pairing", (_e, pairing) => {
     console.error("save pairing", err);
   }
 });
-ipcMain.on("hide-window", () => win?.hide());
+ipcMain.on("hide-window", () => {
+  if (win && !win.isDestroyed()) win.hide();
+});
 
 // ---- Gerenciador de arquivos remoto (o operador navega/baixa/envia) ----
 ipcMain.handle("fs-home", () => os.homedir());
@@ -193,13 +211,17 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (win) {
-      win.show();
-      win.focus();
-    }
-  });
+  app.on("second-instance", () => showWindow());
 }
+
+// Rede de segurança: nunca deixa uma exceção não tratada derrubar o app com
+// aquela caixa de "A JavaScript error occurred in the main process".
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection:", err);
+});
 
 // Faz o app subir sozinho junto com o Windows/macOS (acesso sempre disponível,
 // sem o cliente precisar reabrir nada depois de reiniciar a máquina).
@@ -231,6 +253,7 @@ app.whenReady().then(() => {
     agentId: pairing?.agentId || null,
     accessCode: code,
   };
+  lastPayload = payload; // guarda p/ recriar a janela pelo menu "Abrir"
   // Abre a janela na 1ª vez (pra mostrar o código); depois pode subir oculto.
   const hidden = process.argv.includes("--hidden");
   createWindow(payload, !hidden);
@@ -240,7 +263,7 @@ app.whenReady().then(() => {
     tray.setToolTip("Workspace — Acesso Remoto");
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: "Abrir", click: () => win?.show() },
+        { label: "Abrir", click: () => showWindow() },
         { label: "Sair", click: () => app.quit() },
       ])
     );
