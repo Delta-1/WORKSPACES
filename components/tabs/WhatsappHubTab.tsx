@@ -325,8 +325,47 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
   async function toggleBot() {
     if (!supabase || !selNumber) return;
     const next = !selNumber.auto_reply;
-    setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: next } : n)));
-    await supabase.from("whatsapp_numbers").update({ auto_reply: next }).eq("id", selNumber.id);
+
+    if (!next) {
+      // Desligar: só tira o auto-reply.
+      setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: false } : n)));
+      await supabase.from("whatsapp_numbers").update({ auto_reply: false }).eq("id", selNumber.id);
+      return;
+    }
+
+    // Ligar: garante que existe um chatbot vinculado e ATIVADO neste número.
+    let chatbotId = selNumber.chatbot_id;
+    let apiKeyOk = false;
+    // Usa o chatbot já vinculado; senão pega qualquer um; senão cria um.
+    const { data: bots } = await supabase.from("chatbots").select("*").order("created_at");
+    let bot = chatbotId ? bots?.find((b) => b.id === chatbotId) : bots?.[0];
+    if (!bot) {
+      const { data: created } = await supabase
+        .from("chatbots")
+        .insert({ name: "Assistente", enabled: true, provider: "anthropic" })
+        .select("*")
+        .single();
+      bot = created ?? undefined;
+    }
+    if (bot) {
+      chatbotId = bot.id;
+      apiKeyOk = Boolean(bot.api_key && bot.api_key.trim());
+      if (!bot.enabled) await supabase.from("chatbots").update({ enabled: true }).eq("id", bot.id);
+    }
+
+    setNumbers((prev) =>
+      prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: true, chatbot_id: chatbotId } : n))
+    );
+    await supabase
+      .from("whatsapp_numbers")
+      .update({ auto_reply: true, chatbot_id: chatbotId })
+      .eq("id", selNumber.id);
+
+    if (!apiKeyOk) {
+      alert(
+        "Bot ligado! Só falta a chave de IA: vá em Configurações → Chatbot e cole uma API key (Anthropic ou Gemini) — sem ela o robô não consegue responder."
+      );
+    }
   }
 
   async function authHeaders(): Promise<Record<string, string>> {
