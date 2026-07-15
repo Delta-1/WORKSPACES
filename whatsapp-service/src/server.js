@@ -226,33 +226,39 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
 // Traz as conversas que já existem no WhatsApp para o site poder mostrá-las
 // (entrar e continuar). Cria conversas como "atendendo" — nunca "espera" —
 // para NÃO disparar notificação de "novo cliente". Roda ao conectar.
+function historyPreview(m) {
+  const inner = m.message?.documentWithCaptionMessage?.message ?? m.message ?? {};
+  return (
+    inner.conversation ||
+    inner.extendedTextMessage?.text ||
+    (inner.imageMessage ? "📷 Foto" : inner.audioMessage ? "🎵 Áudio" : inner.videoMessage ? "🎥 Vídeo" : inner.documentMessage ? "📄 Arquivo" : "")
+  );
+}
+
 async function ingestHistory(messages, numberId, companyId, sectorId) {
   if (!supabase || !Array.isArray(messages) || messages.length === 0) return;
-  // Agrupa por chat 1:1 e guarda a mensagem mais recente de cada um.
-  const latestByJid = new Map();
+  // Agrupa TODAS as mensagens por chat 1:1 (para carregar o histórico completo,
+  // os dois lados) e ordena por tempo.
+  const byJid = new Map();
   for (const m of messages) {
     const jid = m?.key?.remoteJid;
     if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
-    const ts = Number(m.messageTimestamp || 0);
-    const prev = latestByJid.get(jid);
-    if (!prev || ts > prev.ts) latestByJid.set(jid, { m, ts });
+    const list = byJid.get(jid) ?? [];
+    list.push(m);
+    byJid.set(jid, list);
   }
   let done = 0;
-  for (const [jid, { m }] of latestByJid) {
+  for (const [jid, msgs] of byJid) {
     if (done >= 200) break; // limite de segurança
     try {
-      const inner = m.message?.documentWithCaptionMessage?.message ?? m.message ?? {};
-      const preview =
-        inner.conversation ||
-        inner.extendedTextMessage?.text ||
-        (inner.imageMessage ? "📷 Foto" : inner.audioMessage ? "🎵 Áudio" : inner.videoMessage ? "🎥 Vídeo" : inner.documentMessage ? "📄 Arquivo" : "");
-      if (!preview) continue;
+      msgs.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0));
+      const last = msgs[msgs.length - 1];
       const isLid = jid.endsWith("@lid");
-      const altJid = m.key.remoteJidAlt || null;
+      const altJid = last.key.remoteJidAlt || null;
       const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
-      const contact = await upsertContact(phone, m.pushName || null, companyId, jid);
+      const contact = await upsertContact(phone, last.pushName || null, companyId, jid);
       if (!contact) continue;
-      // Já existe alguma conversa (qualquer status)? então não recria.
+      // Já existe conversa? então não recria (evita duplicar histórico).
       const { data: existing } = await supabase
         .from("conversations")
         .select("id")
@@ -271,10 +277,33 @@ async function ingestHistory(messages, numberId, companyId, sectorId) {
         })
         .select("id")
         .single();
-      if (conv) {
-        await logMessage(conv.id, m.key.fromMe ? "out" : "in", preview, null, null, companyId);
-        done++;
+      if (!conv) continue;
+      // Insere as últimas ~40 mensagens do histórico com data/hora reais.
+      const recent = msgs.slice(-40);
+      const rows = recent
+        .map((m) => {
+          const text = historyPreview(m);
+          if (!text) return null;
+          const ts = Number(m.messageTimestamp || 0);
+          return {
+            conversation_id: conv.id,
+            direction: m.key.fromMe ? "out" : "in",
+            text,
+            company_id: companyId,
+            at: ts ? new Date(ts * 1000).toISOString() : new Date().toISOString(),
+          };
+        })
+        .filter(Boolean);
+      if (rows.length) {
+        await supabase.from("whatsapp_messages").insert(rows);
+        // Atualiza o preview/último horário da conversa.
+        const lastRow = rows[rows.length - 1];
+        await supabase
+          .from("conversations")
+          .update({ last_message: lastRow.text, last_message_at: lastRow.at })
+          .eq("id", conv.id);
       }
+      done++;
     } catch {
       /* pula esse chat */
     }
@@ -748,6 +777,12 @@ async function startSession(numberId) {
         const jid = msg.key.remoteJid;
         // ignore groups / broadcasts — this is 1:1 customer support
         if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+        // Marca como visualizada (tique azul) para o cliente ver que foi lida.
+        try {
+          await sock.readMessages([msg.key]);
+        } catch {
+          /* ignore */
+        }
         // Desembrulha documentos com legenda
         const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
         const mediaKind = inner.imageMessage
@@ -834,6 +869,13 @@ async function startSession(numberId) {
             } catch {
               /* sem histórico, segue sem contexto */
             }
+            // Mostra ao cliente "digitando…" ou "gravando áudio…" enquanto pensa.
+            const willVoice = wasAudio && voiceReplyOn && botElevenKey;
+            try {
+              await sock.sendPresenceUpdate(willVoice ? "recording" : "composing", jid);
+            } catch {
+              /* ignore */
+            }
             const reply = customerText ? await runChatbotReply(chatbot, customerText, history) : null;
             if (reply) {
               // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
@@ -860,6 +902,11 @@ async function startSession(numberId) {
                 await sock.sendMessage(jid, { text: reply });
                 await logMessage(conversation.id, "out", reply, null, null, cid);
               }
+            }
+            try {
+              await sock.sendPresenceUpdate("paused", jid);
+            } catch {
+              /* ignore */
             }
           }
         } catch (err) {
