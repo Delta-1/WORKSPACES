@@ -21,19 +21,20 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as { history?: ChatTurn[] };
+  const body = (await request.json()) as { history?: ChatTurn[]; system?: string };
   const history = body.history ?? [];
   if (history.length === 0) {
     return NextResponse.json({ error: "Histórico vazio." }, { status: 400 });
   }
   const override = await loadOverride(request);
   const company = getCompany();
+  // Modo treino: o copiloto responde COMO o chatbot do WhatsApp (system próprio).
+  const systemPrompt =
+    typeof body.system === "string" && body.system.trim()
+      ? body.system
+      : `Você é o copiloto interno de IA da plataforma "${company.name}". Ajuda funcionários com dúvidas de rotina, sugestões de respostas para clientes, e suporte técnico. Seja direto e útil.`;
   try {
-    const reply = await runChat(
-      history,
-      `Você é o copiloto interno de IA da plataforma "${company.name}". Ajuda funcionários com dúvidas de rotina, sugestões de respostas para clientes, e suporte técnico. Seja direto e útil.`,
-      override
-    );
+    const reply = await runChat(history, systemPrompt, override);
     return NextResponse.json({ reply, live: aiIsLive(override) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro ao falar com a IA.";

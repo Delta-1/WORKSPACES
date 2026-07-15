@@ -43,8 +43,53 @@ export default function ChatTab() {
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [live, setLive] = useState<boolean | null>(null);
+  const [training, setTraining] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const botRef = useRef<{ id: string; name: string; persona: string | null; instructions: string | null; knowledge: string | null } | null>(null);
+
+  function botSystemPrompt() {
+    const b = botRef.current;
+    if (!b) return "";
+    return (
+      `Você é ${b.persona || b.name}, o assistente de atendimento no WhatsApp da empresa. ` +
+      `${b.instructions || "Responda de forma cordial e breve."}\n\n` +
+      `Base de conhecimento atual:\n${b.knowledge || "(vazia)"}\n\n` +
+      `Você está em MODO TREINO conversando com um técnico da empresa que vai testar você e te ensinar. ` +
+      `Responda como responderia a um cliente. Quando o técnico te corrigir ou ensinar algo, agradeça e incorpore.`
+    );
+  }
+
+  async function enterTraining(): Promise<boolean> {
+    if (!supabase) return false;
+    const { data } = await supabase.from("chatbots").select("id,name,persona,instructions,knowledge").order("created_at").limit(1).maybeSingle();
+    if (!data) {
+      setTurns((prev) => [...prev, { role: "assistant", text: "Nenhum chatbot configurado ainda. Crie o bot em Configurações → Chatbot antes de treinar." }]);
+      return false;
+    }
+    botRef.current = data;
+    setTraining(true);
+    setTurns((prev) => [
+      ...prev,
+      { role: "assistant", text: `🎓 Modo treino ativado — agora você está conversando com "${data.name}" (o bot do WhatsApp). Converse, teste e corrija. Para ENSINAR um fato ao bot, comece a mensagem com "aprender:". Digite /treino de novo para sair.` },
+    ]);
+    return true;
+  }
+
+  function exitTraining() {
+    botRef.current = null;
+    setTraining(false);
+    setTurns((prev) => [...prev, { role: "assistant", text: "✅ Modo treino encerrado. Voltei a ser o seu copiloto técnico." }]);
+  }
+
+  async function teach(fact: string) {
+    if (!supabase || !botRef.current) return;
+    const b = botRef.current;
+    const next = `${b.knowledge ? b.knowledge + "\n" : ""}- ${fact}`.slice(0, 20000);
+    await supabase.from("chatbots").update({ knowledge: next }).eq("id", b.id);
+    b.knowledge = next;
+    setTurns((prev) => [...prev, { role: "assistant", text: `🧠 Aprendido e salvo no cérebro do bot: "${fact}"` }]);
+  }
 
   useState(() => {
     authHeaders().then((headers) =>
@@ -108,6 +153,26 @@ export default function ChatTab() {
 
   async function send() {
     if (!input.trim() && !pendingImage) return;
+
+    // Comandos de treino do chatbot do WhatsApp.
+    const cmd = input.trim().toLowerCase();
+    if (cmd === "/treino" || cmd === "/treino sair") {
+      setTurns((prev) => [...prev, { role: "user", text: input.trim() }]);
+      setInput("");
+      if (training || cmd === "/treino sair") exitTraining();
+      else await enterTraining();
+      scrollToBottom();
+      return;
+    }
+    if (training && /^aprender:/i.test(input.trim())) {
+      const fact = input.trim().replace(/^aprender:\s*/i, "");
+      setTurns((prev) => [...prev, { role: "user", text: input.trim() }]);
+      setInput("");
+      if (fact) await teach(fact);
+      scrollToBottom();
+      return;
+    }
+
     const newTurn: Turn = {
       role: "user",
       text: input.trim(),
@@ -133,7 +198,7 @@ export default function ChatTab() {
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ history: historyForApi }),
+        body: JSON.stringify({ history: historyForApi, system: training ? botSystemPrompt() : undefined }),
       });
       const data = await res.json();
       if (data.live !== undefined) setLive(data.live);
@@ -151,6 +216,11 @@ export default function ChatTab() {
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Bot className="text-emerald-400" size={20} /> Copiloto de IA
+          {training && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-600/20 text-indigo-300 border border-indigo-500/40">
+              🎓 Modo treino — {botRef.current?.name}
+            </span>
+          )}
         </h3>
         {live !== null && (
           <span
@@ -222,7 +292,7 @@ export default function ChatTab() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Digite, grave um áudio ou envie uma foto..."
+          placeholder={training ? 'Converse com o bot ou "aprender: <fato>". /treino para sair' : "Digite... (/treino p/ treinar o bot do WhatsApp)"}
           className="flex-1 bg-transparent outline-none text-sm px-2"
         />
         <button
