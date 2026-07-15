@@ -381,20 +381,25 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       return;
     }
     const parentId = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.parent_id === null)?.id;
-    if (!parentId) return;
-    const parent = byId.get(parentId)!;
-    const { data } = await supabase
+    const parent = parentId ? byId.get(parentId) : null;
+    // Sem pasta-mãe (grafo vazio ou nada selecionado) => cria pasta no topo (raiz).
+    const { w, h } = sizeRef.current;
+    const { data, error } = await supabase
       .from("files")
       .insert({
         name: "Nova Pasta",
         type: "folder",
-        parent_id: parentId,
+        parent_id: parentId ?? null,
         uploaded_by: profile?.id ?? null,
-        pos_x: parent.pos_x + (Math.random() - 0.5) * 40,
-        pos_y: parent.pos_y + (Math.random() - 0.5) * 40,
+        pos_x: parent ? parent.pos_x + (Math.random() - 0.5) * 40 : w / 2 + (Math.random() - 0.5) * 60,
+        pos_y: parent ? parent.pos_y + (Math.random() - 0.5) * 40 : h / 2 + (Math.random() - 0.5) * 60,
       })
       .select("*")
       .single();
+    if (error) {
+      alert("Não foi possível criar a pasta: " + error.message);
+      return;
+    }
     if (data) {
       setNodes((prev) => [...prev, data as PositionedNode]);
       setSelected(data.id);
