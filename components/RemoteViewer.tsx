@@ -276,6 +276,24 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     padRef.current = null;
   }
 
+  // Barra de rolagem do celular (deslizar o dedo = scroll).
+  const scrubRef = useRef<number | null>(null);
+  function scrubStart(e: React.TouchEvent) {
+    scrubRef.current = e.touches[0].clientY;
+  }
+  function scrubMove(e: React.TouchEvent) {
+    if (scrubRef.current == null) return;
+    const y = e.touches[0].clientY;
+    const dy = y - scrubRef.current;
+    if (Math.abs(dy) >= 6) {
+      sendInput({ kind: "scroll", dy });
+      scrubRef.current = y;
+    }
+  }
+  function scrubEnd() {
+    scrubRef.current = null;
+  }
+
   return (
     <div className="fixed inset-0 z-[80] bg-black/90 flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 bg-[#0b0f16] border-b border-white/10 shrink-0 gap-2">
@@ -443,13 +461,27 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       {/* Controles de celular: trackpad + botões de clique + comandos rápidos */}
       {isTouch && (
         <div className="bg-[#0b0f16] border-t border-white/10 shrink-0 p-2 space-y-2">
-          <div
-            className="h-32 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-500 text-xs select-none touch-none"
-            onTouchStart={padStart}
-            onTouchMove={padMove}
-            onTouchEnd={padEnd}
-          >
-            Deslize aqui para mover o mouse · toque para clicar
+          <div className="flex items-stretch gap-2 h-32">
+            <div
+              className="flex-1 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-500 text-xs select-none touch-none text-center px-2"
+              onTouchStart={padStart}
+              onTouchMove={padMove}
+              onTouchEnd={padEnd}
+            >
+              Deslize para mover o mouse · toque para clicar
+            </div>
+            {/* Barra de rolagem (deslize para dar scroll) */}
+            <div
+              className="w-11 rounded-xl bg-white/5 border border-white/10 flex flex-col items-center justify-center gap-1.5 select-none touch-none"
+              onTouchStart={scrubStart}
+              onTouchMove={scrubMove}
+              onTouchEnd={scrubEnd}
+              title="Deslize para rolar"
+            >
+              {Array.from({ length: 7 }).map((_, i) => (
+                <span key={i} className="w-5 h-0.5 rounded-full bg-gray-500" />
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-2 justify-center flex-wrap">
             <button onClick={() => sendInput({ kind: "click", button: 0 })} className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer">

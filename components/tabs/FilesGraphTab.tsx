@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, File as FileIcon, Folder, FolderPlus, Link2, Pencil, Search, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Pencil, Search, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
+import { logAction } from "@/lib/activity-log";
 import type { FileNodeRow, Profile } from "@/lib/types";
 
 type PositionedNode = FileNodeRow & { pos_x: number; pos_y: number };
@@ -93,12 +94,19 @@ function demoNodes(): PositionedNode[] {
 
 export default function FilesGraphTab({ profile }: { profile: Profile | null }) {
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
+  const actor = profile?.full_name ?? profile?.email ?? "Usuário";
   const [nodes, setNodes] = useState<PositionedNode[]>([]);
   const [links, setLinks] = useState<{ id: string; source_id: string; target_id: string }[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [linkPick, setLinkPick] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
+  // Grafo colapsável: começa mostrando só as pastas raiz; clicar expande.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [editMode, setEditMode] = useState(false);
+  const expandedRef = useRef<Set<string>>(new Set());
+  const visibleIdsRef = useRef<Set<string>>(new Set());
+  const downInfo = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStart = useRef<{
     pointerX: number;
@@ -117,6 +125,47 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   useEffect(() => {
     nodesRef.current = nodes;
+  }, [nodes]);
+
+  // Nós visíveis = raízes + filhos de pastas expandidas (árvore colapsável).
+  const visibleIds = useMemo(() => {
+    const childrenByParent = new Map<string | null, PositionedNode[]>();
+    nodes.forEach((n) => {
+      const l = childrenByParent.get(n.parent_id) ?? [];
+      l.push(n);
+      childrenByParent.set(n.parent_id, l);
+    });
+    const vis = new Set<string>();
+    const roots = nodes.filter((n) => n.parent_id === null);
+    const stack = [...roots];
+    roots.forEach((r) => vis.add(r.id));
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n.type === "folder" && expanded.has(n.id)) {
+        for (const c of childrenByParent.get(n.id) ?? []) {
+          vis.add(c.id);
+          stack.push(c);
+        }
+      }
+    }
+    return vis;
+  }, [nodes, expanded]);
+
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
+  useEffect(() => {
+    visibleIdsRef.current = visibleIds;
+    kick(0.5); // re-acomoda ao expandir/colapsar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleIds]);
+
+  const childCount = useMemo(() => {
+    const m = new Map<string, number>();
+    nodes.forEach((n) => {
+      if (n.parent_id) m.set(n.parent_id, (m.get(n.parent_id) ?? 0) + 1);
+    });
+    return m;
   }, [nodes]);
 
   // Acompanha o tamanho real do container para centralizar/limitar o grafo.
@@ -143,7 +192,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }, []);
 
   const tick = useCallback(() => {
-    const list = nodesRef.current;
+    const all = nodesRef.current;
+    const vis = visibleIdsRef.current;
+    const list = all.filter((n) => vis.has(n.id));
     if (list.length === 0) {
       rafRef.current = null;
       return;
@@ -199,8 +250,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     }
 
     const alpha = alphaRef.current;
-    const next = list.map((n) => {
-      if (fixedRef.current.has(n.id)) return n; // nós arrastados ficam presos ao ponteiro
+    const movedMap = new Map<string, PositionedNode>();
+    for (const n of list) {
+      if (fixedRef.current.has(n.id)) {
+        movedMap.set(n.id, n); // nós arrastados ficam presos ao ponteiro
+        continue;
+      }
       const v = velRef.current.get(n.id) ?? { vx: 0, vy: 0 };
       let vx = (v.vx + (fx.get(n.id) ?? 0)) * FRICTION;
       let vy = (v.vy + (fy.get(n.id) ?? 0)) * FRICTION;
@@ -209,8 +264,10 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       velRef.current.set(n.id, { vx, vy });
       const nx = Math.max(40, Math.min(w - 40, n.pos_x + vx * alpha));
       const ny = Math.max(40, Math.min(h - 48, n.pos_y + vy * alpha));
-      return { ...n, pos_x: nx, pos_y: ny };
-    });
+      movedMap.set(n.id, { ...n, pos_x: nx, pos_y: ny });
+    }
+    // Mantém todos os nós no estado; só os visíveis se movem.
+    const next = all.map((n) => movedMap.get(n.id) ?? n);
     nodesRef.current = next;
     setNodes(next);
 
@@ -323,6 +380,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       if (data) {
         setNodes((prev) => [...prev, data as PositionedNode]);
         kick(1);
+        logAction(actor, `Enviou o arquivo "${file.name}" para a pasta "${parent.name}"`);
       }
     };
     reader.readAsDataURL(file);
@@ -336,12 +394,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     }
     const name = prompt("Novo nome:", node.name)?.trim();
     if (!name || name === node.name) return;
+    const old = node.name;
     const { error } = await supabase.from("files").update({ name }).eq("id", node.id);
     if (error) {
       alert("Não foi possível renomear: " + error.message);
       return;
     }
     setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, name } : n)));
+    logAction(actor, `Renomeou ${node.type === "folder" ? "a pasta" : "o arquivo"} "${old}" para "${name}"`);
   }
 
   async function handleDelete(node: PositionedNode) {
@@ -361,6 +421,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     setNodes((prev) => prev.filter((n) => !ids.includes(n.id)));
     setSelected(null);
     kick(0.6);
+    logAction(actor, `Apagou ${label}`);
   }
 
   // Compartilhar pasta com o robô de IA (passa por aprovação do gestor/gerente).
@@ -444,7 +505,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     if (data) {
       setNodes((prev) => [...prev, data as PositionedNode]);
       setSelected(data.id);
+      setExpanded((prev) => (parentId ? new Set(prev).add(parentId) : prev)); // abre a pasta-mãe
       kick(1);
+      logAction(actor, `Criou a pasta "${data.name}"${parent ? ` dentro de "${parent.name}"` : ""}`);
     }
   }
 
@@ -478,7 +541,17 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     return ids;
   }
 
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return s;
+    });
+  }
+
   function onPointerDownNode(e: React.PointerEvent, id: string) {
+    downInfo.current = { x: e.clientX, y: e.clientY, moved: false };
     const positions = new Map<string, { x: number; y: number }>();
     const subtree = collectSubtree(id);
     for (const nodeId of subtree) {
@@ -500,6 +573,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const { pointerX, pointerY, positions } = dragStart.current;
     const dx = e.clientX - pointerX;
     const dy = e.clientY - pointerY;
+    if (downInfo.current && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) downInfo.current.moved = true;
     const next = nodesRef.current.map((n) => {
       const start = positions.get(n.id);
       return start ? { ...n, pos_x: start.x + dx, pos_y: start.y + dy } : n;
@@ -511,9 +585,17 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   function onPointerUp() {
     if (!dragging) return;
+    const clickedId = dragging;
+    const wasClick = downInfo.current && !downInfo.current.moved;
+    downInfo.current = null;
     fixedRef.current.clear();
     dragStart.current = null;
     setDragging(null);
+    // Clique (sem arrastar) numa PASTA = expande/colapsa; num arquivo, só seleciona.
+    if (wasClick) {
+      const n = byId.get(clickedId);
+      if (n?.type === "folder") toggleExpand(clickedId);
+    }
     kick(0.7); // relaxa suavemente e persiste ao assentar
   }
 
@@ -537,7 +619,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               className="bg-transparent outline-none text-xs w-48"
             />
           </div>
-          {canManage && (
+          {editMode && canManage && (
             <button
               onClick={handleNewFolder}
               className="flex items-center gap-2 liquid-glass text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
@@ -545,14 +627,22 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               <FolderPlus size={14} /> Nova pasta
             </button>
           )}
-          <label className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
-            <Upload size={14} /> Upload
-            <input
-              type="file"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
-            />
-          </label>
+          {editMode && (
+            <label className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
+              <Upload size={14} /> Upload
+              <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} />
+            </label>
+          )}
+          <button
+            onClick={() => setEditMode((v) => !v)}
+            title={editMode ? "Sair da edição" : "Editar (criar, renomear, apagar)"}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg cursor-pointer ${
+              editMode ? "bg-emerald-500/20 text-emerald-400" : "liquid-glass text-gray-300"
+            }`}
+          >
+            {editMode ? <Eye size={14} /> : <Pencil size={14} />}
+            {editMode ? "Visualizar" : "Editar"}
+          </button>
         </div>
       </div>
 
@@ -568,8 +658,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             <svg className="absolute inset-0 pointer-events-none w-full h-full">
               {nodes.map((n) => {
                 if (n.parent_id === null) return null;
+                if (!visibleIds.has(n.id)) return null;
                 const parent = byId.get(n.parent_id);
-                if (!parent) return null;
+                if (!parent || !visibleIds.has(parent.id)) return null;
                 return (
                   <line
                     key={`edge-${n.id}`}
@@ -586,7 +677,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               {links.map((l) => {
                 const a = byId.get(l.source_id);
                 const b = byId.get(l.target_id);
-                if (!a || !b) return null;
+                if (!a || !b || !visibleIds.has(a.id) || !visibleIds.has(b.id)) return null;
                 return (
                   <line
                     key={`link-${l.id}`}
@@ -602,20 +693,24 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               })}
             </svg>
             {nodes.map((n) => {
+              if (!visibleIds.has(n.id)) return null;
               const dim = matches && !matches.has(n.id);
               const radius = n.type === "folder" ? 24 : 14;
+              const kids = childCount.get(n.id) ?? 0;
+              const isExpanded = expanded.has(n.id);
               return (
                 <div
                   key={n.id}
                   onPointerDown={(e) => onPointerDownNode(e, n.id)}
                   style={{ left: n.pos_x - radius, top: n.pos_y - radius, width: radius * 2, height: radius * 2 }}
                   className="absolute cursor-grab active:cursor-grabbing select-none touch-none"
+                  title={n.type === "folder" ? (isExpanded ? "Clique para recolher" : "Clique para expandir") : n.name}
                 >
                   <div
                     className="rounded-full flex items-center justify-center w-full h-full"
                     style={{
                       opacity: dim ? 0.25 : 1,
-                      background: n.type === "folder" ? "#064e3b" : "#111827",
+                      background: n.type === "folder" ? (isExpanded ? "#065f46" : "#064e3b") : "#111827",
                       border: `1.5px solid ${selected === n.id ? "#10b981" : n.type === "folder" ? "#10b981" : "#374151"}`,
                       borderWidth: selected === n.id ? 3 : 1.5,
                     }}
@@ -626,6 +721,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                       <FileIcon size={radius} className="text-gray-400" />
                     )}
                   </div>
+                  {/* Badge de itens dentro da pasta (some quando expandida) */}
+                  {n.type === "folder" && kids > 0 && !isExpanded && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-emerald-500 text-[9px] font-bold text-white flex items-center justify-center">
+                      {kids}
+                    </span>
+                  )}
                   <span
                     className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[11px] text-gray-300 whitespace-nowrap select-none"
                     style={{ opacity: dim ? 0.25 : 1 }}
@@ -700,7 +801,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                           })}
                         </div>
                       )}
-                      {canManage && (
+                      {editMode && canManage && (
                         <select
                           value={linkPick}
                           onChange={(e) => e.target.value && connectFolders(selectedNode.id, e.target.value)}
@@ -754,7 +855,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   <Download size={12} /> Baixar
                 </button>
               )}
-              {selectedNode.type === "folder" &&
+              {editMode &&
+                selectedNode.type === "folder" &&
                 (selectedNode.bot_share_status === "none" || selectedNode.bot_share_status === "rejected") && (
                   <button
                     onClick={() => requestBotShare(selectedNode)}
@@ -764,7 +866,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                     <Bot size={12} /> {canManage ? "Dar ao robô" : "Pedir p/ robô"}
                   </button>
                 )}
-              {(selectedNode.type === "file" || canManage) && (
+              {editMode && (selectedNode.type === "file" || canManage) && (
                 <button
                   onClick={() => handleRename(selectedNode)}
                   className="flex items-center gap-1.5 text-xs liquid-glass px-3 py-1.5 rounded-lg cursor-pointer"
@@ -772,7 +874,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   <Pencil size={12} /> Renomear
                 </button>
               )}
-              {(selectedNode.type === "file" || canManage) && (
+              {editMode && (selectedNode.type === "file" || canManage) && (
                 <button
                   onClick={() => handleDelete(selectedNode)}
                   className="flex items-center gap-1.5 text-xs bg-red-600/80 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg cursor-pointer"
