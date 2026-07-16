@@ -262,18 +262,35 @@ ipcMain.handle("server-init", (_e, root) => {
   }
   return base;
 });
-ipcMain.handle("server-write", (_e, { root, rel, base64 }) => {
-  const base = serverBase(root);
+ipcMain.handle("server-write", (_e, { root, dir, rel, base64 }) => {
   // Sanitiza o caminho relativo (nunca escapa da pasta base).
   const safeRel = String(rel || "arquivo")
     .replace(/\\/g, "/")
     .split("/")
     .filter((p) => p && p !== "." && p !== "..")
     .join("/");
-  const dest = path.join(base, "Arquivos", safeRel);
+  // Pasta de destino escolhida (dir absoluto) ou o padrão WorkspaceServer/Arquivos.
+  const baseDir = dir && String(dir).trim() ? String(dir) : path.join(serverBase(root), "Arquivos");
+  const dest = path.join(baseDir, safeRel);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.writeFileSync(dest, Buffer.from(base64, "base64"));
   return { path: dest };
+});
+
+// Operações de pasta (para o seletor: criar/renomear/apagar).
+ipcMain.handle("fs-mkdir", (_e, { dir, name }) => {
+  const dest = path.join(dir || os.homedir(), path.basename(name || "Nova Pasta"));
+  fs.mkdirSync(dest, { recursive: true });
+  return { path: dest };
+});
+ipcMain.handle("fs-rename", (_e, { fromPath, toName }) => {
+  const dest = path.join(path.dirname(fromPath), path.basename(toName || "renomeado"));
+  fs.renameSync(fromPath, dest);
+  return { path: dest };
+});
+ipcMain.handle("fs-delete", (_e, targetPath) => {
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  return { ok: true };
 });
 
 ipcMain.handle("fs-write", (_e, { dir, name, base64 }) => {

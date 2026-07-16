@@ -40,9 +40,12 @@ function fmtRemaining(ms: number): string {
   return `${sec}s`;
 }
 
+type GraphFolder = { id: string; name: string };
+
 export default function AutomationTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [folders, setFolders] = useState<GraphFolder[]>([]);
   const [adding, setAdding] = useState(false);
   const [draining, setDraining] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -56,12 +59,14 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    const [a, r] = await Promise.all([
+    const [a, r, f] = await Promise.all([
       supabase.from("remote_agents").select("*").eq("company_id", companyId).order("name"),
       supabase.from("automation_routines").select("*").order("created_at", { ascending: false }),
+      supabase.from("files").select("id,name").eq("type", "folder").order("name"),
     ]);
     setAgents((a.data as RemoteAgent[]) ?? []);
     setRoutines((r.data as Routine[]) ?? []);
+    setFolders((f.data as GraphFolder[]) ?? []);
   }, [companyId]);
 
   useEffect(() => {
@@ -209,18 +214,20 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
         })}
       </div>
 
-      {adding && <AddRoutineModal agents={agents} createdBy={profile?.id ?? null} onClose={() => setAdding(false)} onSaved={load} />}
+      {adding && <AddRoutineModal agents={agents} folders={folders} createdBy={profile?.id ?? null} onClose={() => setAdding(false)} onSaved={load} />}
     </div>
   );
 }
 
 function AddRoutineModal({
   agents,
+  folders,
   createdBy,
   onClose,
   onSaved,
 }: {
   agents: RemoteAgent[];
+  folders: GraphFolder[];
   createdBy: string | null;
   onClose: () => void;
   onSaved: () => void;
@@ -228,19 +235,21 @@ function AddRoutineModal({
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [sourcePath, setSourcePath] = useState("");
+  const [destPath, setDestPath] = useState("");
+  const [graphFolderId, setGraphFolderId] = useState("");
   const [every, setEvery] = useState(1);
   const [unit, setUnit] = useState<"minutos" | "horas" | "dias">("dias");
   const [dest, setDest] = useState("drive"); // "drive" | <serverAgentId>
   const [saving, setSaving] = useState(false);
-  const [picking, setPicking] = useState(false);
+  const [picking, setPicking] = useState<"source" | "dest" | null>(null);
 
   const factor = unit === "dias" ? 1440 : unit === "horas" ? 60 : 1;
   const servers = agents.filter((a) => a.is_server);
+  const toServer = dest !== "drive";
 
   async function save() {
     if (!supabase || !name.trim() || !agentId || !sourcePath.trim()) return;
     setSaving(true);
-    const toServer = dest !== "drive";
     const { error } = await supabase.from("automation_routines").insert({
       name: name.trim(),
       agent_id: agentId,
@@ -249,6 +258,8 @@ function AddRoutineModal({
       to_drive: !toServer,
       dest_type: toServer ? "server" : "drive",
       dest_agent_id: toServer ? dest : null,
+      dest_path: toServer && destPath.trim() ? destPath.trim() : null,
+      graph_folder_id: graphFolderId || null,
       created_by: createdBy,
       next_run_at: new Date().toISOString(), // já roda no próximo ciclo do agente
     });
@@ -293,7 +304,7 @@ function AddRoutineModal({
               className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
             />
             <button
-              onClick={() => setPicking(true)}
+              onClick={() => setPicking("source")}
               disabled={!agentId}
               title={agentId ? "Navegar na máquina e escolher" : "Escolha um computador primeiro"}
               className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer disabled:opacity-40 shrink-0"
@@ -332,6 +343,38 @@ function AddRoutineModal({
           </p>
         </div>
 
+        {toServer && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Pasta de destino no servidor</label>
+            <div className="flex items-center gap-2">
+              <input
+                value={destPath}
+                onChange={(e) => setDestPath(e.target.value)}
+                placeholder="Onde colar (vazio = WorkspaceServer/Arquivos)"
+                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
+              />
+              <button
+                onClick={() => setPicking("dest")}
+                title="Navegar no servidor e escolher/criar a pasta de destino"
+                className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer shrink-0"
+              >
+                <FolderSearch size={14} /> Escolher
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Mostrar no grafo (opcional)</label>
+          <select value={graphFolderId} onChange={(e) => setGraphFolderId(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
+            <option value="">Não mostrar no grafo</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>Pasta: {f.name}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-500 mt-1">Os arquivos coletados aparecem nessa pasta do grafo (atualiza sozinho).</p>
+        </div>
+
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
           <button onClick={save} disabled={saving || !name.trim() || !agentId || !sourcePath.trim()} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60">
@@ -340,13 +383,23 @@ function AddRoutineModal({
         </div>
       </div>
 
-      {picking && agentId && (
+      {picking === "source" && agentId && (
         <AgentFolderPicker
           agentId={agentId}
-          onClose={() => setPicking(false)}
+          onClose={() => setPicking(null)}
           onPick={(path) => {
             setSourcePath(path);
-            setPicking(false);
+            setPicking(null);
+          }}
+        />
+      )}
+      {picking === "dest" && toServer && (
+        <AgentFolderPicker
+          agentId={dest}
+          onClose={() => setPicking(null)}
+          onPick={(path) => {
+            setDestPath(path);
+            setPicking(null);
           }}
         />
       )}

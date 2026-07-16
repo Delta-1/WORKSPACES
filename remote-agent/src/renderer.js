@@ -107,6 +107,7 @@ async function runDeliveries() {
         const prefix = d.storage_path;
         const { data: listed } = await supabase.storage.from("automation").list(prefix, { limit: 1000 });
         const paths = listed && listed.length > 0 ? listed.filter((o) => o.id).map((o) => `${prefix}/${o.name}`) : [prefix];
+        const savedNames = [];
         for (const p of paths) {
           const { data: blob, error } = await supabase.storage.from("automation").download(p);
           if (error || !blob) throw error || new Error("download vazio");
@@ -114,11 +115,22 @@ async function runDeliveries() {
           const fileName = p.split("/").pop();
           await ipcRenderer.invoke("server-write", {
             root: serverRoot,
-            rel: `${d.routine_name || "Automacao"}/${fileName}`,
+            dir: d.dest_path || null, // pasta de destino escolhida na automação
+            rel: d.dest_path ? fileName : `${d.routine_name || "Automacao"}/${fileName}`,
             base64: buf.toString("base64"),
           });
+          savedNames.push(fileName);
           // Já entregou? limpa do bucket para não reprocessar.
           await supabase.storage.from("automation").remove([p]);
+        }
+        // Registra os arquivos no grafo (pasta escolhida) para aparecer atualizado lá.
+        if (d.graph_folder_id && savedNames.length) {
+          await supabase.rpc("agent_register_files", {
+            p_agent_id: cfg.agentId,
+            p_access_code: cfg.accessCode,
+            p_folder_id: d.graph_folder_id,
+            p_names: savedNames,
+          });
         }
         await supabase.rpc("agent_mark_delivered", {
           p_agent_id: cfg.agentId,
@@ -427,6 +439,15 @@ async function handleFileOp(ch, raw) {
         incoming.delete(m.id);
         ch.send(JSON.stringify({ op: "put-done", id: m.id, path: saved.path }));
       }
+    } else if (m.op === "mkdir") {
+      const res = await ipcRenderer.invoke("fs-mkdir", { dir: m.dir, name: m.name });
+      ch.send(JSON.stringify({ op: "mkdir-done", id: m.id, path: res.path }));
+    } else if (m.op === "rename") {
+      const res = await ipcRenderer.invoke("fs-rename", { fromPath: m.path, toName: m.name });
+      ch.send(JSON.stringify({ op: "rename-done", id: m.id, path: res.path }));
+    } else if (m.op === "delete") {
+      await ipcRenderer.invoke("fs-delete", m.path);
+      ch.send(JSON.stringify({ op: "delete-done", id: m.id }));
     }
   } catch (e) {
     ch.send(JSON.stringify({ op: "error", id: m.id, message: e.message }));

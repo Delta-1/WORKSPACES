@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, File as FileIcon, Folder, FolderCheck, Loader2, X } from "lucide-react";
+import { ArrowUp, Check, File as FileIcon, Folder, FolderCheck, FolderPlus, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -50,10 +50,27 @@ export default function AgentFolderPicker({
       setEntries((m.entries as Entry[]) ?? []);
       setBusy(false);
       setStatus("");
+    } else if (m.op === "mkdir-done" || m.op === "rename-done" || m.op === "delete-done") {
+      listDir(dir); // recarrega a pasta atual após criar/renomear/apagar
     } else if (m.op === "error") {
       setBusy(false);
       setStatus("Erro: " + (m.message as string));
     }
+  }
+
+  function newFolder() {
+    const name = prompt("Nome da nova pasta:")?.trim();
+    if (!name) return;
+    fsSend({ op: "mkdir", id: "mkdir", dir, name });
+  }
+  function renameEntry(name: string) {
+    const novo = prompt("Novo nome:", name)?.trim();
+    if (!novo || novo === name) return;
+    fsSend({ op: "rename", id: "rename", path: dir + sep + name, name: novo });
+  }
+  function deleteEntry(name: string, isDir: boolean) {
+    if (!confirm(`Apagar ${isDir ? "a pasta" : "o arquivo"} "${name}"${isDir ? " e todo o conteúdo" : ""}?`)) return;
+    fsSend({ op: "delete", id: "delete", path: dir + sep + name });
   }
 
   useEffect(() => {
@@ -133,6 +150,14 @@ export default function AgentFolderPicker({
             <ArrowUp size={14} />
           </button>
           <p className="text-[10px] text-gray-500 truncate flex-1" title={dir}>{dir || "…"}</p>
+          <button
+            onClick={newFolder}
+            disabled={!dir}
+            title="Nova pasta aqui"
+            className="flex items-center gap-1 text-[10px] bg-white/5 hover:bg-white/10 text-gray-300 px-2 py-1 rounded cursor-pointer disabled:opacity-40"
+          >
+            <FolderPlus size={12} /> Nova pasta
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scroll">
@@ -145,32 +170,31 @@ export default function AgentFolderPicker({
             entries.map((en) => (
               <div key={en.name} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 text-xs group">
                 {en.isDir ? (
-                  <>
-                    <button onClick={() => listDir(dir + sep + en.name)} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left">
-                      <Folder size={14} className="text-emerald-400 shrink-0" />
-                      <span className="truncate">{en.name}</span>
-                    </button>
-                    <button
-                      onClick={() => onPick(dir + sep + en.name, true)}
-                      className="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-1.5 py-0.5 rounded cursor-pointer shrink-0"
-                      title="Usar esta pasta"
-                    >
-                      <Check size={11} /> usar
-                    </button>
-                  </>
+                  <button onClick={() => listDir(dir + sep + en.name)} className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left">
+                    <Folder size={14} className="text-emerald-400 shrink-0" />
+                    <span className="truncate">{en.name}</span>
+                  </button>
                 ) : (
                   <>
                     <FileIcon size={14} className="text-gray-400 shrink-0" />
                     <span className="truncate flex-1">{en.name}</span>
-                    <button
-                      onClick={() => onPick(dir + sep + en.name, false)}
-                      className="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-1.5 py-0.5 rounded cursor-pointer shrink-0"
-                      title="Usar este arquivo"
-                    >
-                      <Check size={11} /> usar
-                    </button>
                   </>
                 )}
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0">
+                  <button onClick={() => renameEntry(en.name)} title="Renomear" className="text-gray-400 hover:text-white cursor-pointer">
+                    <Pencil size={11} />
+                  </button>
+                  <button onClick={() => deleteEntry(en.name, en.isDir)} title="Apagar" className="text-gray-400 hover:text-red-400 cursor-pointer">
+                    <Trash2 size={11} />
+                  </button>
+                  <button
+                    onClick={() => onPick(dir + sep + en.name, en.isDir)}
+                    className="flex items-center gap-1 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                    title={en.isDir ? "Usar esta pasta" : "Usar este arquivo"}
+                  >
+                    <Check size={11} /> usar
+                  </button>
+                </div>
               </div>
             ))}
           {!busy && !status && entries.length === 0 && <p className="text-[11px] text-gray-600 p-3">Pasta vazia.</p>}

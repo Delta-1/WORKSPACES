@@ -270,6 +270,28 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Atualização ao vivo do grafo: qualquer arquivo/pasta novo (upload, automação,
+  // servidor) ou ligação aparece na hora, sem precisar recarregar.
+  useEffect(() => {
+    if (!supabase) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const reload = () => {
+      if (dragging) return; // não recarrega no meio de um arraste
+      if (t) clearTimeout(t);
+      t = setTimeout(() => load(), 500);
+    };
+    const ch = supabase
+      .channel("files-graph")
+      .on("postgres_changes", { event: "*", schema: "public", table: "files" }, reload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "file_links" }, reload)
+      .subscribe();
+    return () => {
+      if (t) clearTimeout(t);
+      if (supabase) supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging]);
+
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected ? byId.get(selected) ?? null : null;
 
