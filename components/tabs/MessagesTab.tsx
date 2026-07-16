@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Hash, MessageSquare, Mic, Paperclip, Plug, Plus, Search, Send, Smile, Square, Trash2, Users } from "lucide-react";
+import { Bot, Hash, MessageSquare, Mic, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -41,6 +41,8 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [query, setQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
 
   const [selConvId, setSelConvId] = useState<string | null>(null);
   const [selColleagueId, setSelColleagueId] = useState<string | null>(null);
@@ -151,6 +153,61 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     if (!supabase) return;
     setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, group_id: groupId } : c)));
     await supabase.from("conversations").update({ group_id: groupId }).eq("id", convId);
+  }
+
+  // Inicia uma conversa a partir de um número de telefone (novo contato ou já existente).
+  async function startChat(rawPhone: string, name: string) {
+    if (!supabase) return;
+    let phone = rawPhone.replace(/\D/g, "");
+    if (!phone) {
+      alert("Digite um número de telefone válido.");
+      return;
+    }
+    // Sem código do país e com cara de número BR → assume Brasil (55).
+    if (phone.length <= 11 && !phone.startsWith("55")) phone = "55" + phone;
+
+    const { data: found } = await supabase.from("contacts").select("*").eq("phone", phone).limit(1);
+    let contactId = found?.[0]?.id as string | undefined;
+    if (!contactId) {
+      const { data: created, error } = await supabase.from("contacts").insert({ phone, name: name.trim() || null }).select("*").single();
+      if (error || !created) {
+        alert("Erro ao criar contato: " + (error?.message ?? "desconhecido"));
+        return;
+      }
+      contactId = created.id;
+    } else if (name.trim() && !found?.[0]?.name) {
+      await supabase.from("contacts").update({ name: name.trim() }).eq("id", contactId);
+    }
+
+    const numberId =
+      (activeNumberId ? numbers.find((n) => n.id === activeNumberId) : numbers.find((n) => n.status === "connected"))?.id ??
+      numbers[0]?.id ??
+      null;
+
+    const { data: existingConv } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("contact_id", contactId)
+      .neq("status", "fechado")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(1);
+    let convId = existingConv?.[0]?.id as string | undefined;
+    if (!convId) {
+      const { data: newConv, error } = await supabase
+        .from("conversations")
+        .insert({ contact_id: contactId, number_id: numberId, status: "atendendo" })
+        .select("id")
+        .single();
+      if (error || !newConv) {
+        alert("Erro ao abrir conversa: " + (error?.message ?? "desconhecido"));
+        return;
+      }
+      convId = newConv.id;
+    }
+    await loadConversations();
+    setShowNewChat(false);
+    setServer(numberId ? `wa:${numberId}` : "whatsapp");
+    if (convId) openConv(convId);
   }
 
   async function authHeaders(): Promise<Record<string, string>> {
@@ -389,6 +446,15 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
             <div className="flex items-center gap-1.5 shrink-0">
               {server !== "equipe" && (
                 <button
+                  onClick={() => setShowNewChat(true)}
+                  title="Nova conversa (adicionar número de telefone)"
+                  className="text-gray-400 hover:text-emerald-400 cursor-pointer"
+                >
+                  <UserPlus size={15} />
+                </button>
+              )}
+              {server !== "equipe" && (
+                <button
                   onClick={() => setShowConnect(true)}
                   title={connectedCount > 0 ? `${connectedCount} número(s) conectado(s) — configurar` : "Conectar o WhatsApp"}
                   className="flex items-center gap-1 text-gray-400 hover:text-emerald-400 cursor-pointer"
@@ -477,19 +543,26 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
         ) : (
           <>
             <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2.5 shrink-0">
-              {selConv ? (
-                selConv.contacts?.avatar_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selConv.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+              <button
+                onClick={() => selConv && setShowProfile(true)}
+                disabled={!selConv}
+                title={selConv ? "Ver perfil do contato" : undefined}
+                className={`flex items-center gap-2.5 min-w-0 flex-1 text-left ${selConv ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+              >
+                {selConv ? (
+                  selConv.contacts?.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={selConv.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-xs font-bold shrink-0">
+                      {contactLabel(selConv.contacts).charAt(0).toUpperCase()}
+                    </div>
+                  )
                 ) : (
-                  <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-xs font-bold">
-                    {contactLabel(selConv.contacts).charAt(0).toUpperCase()}
-                  </div>
-                )
-              ) : (
-                <Users size={16} className="text-emerald-400" />
-              )}
-              <p className="text-sm font-bold flex-1 truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+                  <Users size={16} className="text-emerald-400 shrink-0" />
+                )}
+                <p className="text-sm font-bold truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+              </button>
               {selConv && (
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
@@ -587,6 +660,157 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
           </div>
         </div>
       )}
+
+      {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onStart={startChat} />}
+      {showProfile && selConv?.contacts && (
+        <ContactProfileModal
+          contact={selConv.contacts}
+          onClose={() => setShowProfile(false)}
+          onSaved={() => {
+            loadConversations();
+            setShowProfile(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewChatModal({ onClose, onStart }: { onClose: () => void; onStart: (phone: string, name: string) => void | Promise<void> }) {
+  const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    if (!phone.trim() || busy) return;
+    setBusy(true);
+    try {
+      await onStart(phone, name);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <UserPlus size={16} className="text-emerald-400" /> Nova conversa
+          </h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-[11px] text-gray-400 flex items-center gap-1"><Phone size={11} /> Número de telefone (com DDD)</label>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && go()}
+            placeholder="Ex.: 11 91234-5678"
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-[11px] text-gray-400">Nome (opcional)</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && go()}
+            placeholder="Como salvar este contato"
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+          />
+        </div>
+        <p className="text-[10px] text-gray-500">Sem o código do país, assumimos Brasil (+55).</p>
+        <button
+          onClick={go}
+          disabled={!phone.trim() || busy}
+          className="w-full text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
+        >
+          {busy ? "Abrindo..." : "Iniciar conversa"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContactProfileModal({
+  contact,
+  onClose,
+  onSaved,
+}: {
+  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url">;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(contact.name ?? "");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const phoneDigits = (contact.phone || "").replace(/\D/g, "");
+  const phonePretty = phoneDigits ? "+" + phoneDigits : "—";
+
+  async function save() {
+    if (!supabase) return;
+    setSaving(true);
+    await supabase.from("contacts").update({ name: name.trim() || null }).eq("id", contact.id);
+    setSaving(false);
+    onSaved();
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <h3 className="text-sm font-bold">Perfil do contato</h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-5 flex flex-col items-center gap-3">
+          {contact.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={contact.avatar_url} alt="" className="w-20 h-20 rounded-full object-cover" />
+          ) : (
+            <div className="w-20 h-20 rounded-full bg-emerald-900/60 flex items-center justify-center text-2xl font-bold">
+              {contactLabel(contact).charAt(0).toUpperCase()}
+            </div>
+          )}
+          {editing ? (
+            <div className="w-full flex items-center gap-2">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Nome do contato"
+                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none text-center"
+                autoFocus
+              />
+              <button onClick={save} disabled={saving} className="text-xs px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
+                {saving ? "..." : "Salvar"}
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setEditing(true)} className="flex items-center gap-1.5 text-base font-bold cursor-pointer hover:opacity-80" title="Editar nome">
+              {contactLabel(contact)} <Pencil size={13} className="text-gray-400" />
+            </button>
+          )}
+        </div>
+        <div className="px-5 pb-5 space-y-2">
+          <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2.5">
+            <Phone size={14} className="text-emerald-400 shrink-0" />
+            <span className="text-sm">{phonePretty}</span>
+          </div>
+          {phoneDigits && (
+            <a
+              href={`https://wa.me/${phoneDigits}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-center text-[11px] text-gray-500 hover:text-emerald-400"
+            >
+              Abrir no WhatsApp (wa.me)
+            </a>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

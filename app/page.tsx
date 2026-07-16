@@ -243,6 +243,17 @@ export default function Home() {
   const validQuick = quickIds.filter((id) => visibleApps.some((a) => a.id === id));
   const dockApps = validQuick.length ? (validQuick.map((id) => visibleApps.find((a) => a.id === id)!) ) : visibleApps.slice(0, 5);
 
+  // Fixar/desafixar apps na barra (arrastando do menu pra barra, estilo inventário).
+  function pinApp(id: string) {
+    const base = validQuick.length ? validQuick : dockApps.map((a) => a.id);
+    if (base.includes(id)) return;
+    saveQuick([...base, id]);
+  }
+  function unpinApp(id: string) {
+    const base = validQuick.length ? validQuick : dockApps.map((a) => a.id);
+    saveQuick(base.filter((x) => x !== id));
+  }
+
   if (checkingSession) {
     return <div className="fixed inset-0 bg-[#060a12]" />;
   }
@@ -346,14 +357,21 @@ export default function Home() {
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
 
-      <Dock apps={dockApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
+      <Dock
+        apps={dockApps}
+        active={tab}
+        onSelect={setTab}
+        onOpenDrawer={() => setDrawerOpen(true)}
+        pinMode={drawerOpen}
+        onPin={pinApp}
+        onUnpin={unpinApp}
+      />
       <AppDrawer
         apps={visibleApps}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onSelect={setTab}
         quickIds={dockApps.map((a) => a.id)}
-        onSaveQuick={saveQuick}
       />
     </div>
   );
