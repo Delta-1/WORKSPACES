@@ -31,6 +31,10 @@ export default function AppDrawer({
 
   const byId = new Map(apps.map((a) => [a.id, a]));
   const quickApps = draft.map((id) => byId.get(id)).filter(Boolean) as AppDef[];
+  // No modo edição usamos o rascunho (draft) para o "mover" acontecer ao vivo;
+  // fora dele, a barra salva (quickIds). O menu mostra só o que sobra.
+  const pinned = editing ? draft : quickIds;
+  const menuApps = apps.filter((a) => !pinned.includes(a.id));
 
   function addToQuick(id: string, beforeId?: string) {
     setDraft((prev) => {
@@ -137,43 +141,42 @@ export default function AppDrawer({
           </div>
         )}
 
-        {/* Grade de todos os apps */}
+        {/* Grade dos apps que NÃO estão na barra (os que sobram).
+            Ao fixar um app, ele "sai" daqui e vai pra barra de acesso rápido. */}
         <div className="grid grid-cols-4 sm:grid-cols-5 gap-5">
-          {apps.map((app) => {
-            const inQuick = draft.includes(app.id);
-            return (
-              <div key={app.id} className="flex flex-col items-center gap-2">
-                <button
-                  draggable={editing}
-                  onDragStart={(e) => editing && e.dataTransfer.setData("text/app-id", app.id)}
-                  onClick={() => {
-                    if (editing) {
-                      inQuick ? removeFromQuick(app.id) : addToQuick(app.id);
-                    } else {
-                      onSelect(app.id);
-                      onClose();
-                    }
-                  }}
-                  className={`relative w-14 h-14 rounded-2xl flex items-center justify-center border border-white/10 transition-transform ${
-                    editing ? "cursor-grab active:cursor-grabbing" : "hover:scale-105 cursor-pointer"
-                  } ${app.accent}`}
-                  title={editing ? (inQuick ? "Clique para remover da barra" : "Clique ou arraste p/ a barra") : app.label}
-                >
-                  <app.icon size={24} className="text-white" />
-                  {editing && (
-                    <span
-                      className={`absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white ${
-                        inQuick ? "bg-emerald-500" : "bg-gray-700"
-                      }`}
-                    >
-                      {inQuick ? <Check size={11} /> : <Plus size={11} />}
-                    </span>
-                  )}
-                </button>
-                <span className="text-xs text-gray-300 text-center">{app.label}</span>
-              </div>
-            );
-          })}
+          {menuApps.length === 0 && (
+            <p className="col-span-full text-center text-xs text-gray-500 py-6">
+              Todos os aplicativos estão na barra de acesso rápido.
+            </p>
+          )}
+          {menuApps.map((app) => (
+            <div key={app.id} className="flex flex-col items-center gap-2">
+              <button
+                draggable={editing}
+                onDragStart={(e) => editing && e.dataTransfer.setData("text/app-id", app.id)}
+                onClick={() => {
+                  if (editing) {
+                    addToQuick(app.id); // fixa → move pra barra
+                  } else {
+                    onSelect(app.id);
+                    onClose();
+                  }
+                }}
+                className={`relative w-14 h-14 rounded-2xl flex items-center justify-center border border-white/10 transition-transform ${
+                  editing ? "cursor-grab active:cursor-grabbing" : "hover:scale-105 cursor-pointer"
+                } ${app.accent}`}
+                title={editing ? "Clique ou arraste p/ a barra de acesso rápido" : app.label}
+              >
+                <app.icon size={24} className="text-white" />
+                {editing && (
+                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white bg-gray-700">
+                    <Plus size={11} />
+                  </span>
+                )}
+              </button>
+              <span className="text-xs text-gray-300 text-center">{app.label}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

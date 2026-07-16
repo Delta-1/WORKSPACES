@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Hash, MessageSquare, Mic, Paperclip, Plus, Search, Send, Smile, Square, Trash2, Users } from "lucide-react";
+import { Bot, Hash, MessageSquare, Mic, Paperclip, Plug, Plus, Search, Send, Smile, Square, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
+import WhatsappTab from "./WhatsappTab";
 
 type Group = { id: string; name: string; position: number };
 type ConvRow = Conversation & {
@@ -36,8 +37,10 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [conversations, setConversations] = useState<ConvRow[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [colleagues, setColleagues] = useState<Profile[]>([]);
+  const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [query, setQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
+  const [showConnect, setShowConnect] = useState(false);
 
   const [selConvId, setSelConvId] = useState<string | null>(null);
   const [selColleagueId, setSelColleagueId] = useState<string | null>(null);
@@ -68,12 +71,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
   const loadSide = useCallback(async () => {
     if (!supabase) return;
-    const [g, p] = await Promise.all([
+    const [g, p, n] = await Promise.all([
       supabase.from("contact_groups").select("*").order("position"),
       supabase.from("profiles").select("*").neq("id", profile?.id ?? "").order("full_name"),
+      supabase.from("whatsapp_numbers").select("*").order("created_at"),
     ]);
     setGroups((g.data as Group[]) ?? []);
     setColleagues((p.data as Profile[]) ?? []);
+    setNumbers((n.data as WhatsappNumber[]) ?? []);
   }, [profile?.id]);
 
   useEffect(() => {
@@ -87,6 +92,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       .channel("messages-tab")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => loadConversations())
       .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups" }, () => loadSide())
+      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers" }, () => loadSide())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
         const m = payload.new as WhatsappMessageRow;
         if (m.conversation_id === selConvRef.current) {
@@ -155,6 +161,56 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
+  const connectedCount = numbers.filter((n) => n.status === "connected").length;
+  // Número desta conversa (ou o único conectado, se a conversa não tem número fixo).
+  const selNumber = selConv?.number_id
+    ? numbers.find((n) => n.id === selConv.number_id) ?? null
+    : numbers.find((n) => n.status === "connected") ?? numbers[0] ?? null;
+  const botOn = Boolean(selNumber?.auto_reply);
+
+  async function toggleBot() {
+    if (!supabase || !selNumber) {
+      alert("Conecte um número de WhatsApp primeiro (botão de engrenagem).");
+      return;
+    }
+    const next = !selNumber.auto_reply;
+    if (!next) {
+      setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: false } : n)));
+      await supabase.from("whatsapp_numbers").update({ auto_reply: false }).eq("id", selNumber.id);
+      return;
+    }
+    // Ligar: garante um chatbot vinculado e ATIVADO neste número.
+    let chatbotId = selNumber.chatbot_id;
+    let apiKeyOk = false;
+    const { data: bots } = await supabase.from("chatbots").select("*").order("created_at");
+    let bot = chatbotId ? bots?.find((b) => b.id === chatbotId) : bots?.[0];
+    if (!bot) {
+      const { data: created } = await supabase
+        .from("chatbots")
+        .insert({
+          name: "Assistente",
+          enabled: true,
+          provider: "anthropic",
+          persona: "assistente virtual de atendimento",
+          greeting: "Olá! 👋 Sou o assistente virtual. Como posso te ajudar hoje?",
+          instructions:
+            "Fale em português do Brasil, simpático e natural. Mensagens CURTAS (1-2 frases), como no WhatsApp. Uma pergunta por vez. Entenda rápido o que a pessoa precisa e com quem quer falar (setor/assunto). Quando entender, confirme em uma frase e diga que vai encaminhar. Nunca invente; se não souber, chame um atendente humano.",
+        })
+        .select("*")
+        .single();
+      bot = created ?? undefined;
+    }
+    if (bot) {
+      chatbotId = bot.id;
+      apiKeyOk = Boolean(bot.api_key && bot.api_key.trim());
+      if (!bot.enabled) await supabase.from("chatbots").update({ enabled: true }).eq("id", bot.id);
+    }
+    setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: true, chatbot_id: chatbotId } : n)));
+    await supabase.from("whatsapp_numbers").update({ auto_reply: true, chatbot_id: chatbotId }).eq("id", selNumber.id);
+    if (!apiKeyOk) {
+      alert("Bot ligado! Só falta a chave de IA: vá em Configurações → Chatbot e cole uma API key (Anthropic ou Gemini).");
+    }
+  }
 
   async function uploadMedia(blob: Blob, filename: string, mime: string) {
     if (!supabase) return null;
@@ -296,11 +352,23 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
-            {server !== "whatsapp" && server !== "equipe" && (
-              <button onClick={() => deleteGroup(server)} title="Excluir grupo" className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
-                <Trash2 size={14} />
-              </button>
-            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {server !== "equipe" && (
+                <button
+                  onClick={() => setShowConnect(true)}
+                  title={connectedCount > 0 ? `${connectedCount} número(s) conectado(s) — configurar` : "Conectar o WhatsApp"}
+                  className="flex items-center gap-1 text-gray-400 hover:text-emerald-400 cursor-pointer"
+                >
+                  <span className={`w-2 h-2 rounded-full ${connectedCount > 0 ? "bg-emerald-500" : "bg-red-500"}`} />
+                  <Plug size={14} />
+                </button>
+              )}
+              {server !== "whatsapp" && server !== "equipe" && (
+                <button onClick={() => deleteGroup(server)} title="Excluir grupo" className="text-gray-500 hover:text-red-400 cursor-pointer">
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 bg-black/20 rounded-lg px-2.5 py-1.5">
             <Search size={13} className="text-gray-400" />
@@ -383,7 +451,27 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               ) : (
                 <Users size={16} className="text-emerald-400" />
               )}
-              <p className="text-sm font-bold">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+              <p className="text-sm font-bold flex-1 truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+              {selConv && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={toggleBot}
+                    title={botOn ? "Bot ligado — responde os clientes sozinho. Clique para desligar." : "Bot desligado. Clique para o robô responder automaticamente."}
+                    className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                      botOn ? "bg-emerald-600 text-white" : "bg-white/5 text-gray-400 hover:bg-white/10"
+                    }`}
+                  >
+                    <Bot size={12} /> {botOn ? "Bot ON" : "Bot OFF"}
+                  </button>
+                  <button
+                    onClick={() => setShowConnect(true)}
+                    title="Configurar / conectar WhatsApp"
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
+                  >
+                    <Plug size={15} />
+                  </button>
+                </div>
+              )}
             </div>
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
@@ -439,6 +527,28 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
           </>
         )}
       </div>
+
+      {/* Configurações / conectar WhatsApp (mesmo gerenciador de números) */}
+      {showConnect && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowConnect(false)}>
+          <div
+            className="w-full max-w-5xl h-[80vh] bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <Plug size={16} className="text-emerald-400" /> Conectar / configurar WhatsApp
+              </h3>
+              <button onClick={() => setShowConnect(false)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <WhatsappTab profile={profile} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
