@@ -260,14 +260,38 @@ async function ingestHistory(messages, numberId, companyId, sectorId) {
   }
   let done = 0;
   for (const [jid, msgs] of byJid) {
-    if (done >= 200) break; // limite de segurança
+    if (done >= 120) break; // limite de segurança
     try {
       msgs.sort((a, b) => Number(a.messageTimestamp || 0) - Number(b.messageTimestamp || 0));
       const last = msgs[msgs.length - 1];
       const isLid = jid.endsWith("@lid");
       const altJid = last.key.remoteJidAlt || null;
       const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
-      const contact = await upsertContact(phone, last.pushName || null, companyId, jid);
+      const name = last.pushName || null;
+      const digits = phone.replace(/\D/g, "");
+      // Pula o "lixo" do histórico: chat LID sem telefone real e sem nome vira
+      // só "Contato WhatsApp". Só ingerimos chats com NOME ou TELEFONE plausível.
+      const plausiblePhone = digits.length >= 8 && digits.length <= 15 && !(isLid && !altJid);
+      if (!name && !plausiblePhone) continue;
+
+      // Monta as últimas ~40 mensagens; se não houver conteúdo, NÃO cria conversa vazia.
+      const recent = msgs.slice(-40);
+      const rows0 = recent
+        .map((m) => {
+          const text = historyPreview(m);
+          if (!text) return null;
+          const ts = Number(m.messageTimestamp || 0);
+          return {
+            direction: m.key.fromMe ? "out" : "in",
+            text,
+            company_id: companyId,
+            at: ts ? new Date(ts * 1000).toISOString() : new Date().toISOString(),
+          };
+        })
+        .filter(Boolean);
+      if (rows0.length === 0) continue;
+
+      const contact = await upsertContact(phone, name, companyId, jid);
       if (!contact) continue;
       // Já existe conversa? então não recria (evita duplicar histórico).
       const { data: existing } = await supabase
@@ -289,31 +313,13 @@ async function ingestHistory(messages, numberId, companyId, sectorId) {
         .select("id")
         .single();
       if (!conv) continue;
-      // Insere as últimas ~40 mensagens do histórico com data/hora reais.
-      const recent = msgs.slice(-40);
-      const rows = recent
-        .map((m) => {
-          const text = historyPreview(m);
-          if (!text) return null;
-          const ts = Number(m.messageTimestamp || 0);
-          return {
-            conversation_id: conv.id,
-            direction: m.key.fromMe ? "out" : "in",
-            text,
-            company_id: companyId,
-            at: ts ? new Date(ts * 1000).toISOString() : new Date().toISOString(),
-          };
-        })
-        .filter(Boolean);
-      if (rows.length) {
-        await supabase.from("whatsapp_messages").insert(rows);
-        // Atualiza o preview/último horário da conversa.
-        const lastRow = rows[rows.length - 1];
-        await supabase
-          .from("conversations")
-          .update({ last_message: lastRow.text, last_message_at: lastRow.at })
-          .eq("id", conv.id);
-      }
+      const rows = rows0.map((r) => ({ ...r, conversation_id: conv.id }));
+      await supabase.from("whatsapp_messages").insert(rows);
+      const lastRow = rows[rows.length - 1];
+      await supabase
+        .from("conversations")
+        .update({ last_message: lastRow.text, last_message_at: lastRow.at })
+        .eq("id", conv.id);
       done++;
     } catch {
       /* pula esse chat */
@@ -331,7 +337,7 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
@@ -346,8 +352,24 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     row.media_name = media.name || null;
     row.media_mime = media.mime || null;
   }
-  await supabase.from("whatsapp_messages").insert(row);
-  await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversationId);
+  if (waId) {
+    // wa_id dedup: evita registrar duas vezes a mesma mensagem (envio pelo site
+    // + eco do messages.upsert, ou a mesma mensagem chegando por vários eventos).
+    row.wa_id = waId;
+    const { data: inserted } = await supabase
+      .from("whatsapp_messages")
+      .upsert(row, { onConflict: "wa_id", ignoreDuplicates: true })
+      .select("id");
+    if (!inserted || inserted.length === 0) return; // já existia → não duplica
+  } else {
+    await supabase.from("whatsapp_messages").insert(row);
+  }
+  // Mantém a conversa "no topo" (mais recente) e com a última mensagem/hora.
+  const now = new Date().toISOString();
+  await supabase
+    .from("conversations")
+    .update({ last_message: row.text ?? "", last_message_at: now, updated_at: now })
+    .eq("id", conversationId);
 }
 
 // Logger silencioso para o downloadMediaMessage do Baileys.
@@ -787,10 +809,14 @@ async function startSession(numberId) {
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       for (const msg of messages) {
-        if (msg.key.fromMe) continue;
         const jid = msg.key.remoteJid;
         // ignore groups / broadcasts — this is 1:1 customer support
-        if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+        if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+        // Mensagem que VOCÊ enviou pelo app oficial do WhatsApp → espelha no site.
+        if (msg.key.fromMe) {
+          await logOutgoingEcho(sock, numberId, msg, jid);
+          continue;
+        }
         // Marca como visualizada (tique azul) para o cliente ver que foi lida.
         try {
           await sock.readMessages([msg.key]);
@@ -865,8 +891,8 @@ async function startSession(numberId) {
             }
             // Saudação apenas na abertura da conversa.
             if (created && chatbot?.greeting) {
-              await sock.sendMessage(jid, { text: chatbot.greeting });
-              await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid);
+              const g = await sock.sendMessage(jid, { text: chatbot.greeting });
+              await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
             }
             // Puxa as últimas mensagens desta conversa p/ dar contexto ao bot.
             let history = [];
@@ -900,7 +926,7 @@ async function startSession(numberId) {
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
                 if (ogg) {
-                  await sock.sendMessage(jid, { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true });
+                  const sa = await sock.sendMessage(jid, { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true });
                   const audioUrl = await uploadMedia(ogg, "audio/ogg", "out");
                   await logMessage(
                     conversation.id,
@@ -908,14 +934,15 @@ async function startSession(numberId) {
                     reply,
                     null,
                     audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/ogg" } : null,
-                    cid
+                    cid,
+                    sa?.key?.id ?? null
                   );
                   sentAsAudio = true;
                 }
               }
               if (!sentAsAudio) {
-                await sock.sendMessage(jid, { text: reply });
-                await logMessage(conversation.id, "out", reply, null, null, cid);
+                const st = await sock.sendMessage(jid, { text: reply });
+                await logMessage(conversation.id, "out", reply, null, null, cid, st?.key?.id ?? null);
               }
             }
             try {
@@ -961,6 +988,55 @@ async function disconnectSession(numberId) {
   }
 }
 
+// Espelha no site as mensagens que VOCÊ mandou pelo app oficial do WhatsApp
+// (multi-dispositivo). O eco chega em messages.upsert com key.fromMe = true.
+async function logOutgoingEcho(sock, numberId, msg, jid) {
+  try {
+    const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
+    const mediaKind = inner.imageMessage
+      ? "image"
+      : inner.audioMessage
+        ? "audio"
+        : inner.videoMessage
+          ? "video"
+          : inner.documentMessage
+            ? "document"
+            : null;
+    const node = inner.imageMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
+    const text = inner.conversation || inner.extendedTextMessage?.text || node?.caption || "";
+    if (!text && !mediaKind) return;
+
+    let media = null;
+    if (mediaKind) {
+      try {
+        const buffer = await downloadMediaMessage(
+          { key: msg.key, message: inner },
+          "buffer",
+          {},
+          { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
+        );
+        const url = await uploadMedia(buffer, node?.mimetype || null, "out");
+        if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
+      } catch (err) {
+        console.error("Failed to download outgoing echo media:", err);
+      }
+    }
+
+    const isLid = jid.endsWith("@lid");
+    const altJid = msg.key.remoteJidAlt || null;
+    const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
+    const { number } = await getNumberConfig(numberId);
+    const cid = number?.company_id ?? null;
+    const contact = await upsertContact(phone, null, cid, jid);
+    if (!contact) return;
+    const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
+    // waId = key.id → dedup contra o envio feito pelo próprio site.
+    await logMessage(conversation.id, "out", text, null, media, cid, msg.key.id);
+  } catch (err) {
+    console.error("logOutgoingEcho failed:", err);
+  }
+}
+
 async function sendMessage(numberId, to, text, senderId, media) {
   // Se o número informado não estiver conectado, usa qualquer número conectado.
   let s = numberId ? getSession(numberId) : null;
@@ -992,6 +1068,7 @@ async function sendMessage(numberId, to, text, senderId, media) {
     jid = resolved || (to.replace(/\D/g, "").length >= 14 ? `${to}@lid` : `${to}@s.whatsapp.net`);
   }
 
+  let sent = null;
   if (media?.url) {
     const resp = await fetch(media.url);
     if (!resp.ok) throw new Error("Não consegui baixar o arquivo para enviar.");
@@ -1002,9 +1079,9 @@ async function sendMessage(numberId, to, text, senderId, media) {
     else if (media.type === "audio") content = { audio: buf, mimetype: mimetype || "audio/mp4", ptt: true };
     else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
     else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
-    await s.sock.sendMessage(jid, content);
+    sent = await s.sock.sendMessage(jid, content);
   } else {
-    await s.sock.sendMessage(jid, { text });
+    sent = await s.sock.sendMessage(jid, { text });
   }
 
   const phone = jid.split("@")[0];
@@ -1013,7 +1090,7 @@ async function sendMessage(numberId, to, text, senderId, media) {
   const contact = await upsertContact(phone, null, cid, jid);
   if (contact) {
     const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
-    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid);
+    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
   }
 }
 
