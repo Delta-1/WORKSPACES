@@ -74,11 +74,85 @@ async function reportSpecs() {
   }
 }
 
+// ---- Modo SERVIDOR: recebe os arquivos das automações e guarda localmente ----
+let serverRoot = null;
+let deliverBusy = false;
+
+async function refreshServerRole() {
+  if (!supabase || !cfg?.agentId) return;
+  try {
+    const { data } = await supabase.rpc("agent_role", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode });
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row?.is_server) {
+      serverRoot = await ipcRenderer.invoke("server-init", row.server_root || null);
+    } else {
+      serverRoot = null;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function runDeliveries() {
+  if (deliverBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  deliverBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_pending_deliveries", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+    });
+    for (const d of data || []) {
+      try {
+        // storage_path é um prefixo (pasta) — lista e baixa tudo.
+        const prefix = d.storage_path;
+        const { data: listed } = await supabase.storage.from("automation").list(prefix, { limit: 1000 });
+        const paths = listed && listed.length > 0 ? listed.filter((o) => o.id).map((o) => `${prefix}/${o.name}`) : [prefix];
+        for (const p of paths) {
+          const { data: blob, error } = await supabase.storage.from("automation").download(p);
+          if (error || !blob) throw error || new Error("download vazio");
+          const buf = Buffer.from(await blob.arrayBuffer());
+          const fileName = p.split("/").pop();
+          await ipcRenderer.invoke("server-write", {
+            root: serverRoot,
+            rel: `${d.routine_name || "Automacao"}/${fileName}`,
+            base64: buf.toString("base64"),
+          });
+          // Já entregou? limpa do bucket para não reprocessar.
+          await supabase.storage.from("automation").remove([p]);
+        }
+        await supabase.rpc("agent_mark_delivered", {
+          p_agent_id: cfg.agentId,
+          p_access_code: cfg.accessCode,
+          p_run_id: d.run_id,
+          p_status: "in_server",
+          p_error: null,
+        });
+      } catch (e) {
+        await supabase.rpc("agent_mark_delivered", {
+          p_agent_id: cfg.agentId,
+          p_access_code: cfg.accessCode,
+          p_run_id: d.run_id,
+          p_status: "error",
+          p_error: String(e?.message || e).slice(0, 300),
+        });
+      }
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    deliverBusy = false;
+  }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
   reportSpecs();
   setInterval(reportSpecs, 300000); // atualiza o panorama a cada 5 min
+  refreshServerRole();
+  setInterval(refreshServerRole, 120000); // revê o papel de servidor a cada 2 min
+  runDeliveries();
+  setInterval(runDeliveries, 30000); // recebe entregas (se for servidor) a cada 30s
 
   uploadThumb();
   setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)

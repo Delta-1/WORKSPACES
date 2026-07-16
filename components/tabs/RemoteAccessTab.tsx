@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Link2, Monitor, MonitorSmartphone, Trash2 } from "lucide-react";
+import { Copy, Link2, Monitor, MonitorSmartphone, Server, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Profile, RemoteAgent } from "@/lib/types";
@@ -79,6 +79,16 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     load();
   }
 
+  // Marca/desmarca a máquina como SERVIDOR de arquivos (recebe as automações e
+  // guarda o cérebro do robô + as pastas — sem depender do Google Drive).
+  async function toggleServer(a: RemoteAgent) {
+    if (!supabase) return;
+    const next = !a.is_server;
+    if (next && !confirm(`Definir "${a.name}" como servidor de arquivos? As automações poderão enviar arquivos direto pra ela.`)) return;
+    await supabase.from("remote_agents").update({ is_server: next }).eq("id", a.id);
+    load();
+  }
+
   return (
     <div className="h-full flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -135,7 +145,14 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                     <Monitor size={18} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-bold truncate">{a.name}</p>
+                    <p className="text-sm font-bold truncate flex items-center gap-1.5">
+                      {a.name}
+                      {a.is_server && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded-full">
+                          <Server size={9} /> SERVIDOR
+                        </span>
+                      )}
+                    </p>
                     <p className={`text-[11px] ${online ? "text-emerald-400" : "text-gray-500"}`}>
                       {online ? "Online" : "Offline"}
                       {a.os ? ` · ${a.os}` : ""}
@@ -143,9 +160,18 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                   </div>
                 </div>
                 {canManage && (
-                  <button onClick={() => remove(a.id)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => toggleServer(a)}
+                      title={a.is_server ? "É o servidor de arquivos — clique para tirar" : "Definir como servidor de arquivos"}
+                      className={`cursor-pointer ${a.is_server ? "text-sky-400" : "text-gray-500 hover:text-sky-300"}`}
+                    >
+                      <Server size={14} />
+                    </button>
+                    <button onClick={() => remove(a.id)} className="text-gray-500 hover:text-red-400 cursor-pointer">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 )}
               </div>
 

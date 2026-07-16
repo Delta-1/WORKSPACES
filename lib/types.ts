@@ -67,6 +67,8 @@ export type RemoteAgent = {
   created_by: string | null;
   created_at: string;
   specs: AgentSpecs | null;
+  is_server: boolean | null;
+  server_root: string | null;
 };
 
 export type AgentSpecs = {

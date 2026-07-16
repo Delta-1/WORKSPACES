@@ -247,6 +247,35 @@ ipcMain.handle("fs-collect", (_e, srcPath) => {
   return out;
 });
 
+// ---- Modo SERVIDOR de arquivos ----
+// Pasta base do servidor (padrão: ~/WorkspaceServer). Cria as pastas nossas
+// (Cérebro do robô + Arquivos) para não bagunçar o resto da máquina.
+function serverBase(root) {
+  return root && String(root).trim() ? String(root) : path.join(os.homedir(), "WorkspaceServer");
+}
+ipcMain.handle("server-init", (_e, root) => {
+  const base = serverBase(root);
+  try {
+    for (const d of ["Cerebro", "Arquivos"]) fs.mkdirSync(path.join(base, d), { recursive: true });
+  } catch (err) {
+    console.error("server-init", err);
+  }
+  return base;
+});
+ipcMain.handle("server-write", (_e, { root, rel, base64 }) => {
+  const base = serverBase(root);
+  // Sanitiza o caminho relativo (nunca escapa da pasta base).
+  const safeRel = String(rel || "arquivo")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((p) => p && p !== "." && p !== "..")
+    .join("/");
+  const dest = path.join(base, "Arquivos", safeRel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, Buffer.from(base64, "base64"));
+  return { path: dest };
+});
+
 ipcMain.handle("fs-write", (_e, { dir, name, base64 }) => {
   const safeName = path.basename(name || "arquivo");
   const dest = path.join(dir || os.homedir(), safeName);

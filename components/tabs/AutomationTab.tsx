@@ -18,6 +18,8 @@ type Routine = {
   last_status: string | null;
   last_error: string | null;
   next_run_at: string;
+  dest_type: string | null;
+  dest_agent_id: string | null;
 };
 
 function fmtEvery(min: number): string {
@@ -172,7 +174,9 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-gray-500 flex items-center gap-1">
                   <RefreshCw size={11} /> a cada {fmtEvery(r.interval_minutes)}
-                  {r.to_drive && " → Drive"}
+                  {r.dest_type === "server"
+                    ? ` → ${agentName.get(r.dest_agent_id ?? "") ?? "servidor"}`
+                    : " → Drive"}
                 </span>
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input type="checkbox" checked={r.enabled} onChange={() => toggle(r)} className="accent-emerald-600 w-3.5 h-3.5" />
@@ -226,20 +230,25 @@ function AddRoutineModal({
   const [sourcePath, setSourcePath] = useState("");
   const [every, setEvery] = useState(1);
   const [unit, setUnit] = useState<"minutos" | "horas" | "dias">("dias");
+  const [dest, setDest] = useState("drive"); // "drive" | <serverAgentId>
   const [saving, setSaving] = useState(false);
   const [picking, setPicking] = useState(false);
 
   const factor = unit === "dias" ? 1440 : unit === "horas" ? 60 : 1;
+  const servers = agents.filter((a) => a.is_server);
 
   async function save() {
     if (!supabase || !name.trim() || !agentId || !sourcePath.trim()) return;
     setSaving(true);
+    const toServer = dest !== "drive";
     const { error } = await supabase.from("automation_routines").insert({
       name: name.trim(),
       agent_id: agentId,
       source_path: sourcePath.trim(),
       interval_minutes: Math.max(1, Math.round(every * factor)),
-      to_drive: true,
+      to_drive: !toServer,
+      dest_type: toServer ? "server" : "drive",
+      dest_agent_id: toServer ? dest : null,
       created_by: createdBy,
       next_run_at: new Date().toISOString(), // já roda no próximo ciclo do agente
     });
@@ -305,7 +314,22 @@ function AddRoutineModal({
               <option value="dias">dia(s)</option>
             </select>
           </div>
-          <p className="text-[11px] text-gray-500 mt-1">A cada quanto tempo coletar e enviar pro Drive. A rotina já roda a primeira vez ao ser criada.</p>
+          <p className="text-[11px] text-gray-500 mt-1">A cada quanto tempo coletar e enviar. A rotina já roda a primeira vez ao ser criada.</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Enviar para</label>
+          <select value={dest} onChange={(e) => setDest(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
+            <option value="drive">Google Drive</option>
+            {servers.map((s) => (
+              <option key={s.id} value={s.id}>Servidor: {s.name}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-500 mt-1">
+            {servers.length === 0
+              ? "Dica: marque uma máquina como servidor no Acesso Remoto para enviar sem depender do Drive."
+              : "Drive (nuvem) ou um servidor (uma máquina sua guarda os arquivos, sem depender do Google)."}
+          </p>
         </div>
 
         <div className="flex justify-end gap-2">
