@@ -66,6 +66,21 @@ export type RemoteAgent = {
   last_seen: string | null;
   created_by: string | null;
   created_at: string;
+  specs: AgentSpecs | null;
+};
+
+export type AgentSpecs = {
+  platform?: string;
+  osName?: string;
+  hostname?: string;
+  arch?: string;
+  cpu?: string;
+  cores?: number;
+  memTotalGB?: number;
+  memFreeGB?: number;
+  uptimeH?: number;
+  networks?: { name: string; ip: string; mac: string }[];
+  reportedAt?: string;
 };
 
 export type Client = {

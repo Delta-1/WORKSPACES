@@ -58,9 +58,28 @@ async function registerSelf() {
   }
 }
 
+async function reportSpecs() {
+  if (!supabase || !cfg?.agentId) return;
+  try {
+    const specs = await ipcRenderer.invoke("get-specs");
+    if (specs) {
+      await supabase.rpc("agent_report_specs", {
+        p_agent_id: cfg.agentId,
+        p_access_code: cfg.accessCode,
+        p_specs: specs,
+      });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
+  reportSpecs();
+  setInterval(reportSpecs, 300000); // atualiza o panorama a cada 5 min
+
   uploadThumb();
   setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)
   runAutomations();
@@ -81,21 +100,29 @@ async function runAutomations() {
     });
     for (const r of data || []) {
       try {
-        const { name, base64 } = await ipcRenderer.invoke("fs-read", r.source_path);
-        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-        const path = `${cfg.agentId}/${Date.now()}-${name}`;
-        const { error } = await supabase.storage
-          .from("automation")
-          .upload(path, bytes, { contentType: "application/octet-stream", upsert: true });
-        if (error) throw error;
+        // Coleta arquivo único OU pasta inteira (sem limite prático de arquivos).
+        const files = await ipcRenderer.invoke("fs-collect", r.source_path);
+        if (!files || files.length === 0) throw new Error("Nada encontrado no caminho.");
+        const stamp = Date.now();
+        let lastPath = null;
+        for (const f of files) {
+          const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
+          const storagePath = `${cfg.agentId}/${r.id}/${stamp}/${f.rel}`;
+          const { error } = await supabase.storage
+            .from("automation")
+            .upload(storagePath, bytes, { contentType: "application/octet-stream", upsert: true });
+          if (error) throw error;
+          lastPath = storagePath;
+        }
         await supabase.rpc("agent_record_run", {
           p_agent_id: cfg.agentId,
           p_access_code: cfg.accessCode,
           p_routine_id: r.id,
-          p_storage_path: path,
+          p_storage_path: `${cfg.agentId}/${r.id}/${stamp}` + (files.length > 1 ? ` (${files.length} arquivos)` : `/${files[0].rel}`),
           p_status: "uploaded",
           p_error: null,
         });
+        void lastPath;
       } catch (e) {
         await supabase.rpc("agent_record_run", {
           p_agent_id: cfg.agentId,
@@ -159,6 +186,7 @@ async function onSignal(msg) {
   if (!msg || msg.to !== "agent") return;
   if (msg.type === "connect") await startStreaming();
   else if (msg.type === "select-screen") await switchScreen(msg.sourceId);
+  else if (msg.type === "set-quality") await setQuality(msg.level);
   else if (msg.type === "answer") await pc?.setRemoteDescription(msg.sdp);
   else if (msg.type === "ice" && msg.candidate) {
     try {
@@ -171,21 +199,49 @@ async function onSignal(msg) {
 
 let videoSender = null;
 let screens = [];
+let currentSourceId = null;
+let currentQuality = "alta";
+
+const QUALITY = {
+  alta: { maxWidth: 2560, maxHeight: 1440, maxFrameRate: 30 },
+  media: { maxWidth: 1600, maxHeight: 900, maxFrameRate: 30 },
+  baixa: { maxWidth: 1280, maxHeight: 720, maxFrameRate: 20 }, // menos lag em rede fraca
+};
 
 async function captureScreen(sourceId) {
+  const q = QUALITY[currentQuality] || QUALITY.alta;
   return navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       mandatory: {
         chromeMediaSource: "desktop",
         chromeMediaSourceId: sourceId,
-        // Resolução alta (tela nítida) + 30 fps (menos travado/menos lag).
-        maxWidth: 2560,
-        maxHeight: 1440,
-        maxFrameRate: 30,
+        maxWidth: q.maxWidth,
+        maxHeight: q.maxHeight,
+        maxFrameRate: q.maxFrameRate,
       },
     },
   });
+}
+
+// Troca a resolução/qualidade da transmissão sem reconectar (menos lag).
+async function setQuality(level) {
+  if (!QUALITY[level] || !videoSender || !currentSourceId) return;
+  currentQuality = level;
+  try {
+    const newStream = await captureScreen(currentSourceId);
+    const newTrack = newStream.getVideoTracks()[0];
+    await videoSender.replaceTrack(newTrack);
+    try {
+      stream?.getTracks().forEach((t) => t.stop());
+    } catch {
+      /* ignore */
+    }
+    stream = newStream;
+    setStatus("Qualidade: " + level);
+  } catch (e) {
+    setStatus("Falha ao mudar qualidade: " + e.message);
+  }
 }
 
 async function startStreaming() {
@@ -198,6 +254,7 @@ async function startStreaming() {
     return;
   }
   ipcRenderer.send("set-display", src.display_id);
+  currentSourceId = src.id;
   stream = await captureScreen(src.id);
 
   pc = new RTCPeerConnection({ iceServers: ICE });
@@ -250,6 +307,7 @@ async function switchScreen(sourceId) {
       /* ignore */
     }
     stream = newStream;
+    currentSourceId = src.id;
     ipcRenderer.send("set-display", src.display_id);
     setStatus("Monitor trocado.");
   } catch (e) {

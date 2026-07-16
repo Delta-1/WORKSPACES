@@ -33,6 +33,22 @@ function machineCode() {
 let win = null;
 let tray = null;
 let lastPayload = null;
+// Só encerra de verdade quando pedido explicitamente (nunca ao fechar a janela).
+// Fechar a janela apenas esconde na bandeja; para encerrar mesmo, só pelo
+// Gerenciador de Tarefas — assim usuários comuns não derrubam o acesso do técnico.
+app.isQuitting = false;
+
+// Ícone simples (quadrado verde) pra bandeja aparecer no canto inferior direito.
+const TRAY_ICON_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAP0lEQVR42mNgGAWjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFIyCUTAKRsEoGAWjYBSMglEwCkbBKAAA67QAEwJ0F0kAAAAASUVORK5CYII=";
+function trayIcon() {
+  try {
+    const img = nativeImage.createFromDataURL("data:image/png;base64," + TRAY_ICON_PNG);
+    return img.isEmpty() ? nativeImage.createEmpty() : img;
+  } catch {
+    return nativeImage.createEmpty();
+  }
+}
 
 // Linux/Wayland: habilita a captura de tela via PipeWire (no X11 já funciona).
 if (process.platform === "linux") {
@@ -79,6 +95,14 @@ function createWindow(payload, visible) {
   win.webContents.on("did-finish-load", () => {
     if (win && !win.isDestroyed()) win.webContents.send("config", payload);
   });
+  // Fechar a janela (X) NÃO encerra o app: apenas esconde na bandeja e segue
+  // rodando em segundo plano. Para encerrar mesmo, só pelo Gerenciador de Tarefas.
+  win.on("close", (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      if (win && !win.isDestroyed()) win.hide();
+    }
+  });
   // Evita usar referência de janela destruída (fonte do erro "Object destroyed").
   win.on("closed", () => {
     win = null;
@@ -124,6 +148,37 @@ ipcMain.handle("get-thumbnail", async () => {
   }
 });
 
+// Coleta um panorama do computador (rede, CPU, memória) para o painel do técnico.
+ipcMain.handle("get-specs", () => {
+  try {
+    const nets = [];
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const ni of ifaces[name] || []) {
+        if (ni.family === "IPv4" && !ni.internal) {
+          nets.push({ name, ip: ni.address, mac: ni.mac });
+        }
+      }
+    }
+    const cpus = os.cpus();
+    return {
+      platform: process.platform, // win32 | linux | darwin
+      osName: `${os.type()} ${os.release()}`,
+      hostname: os.hostname(),
+      arch: os.arch(),
+      cpu: cpus[0]?.model?.trim() || "CPU",
+      cores: cpus.length,
+      memTotalGB: Math.round((os.totalmem() / 1024 ** 3) * 10) / 10,
+      memFreeGB: Math.round((os.freemem() / 1024 ** 3) * 10) / 10,
+      uptimeH: Math.round((os.uptime() / 3600) * 10) / 10,
+      networks: nets,
+      reportedAt: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.on("save-pairing", (_e, pairing) => {
   try {
     fs.writeFileSync(pairingPath(), JSON.stringify(pairing));
@@ -157,6 +212,41 @@ ipcMain.handle("fs-read", (_e, filePath) => {
   if (stat.size > 60 * 1024 * 1024) throw new Error("Arquivo muito grande (limite 60 MB).");
   return { name: path.basename(filePath), base64: fs.readFileSync(filePath).toString("base64") };
 });
+// Coleta arquivos de um caminho (arquivo único OU pasta inteira, recursivo)
+// para a automação enviar tudo pro Drive. Retorna [{ rel, base64 }].
+ipcMain.handle("fs-collect", (_e, srcPath) => {
+  const out = [];
+  const MAX_FILES = 500;
+  const MAX_BYTES = 80 * 1024 * 1024; // teto total ~80 MB por rodada
+  let total = 0;
+  const stat = fs.statSync(srcPath);
+  if (stat.isFile()) {
+    out.push({ rel: path.basename(srcPath), base64: fs.readFileSync(srcPath).toString("base64") });
+    return out;
+  }
+  const walk = (dir, prefix) => {
+    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (out.length >= MAX_FILES || total >= MAX_BYTES) return;
+      const full = path.join(dir, d.name);
+      const rel = prefix ? `${prefix}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        walk(full, rel);
+      } else if (d.isFile()) {
+        try {
+          const sz = fs.statSync(full).size;
+          if (sz > 40 * 1024 * 1024) continue; // pula arquivos gigantes
+          total += sz;
+          out.push({ rel, base64: fs.readFileSync(full).toString("base64") });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  };
+  walk(srcPath, path.basename(srcPath));
+  return out;
+});
+
 ipcMain.handle("fs-write", (_e, { dir, name, base64 }) => {
   const safeName = path.basename(name || "arquivo");
   const dest = path.join(dir || os.homedir(), safeName);
@@ -192,6 +282,39 @@ ipcMain.on("input", async (_e, ev) => {
     const absY = (ny) => Math.round(b.y + ny * b.height);
     if (ev.kind === "move") {
       await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
+    } else if (ev.kind === "move-rel") {
+      // Movimento relativo (trackpad do celular): desloca o cursor atual.
+      const cur = await mouse.getPosition();
+      const gain = 1.4;
+      let nx = cur.x + (ev.dx || 0) * gain;
+      let ny = cur.y + (ev.dy || 0) * gain;
+      // Mantém dentro do monitor controlado.
+      nx = Math.max(b.x, Math.min(b.x + b.width - 1, nx));
+      ny = Math.max(b.y, Math.min(b.y + b.height - 1, ny));
+      await mouse.setPosition(new Point(Math.round(nx), Math.round(ny)));
+    } else if (ev.kind === "click") {
+      // Clique do trackpad na posição atual (sem mover).
+      await mouse.click(ev.button === 2 ? Button.RIGHT : Button.LEFT);
+    } else if (ev.kind === "combo") {
+      // Atalhos rápidos vindos dos botões do celular / barra de comando.
+      if (ev.name === "taskmanager") {
+        // Gerenciador de Tarefas (Windows): Ctrl+Shift+Esc.
+        await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.Escape);
+        await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.Escape);
+      } else if (ev.name === "home") {
+        // Tecla "casa" (Windows/Super) — abre o menu inicial (Win/Linux).
+        await keyboard.pressKey(Key.LeftSuper);
+        await keyboard.releaseKey(Key.LeftSuper);
+      } else if (ev.name === "altf4") {
+        await keyboard.pressKey(Key.LeftAlt, Key.F4);
+        await keyboard.releaseKey(Key.LeftAlt, Key.F4);
+      } else if (ev.name === "copy") {
+        await keyboard.pressKey(Key.LeftControl, Key.C);
+        await keyboard.releaseKey(Key.LeftControl, Key.C);
+      } else if (ev.name === "paste") {
+        await keyboard.pressKey(Key.LeftControl, Key.V);
+        await keyboard.releaseKey(Key.LeftControl, Key.V);
+      }
     } else if (ev.kind === "down") {
       await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
       await mouse.pressButton(ev.button === 2 ? Button.RIGHT : Button.LEFT);
@@ -294,14 +417,25 @@ app.whenReady().then(() => {
   createWindow(payload, !hidden);
 
   try {
-    tray = new Tray(nativeImage.createEmpty());
-    tray.setToolTip("Workspace — Acesso Remoto");
+    tray = new Tray(trayIcon());
+    tray.setToolTip("Workspace — Acesso Remoto (ativo)");
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: "Abrir", click: () => showWindow() },
-        { label: "Sair", click: () => app.quit() },
+        { label: "Abrir janela do código", click: () => showWindow() },
+        { type: "separator" },
+        {
+          label: "Encerrar acesso remoto",
+          click: () => {
+            // Confirmação: encerrar tira o acesso do técnico até reabrir o app.
+            app.isQuitting = true;
+            app.quit();
+          },
+        },
       ])
     );
+    // Clicar no ícone da bandeja reabre a janela do código.
+    tray.on("click", () => showWindow());
+    tray.on("double-click", () => showWindow());
   } catch {
     /* tray opcional */
   }

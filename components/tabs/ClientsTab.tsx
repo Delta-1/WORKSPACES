@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Monitor, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
+import { Building2, Cpu, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -11,12 +11,67 @@ function isOnline(a: RemoteAgent) {
   return Date.now() - new Date(a.last_seen).getTime() < 60000;
 }
 
+// Painel de panorama que aparece ao passar o mouse num computador.
+function AgentInfoPanel({ agent }: { agent: RemoteAgent }) {
+  const online = isOnline(agent);
+  const s = agent.specs;
+  const secs = agent.last_seen ? Math.round((Date.now() - new Date(agent.last_seen).getTime()) / 1000) : null;
+  const quality = !online ? { label: "Offline", color: "text-gray-400", bar: "bg-gray-600", pct: 0 }
+    : secs != null && secs < 25 ? { label: "Ótima", color: "text-emerald-400", bar: "bg-emerald-500", pct: 100 }
+    : secs != null && secs < 45 ? { label: "Boa", color: "text-lime-400", bar: "bg-lime-500", pct: 66 }
+    : { label: "Instável", color: "text-amber-400", bar: "bg-amber-500", pct: 33 };
+  const plat = s?.platform === "win32" ? "Windows" : s?.platform === "darwin" ? "macOS" : s?.platform === "linux" ? "Linux" : null;
+  return (
+    <div className="fixed top-20 right-6 z-40 w-72 liquid-glass rounded-2xl p-4 border border-white/10 shadow-2xl pointer-events-none">
+      <p className="text-sm font-bold flex items-center gap-2 mb-1">
+        <Monitor size={15} className="text-emerald-400" /> {agent.name}
+      </p>
+      <div className="mb-3">
+        <div className="flex items-center justify-between text-[11px] mb-1">
+          <span className="text-gray-400 flex items-center gap-1"><Wifi size={11} /> Conexão</span>
+          <span className={quality.color}>{quality.label}</span>
+        </div>
+        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div className={`h-full ${quality.bar}`} style={{ width: `${quality.pct}%` }} />
+        </div>
+      </div>
+      {s ? (
+        <div className="space-y-1.5 text-[11px] text-gray-300">
+          {plat && <p className="flex items-center gap-1.5"><Monitor size={11} className="text-gray-500" /> {plat} · {s.arch}</p>}
+          {s.cpu && <p className="flex items-center gap-1.5"><Cpu size={11} className="text-gray-500" /> <span className="truncate">{s.cpu} ({s.cores}n)</span></p>}
+          {s.memTotalGB != null && (
+            <p className="flex items-center gap-1.5">
+              <MemoryStick size={11} className="text-gray-500" /> RAM {s.memTotalGB} GB (livre {s.memFreeGB} GB)
+            </p>
+          )}
+          {s.networks && s.networks.length > 0 && (
+            <div className="flex items-start gap-1.5">
+              <HardDrive size={11} className="text-gray-500 mt-0.5 shrink-0" />
+              <span className="min-w-0">
+                {s.networks.map((n) => (
+                  <span key={n.ip} className="block truncate">{n.name}: {n.ip}</span>
+                ))}
+              </span>
+            </div>
+          )}
+          {s.uptimeH != null && <p className="text-gray-500">Ligado há {s.uptimeH}h</p>}
+        </div>
+      ) : (
+        <p className="text-[11px] text-gray-500">
+          Sem detalhes ainda. Atualize o app na máquina do cliente para ver rede, CPU e memória aqui.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function ClientsTab({ profile }: { profile: Profile | null }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
+  const [hovered, setHovered] = useState<RemoteAgent | null>(null);
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
@@ -134,8 +189,13 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
                     {machines.map((m) => {
                       const online = isOnline(m);
                       return (
-                        <li key={m.id} className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="flex items-center gap-1.5 min-w-0">
+                        <li
+                          key={m.id}
+                          className="flex items-center justify-between gap-2 text-[11px]"
+                          onMouseEnter={() => setHovered(m)}
+                          onMouseLeave={() => setHovered((h) => (h?.id === m.id ? null : h))}
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0 cursor-help">
                             <span className={`w-1.5 h-1.5 rounded-full ${online ? "bg-emerald-400" : "bg-gray-600"}`} />
                             <span className="truncate">{m.name}</span>
                           </span>
@@ -184,8 +244,9 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
         })}
       </div>
 
+      {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
       {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} />}
-      {viewing && <RemoteViewer agent={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
   );
 }

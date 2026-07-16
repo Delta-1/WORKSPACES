@@ -102,8 +102,9 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
       </div>
 
       <p className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
-        O robô coleta um arquivo de uma máquina (quando ela está ligada, mesmo sem você conectar) e leva pro Google
-        Drive automaticamente, na frequência escolhida. Requer o app instalado na máquina e o Drive configurado.
+        O robô coleta um arquivo <b>ou uma pasta inteira</b> (sem limite de arquivos) de uma máquina — mesmo sem você
+        conectar — e leva pro Google Drive na frequência escolhida. Dica: em <b>Acesso Remoto → Arquivos</b>, navegue
+        até o arquivo/pasta e clique no ícone de robô 🤖 para criar a automação sem digitar o caminho.
       </p>
 
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">

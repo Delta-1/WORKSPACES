@@ -210,7 +210,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
         })}
       </div>
 
-      {viewing && <RemoteViewer agent={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
   );
 }
