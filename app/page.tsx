@@ -108,6 +108,14 @@ export default function Home() {
     const root = document.documentElement;
     root.style.setProperty("--accent", color);
     root.style.setProperty("--accent-hover", lightenHex(color, 18));
+    // Barra do navegador / topo do app instalado (PWA) segue a cor tema da empresa.
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", color);
   }, [company.themeColor]);
 
   async function loadCompany(companyId: string | null) {
