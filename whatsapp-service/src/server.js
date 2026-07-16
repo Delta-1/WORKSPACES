@@ -102,6 +102,17 @@ async function ensureNovoContatoTag(companyId) {
   return id;
 }
 
+// Busca a foto de perfil do contato no WhatsApp e salva (uma vez).
+async function fetchAvatar(sock, jid, contact) {
+  if (!supabase || !sock || !jid || !contact || contact.avatar_url) return;
+  try {
+    const url = await sock.profilePictureUrl(jid, "image").catch(() => null);
+    if (url) await supabase.from("contacts").update({ avatar_url: url }).eq("id", contact.id);
+  } catch {
+    /* sem foto / privado */
+  }
+}
+
 async function upsertContact(phone, name = null, companyId = null, jid = null) {
   if (!supabase) return null;
   // Dedup: casa pelo telefone OU pelo JID (mesma pessoa pode chegar como
@@ -720,8 +731,11 @@ async function startSession(numberId) {
     const sock = makeWASocket({
       auth: authState,
       printQRInTerminal: false,
-      // Traz o histórico recente das conversas ao conectar (para o site mostrar
-      // as conversas que já existem no WhatsApp).
+      // Estabilidade: não fica "online" (evita conflito com o celular), mantém
+      // a conexão viva e identifica o navegador de forma estável.
+      markOnlineOnConnect: false,
+      keepAliveIntervalMs: 20000,
+      browser: ["Workspace", "Chrome", "121.0"],
       syncFullHistory: true,
     });
     s.sock = sock;
@@ -830,6 +844,7 @@ async function startSession(numberId) {
           const { number, chatbot } = await getNumberConfig(numberId);
           const cid = number?.company_id ?? null;
           const contact = await upsertContact(phone, msg.pushName || null, cid, contactJid);
+          void fetchAvatar(sock, contactJid, contact); // foto de perfil (best-effort)
           const { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
             numberId,

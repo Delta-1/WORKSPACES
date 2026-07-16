@@ -36,6 +36,15 @@ function fmtTime(iso: string | null) {
   if (!iso) return "";
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
+// Nome amigável: usa o nome; senão o telefone (se for plausível); nunca o LID cru.
+function contactLabel(c?: { name?: string | null; phone?: string | null } | null): string {
+  if (!c) return "Contato";
+  if (c.name && c.name.trim()) return c.name;
+  const p = (c.phone || "").replace(/\D/g, "");
+  if (p.length >= 8 && p.length <= 13) return "+" + p;
+  return "Contato WhatsApp";
+}
+
 function fmtDay(iso: string) {
   const d = new Date(iso);
   const today = new Date();
@@ -614,13 +623,18 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                         selConvId === c.id ? "bg-emerald-950/30" : ""
                       }`}
                     >
-                      <div className="w-10 h-10 rounded-full bg-emerald-900/60 flex items-center justify-center text-sm font-bold shrink-0">
-                        {(c.contacts?.name ?? c.contacts?.phone ?? "?").charAt(0).toUpperCase()}
-                      </div>
+                      {c.contacts?.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={c.contacts.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-emerald-900/60 flex items-center justify-center text-sm font-bold shrink-0">
+                          {contactLabel(c.contacts).charAt(0).toUpperCase()}
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <p className={`text-sm truncate ${unread ? "font-bold" : "font-medium"}`}>
-                            {c.contacts?.name || c.contacts?.phone || "Contato"}
+                            {contactLabel(c.contacts)}
                           </p>
                           <span className="text-[10px] text-gray-500 shrink-0">{fmtTime(c.last_message_at)}</span>
                         </div>
@@ -660,12 +674,17 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                   onClick={() => openContact(c)}
                   className="w-full text-left px-3 py-2.5 border-b border-white/5 hover:bg-white/5 cursor-pointer flex items-center gap-3"
                 >
-                  <div className="w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center text-xs shrink-0">
-                    <User size={16} className="text-gray-400" />
-                  </div>
+                  {c.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center text-xs shrink-0">
+                      <User size={16} className="text-gray-400" />
+                    </div>
+                  )}
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{c.name || c.phone}</p>
-                    <p className="text-[11px] text-gray-500 truncate">{c.phone}</p>
+                    <p className="text-sm font-medium truncate">{contactLabel(c)}</p>
+                    <p className="text-[11px] text-gray-500 truncate">{contactLabel(c) !== "Contato WhatsApp" ? c.phone : ""}</p>
                   </div>
                 </button>
               ))}
@@ -729,11 +748,16 @@ export default function WhatsappHubTab({ profile }: { profile: Profile | null })
                   <button onClick={backToList} className="lg:hidden text-gray-400 hover:text-white cursor-pointer -ml-1 shrink-0">
                     <ChevronLeft size={20} />
                   </button>
-                  <div className="w-9 h-9 rounded-full bg-emerald-900/60 flex items-center justify-center text-sm font-bold shrink-0">
-                    {(selConv.contacts?.name ?? selConv.contacts?.phone ?? "?").charAt(0).toUpperCase()}
-                  </div>
+                  {selConv.contacts?.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={selConv.contacts.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-emerald-900/60 flex items-center justify-center text-sm font-bold shrink-0">
+                      {contactLabel(selConv.contacts).charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div className="min-w-0">
-                    <p className="text-sm font-bold truncate">{selConv.contacts?.name || selConv.contacts?.phone}</p>
+                    <p className="text-sm font-bold truncate">{contactLabel(selConv.contacts)}</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_PILL[selConv.status]?.cls}`}>
                         {STATUS_PILL[selConv.status]?.label}
