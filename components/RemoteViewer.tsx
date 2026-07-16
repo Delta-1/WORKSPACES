@@ -11,9 +11,11 @@ import {
   Gauge,
   Home,
   Keyboard,
+  Laptop,
   ListTree,
   Monitor as MonitorIcon,
   MousePointerClick,
+  Server,
   Upload,
   X,
 } from "lucide-react";
@@ -60,11 +62,24 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<Progress>(null);
-  const downloadRef = useRef<{ name: string; parts: string[]; total: number; got: number } | null>(null);
+  const downloadRef = useRef<{ name: string; parts: string[]; total: number; got: number; mode: "computer" | "server"; serverId: string | null } | null>(null);
+  const pendingDl = useRef<{ mode: "computer" | "server"; serverId: string | null }>({ mode: "computer", serverId: null });
+  const [servers, setServers] = useState<RemoteAgent[]>([]);
+  const [dlChoice, setDlChoice] = useState<string | null>(null); // nome do arquivo aguardando escolha de destino
 
   useEffect(() => {
     setIsTouch(typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches);
   }, []);
+
+  // Servidores disponíveis (para "baixar no servidor").
+  useEffect(() => {
+    if (!supabase) return;
+    supabase
+      .from("remote_agents")
+      .select("*")
+      .eq("is_server", true)
+      .then(({ data }) => setServers(((data as RemoteAgent[]) ?? []).filter((s) => s.id !== agent.id)));
+  }, [agent.id]);
 
   function fsSend(obj: unknown) {
     const ch = filesRef.current;
@@ -90,7 +105,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       setBusy(false);
     } else if (m.op === "get-result") {
       if (m.kind === "begin") {
-        downloadRef.current = { name: m.name as string, parts: [], total: (m.total as number) || 0, got: 0 };
+        downloadRef.current = { name: m.name as string, parts: [], total: (m.total as number) || 0, got: 0, mode: pendingDl.current.mode, serverId: pendingDl.current.serverId };
         setProgress({ label: `Baixando ${m.name}…`, pct: 0 });
       } else if (m.kind === "chunk" && downloadRef.current) {
         const d = downloadRef.current;
@@ -98,14 +113,19 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
         d.got += (m.data as string).length;
         setProgress({ label: `Baixando ${d.name}…`, pct: d.total ? Math.min(100, Math.round((d.got / d.total) * 100)) : 0 });
       } else if (m.kind === "end" && downloadRef.current) {
-        const b64 = downloadRef.current.parts.join("");
-        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const url = URL.createObjectURL(new Blob([bytes]));
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = downloadRef.current.name;
-        a.click();
-        URL.revokeObjectURL(url);
+        const d = downloadRef.current;
+        const b64 = d.parts.join("");
+        if (d.mode === "server" && d.serverId) {
+          void sendToServer(d.serverId, d.name, b64);
+        } else {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes]));
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = d.name;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
         downloadRef.current = null;
         setBusy(false);
         setProgress(null);
@@ -121,9 +141,41 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     }
   }
 
+  // Clique no download: se houver servidor, pergunta o destino; senão baixa no PC.
   function download(name: string) {
+    if (servers.length > 0) setDlChoice(name);
+    else startDownload(name, "computer", null);
+  }
+  function startDownload(name: string, mode: "computer" | "server", serverId: string | null) {
+    pendingDl.current = { mode, serverId };
+    setDlChoice(null);
     setBusy(true);
     fsSend({ op: "get", id: "get", path: dir + sep + name });
+  }
+
+  // Envia os bytes recebidos do cliente para o servidor (via bucket -> pasta Download do servidor).
+  async function sendToServer(serverId: string, name: string, b64: string) {
+    if (!supabase) return;
+    try {
+      setProgress({ label: `Enviando ${name} ao servidor…`, pct: 50 });
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const path = `transfers/${serverId}/${Date.now()}-${name}`;
+      const { error: upErr } = await supabase.storage.from("automation").upload(path, bytes, { contentType: "application/octet-stream", upsert: true });
+      if (upErr) throw upErr;
+      const { error: insErr } = await supabase.from("server_transfers").insert({
+        dest_agent_id: serverId,
+        filename: name,
+        storage_path: path,
+        subfolder: "Download",
+        created_by: profile?.id ?? null,
+      });
+      if (insErr) throw insErr;
+      alert(`"${name}" foi enviado ao servidor — vai aparecer na pasta Download em instantes.`);
+    } catch (e) {
+      alert("Falha ao enviar ao servidor: " + (e instanceof Error ? e.message : "erro"));
+    } finally {
+      setProgress(null);
+    }
   }
 
   async function uploadFile(file: File) {
@@ -522,6 +574,37 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       {!isTouch && (
         <div className="text-[11px] text-gray-500 text-center py-1 bg-[#0b0f16] shrink-0">
           Clique no vídeo e use mouse/teclado para controlar a máquina remota.
+        </div>
+      )}
+
+      {/* Escolha do destino do download: meu computador ou um servidor */}
+      {dlChoice && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" onClick={() => setDlChoice(null)}>
+          <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold">Baixar “{dlChoice}”</h3>
+              <button onClick={() => setDlChoice(null)} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400">Escolha para onde enviar o arquivo:</p>
+            <button
+              onClick={() => startDownload(dlChoice, "computer", null)}
+              className="w-full flex items-center gap-2 text-sm bg-white/5 hover:bg-white/10 px-3 py-2.5 rounded-lg cursor-pointer"
+            >
+              <Laptop size={16} className="text-emerald-400" /> No meu computador
+            </button>
+            {servers.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => startDownload(dlChoice, "server", s.id)}
+                className="w-full flex items-center gap-2 text-sm bg-white/5 hover:bg-white/10 px-3 py-2.5 rounded-lg cursor-pointer"
+              >
+                <Server size={16} className="text-sky-400" /> No servidor: {s.name}
+                <span className="text-[10px] text-gray-500 ml-auto">→ pasta Download</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

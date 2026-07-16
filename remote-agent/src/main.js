@@ -256,11 +256,21 @@ function serverBase(root) {
 ipcMain.handle("server-init", (_e, root) => {
   const base = serverBase(root);
   try {
-    for (const d of ["Cerebro", "Arquivos"]) fs.mkdirSync(path.join(base, d), { recursive: true });
+    for (const d of ["Cerebro", "Arquivos", "Download"]) fs.mkdirSync(path.join(base, d), { recursive: true });
   } catch (err) {
     console.error("server-init", err);
   }
   return base;
+});
+
+// Grava um arquivo recebido (transferência do operador) na pasta Download do servidor.
+ipcMain.handle("server-download-write", (_e, { root, name, base64 }) => {
+  const base = serverBase(root);
+  const dir = path.join(base, "Download");
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, path.basename(name || "arquivo"));
+  fs.writeFileSync(dest, Buffer.from(base64, "base64"));
+  return { path: dest };
 });
 ipcMain.handle("server-write", (_e, { root, dir, rel, base64 }) => {
   // Sanitiza o caminho relativo (nunca escapa da pasta base).

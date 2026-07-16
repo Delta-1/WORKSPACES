@@ -156,6 +156,36 @@ async function runDeliveries() {
   }
 }
 
+// Recebe arquivos enviados pelo operador (download "no servidor") e grava na
+// pasta Download do servidor.
+let transferBusy = false;
+async function runTransfers() {
+  if (transferBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  transferBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_pending_transfers", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+    });
+    for (const t of data || []) {
+      try {
+        const { data: blob, error } = await supabase.storage.from("automation").download(t.storage_path);
+        if (error || !blob) throw error || new Error("download vazio");
+        const buf = Buffer.from(await blob.arrayBuffer());
+        await ipcRenderer.invoke("server-download-write", { root: serverRoot, name: t.filename, base64: buf.toString("base64") });
+        await supabase.storage.from("automation").remove([t.storage_path]);
+        await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "done", p_error: null });
+      } catch (e) {
+        await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "error", p_error: String(e?.message || e).slice(0, 200) });
+      }
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    transferBusy = false;
+  }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
@@ -165,6 +195,8 @@ async function startAgent() {
   setInterval(refreshServerRole, 120000); // revê o papel de servidor a cada 2 min
   runDeliveries();
   setInterval(runDeliveries, 30000); // recebe entregas (se for servidor) a cada 30s
+  runTransfers();
+  setInterval(runTransfers, 20000); // recebe transferências manuais (se for servidor)
 
   uploadThumb();
   setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)
