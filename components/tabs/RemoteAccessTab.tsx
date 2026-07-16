@@ -18,6 +18,9 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [syncing, setSyncing] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
   const [tick, setTick] = useState(0);
+  const [pwFor, setPwFor] = useState<RemoteAgent | null>(null); // máquina aguardando senha p/ virar/deixar de ser servidor
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState(false);
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
@@ -79,13 +82,23 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     load();
   }
 
-  // Marca/desmarca a máquina como SERVIDOR de arquivos (recebe as automações e
-  // guarda o cérebro do robô + as pastas — sem depender do Google Drive).
-  async function toggleServer(a: RemoteAgent) {
-    if (!supabase) return;
-    const next = !a.is_server;
-    if (next && !confirm(`Definir "${a.name}" como servidor de arquivos? As automações poderão enviar arquivos direto pra ela.`)) return;
-    await supabase.from("remote_agents").update({ is_server: next }).eq("id", a.id);
+  // Só quem tem a senha pode mudar o servidor de arquivos: abre o popup de senha.
+  function toggleServer(a: RemoteAgent) {
+    setPwInput("");
+    setPwError(false);
+    setPwFor(a);
+  }
+
+  async function confirmServerChange() {
+    if (!supabase || !pwFor) return;
+    if (pwInput !== "1qaz2wsx") {
+      setPwError(true);
+      return;
+    }
+    const next = !pwFor.is_server;
+    await supabase.from("remote_agents").update({ is_server: next }).eq("id", pwFor.id);
+    setPwFor(null);
+    setPwInput("");
     load();
   }
 
@@ -235,6 +248,37 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           );
         })}
       </div>
+
+      {pwFor && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setPwFor(null)}>
+          <div className="w-full max-w-xs bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <Server size={16} className="text-sky-400" />
+              <h3 className="text-sm font-bold">{pwFor.is_server ? "Tirar servidor" : "Definir como servidor"}</h3>
+            </div>
+            <p className="text-[11px] text-gray-400">
+              Digite a senha para {pwFor.is_server ? "deixar" : "definir"} <b>{pwFor.name}</b> {pwFor.is_server ? "de ser" : "como"} servidor de arquivos.
+            </p>
+            <input
+              type="password"
+              value={pwInput}
+              autoFocus
+              onChange={(e) => {
+                setPwInput(e.target.value);
+                setPwError(false);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && confirmServerChange()}
+              placeholder="Senha"
+              className={`w-full bg-black/20 border rounded-lg px-3 py-2 text-sm outline-none ${pwError ? "border-red-500" : "border-white/10"}`}
+            />
+            {pwError && <p className="text-[11px] text-red-400">Senha incorreta.</p>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPwFor(null)} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
+              <button onClick={confirmServerChange} className="text-xs px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white cursor-pointer">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
