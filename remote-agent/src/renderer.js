@@ -104,25 +104,25 @@ async function runAutomations() {
         const files = await ipcRenderer.invoke("fs-collect", r.source_path);
         if (!files || files.length === 0) throw new Error("Nada encontrado no caminho.");
         const stamp = Date.now();
-        let lastPath = null;
+        // Prefixo único desta rodada. Achatamos subpastas no nome (/->__) para
+        // que o servidor liste tudo num nível só e mande cada arquivo pro Drive.
+        const prefix = `${cfg.agentId}/${r.id}/${stamp}`;
         for (const f of files) {
           const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
-          const storagePath = `${cfg.agentId}/${r.id}/${stamp}/${f.rel}`;
+          const flat = f.rel.replace(/[\\/]/g, "__");
           const { error } = await supabase.storage
             .from("automation")
-            .upload(storagePath, bytes, { contentType: "application/octet-stream", upsert: true });
+            .upload(`${prefix}/${flat}`, bytes, { contentType: "application/octet-stream", upsert: true });
           if (error) throw error;
-          lastPath = storagePath;
         }
         await supabase.rpc("agent_record_run", {
           p_agent_id: cfg.agentId,
           p_access_code: cfg.accessCode,
           p_routine_id: r.id,
-          p_storage_path: `${cfg.agentId}/${r.id}/${stamp}` + (files.length > 1 ? ` (${files.length} arquivos)` : `/${files[0].rel}`),
+          p_storage_path: prefix, // prefixo (pasta) — o servidor lista e envia tudo
           p_status: "uploaded",
           p_error: null,
         });
-        void lastPath;
       } catch (e) {
         await supabase.rpc("agent_record_run", {
           p_agent_id: cfg.agentId,

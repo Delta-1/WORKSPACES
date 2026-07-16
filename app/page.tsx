@@ -26,6 +26,7 @@ import ClientsTab from "@/components/tabs/ClientsTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import MessagesTab from "@/components/tabs/MessagesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
+import AutoDriveSync from "@/components/AutoDriveSync";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
 import type { Company, Profile, Role } from "@/lib/types";
@@ -342,7 +343,8 @@ export default function Home() {
         )}
       </main>
 
-      {profile && <NewConversationNotifier onOpen={() => setTab("whatsapp")} />}
+      {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
+      {profile && <AutoDriveSync />}
 
       <Dock apps={dockApps} active={tab} onSelect={setTab} onOpenDrawer={() => setDrawerOpen(true)} />
       <AppDrawer

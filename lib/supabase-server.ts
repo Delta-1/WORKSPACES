@@ -17,3 +17,13 @@ export function supabaseForRequest(request: Request) {
     auth: { persistSession: false },
   });
 }
+
+/**
+ * Service-role client (bypasses RLS). Use only in trusted server contexts like
+ * cron jobs. Returns null if the service key isn't configured.
+ */
+export function supabaseService() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!url || !serviceKey) return null;
+  return createClient(url, serviceKey, { auth: { persistSession: false } });
+}
