@@ -19,14 +19,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   applicationName: "Workspace",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Workspace" },
-  icons: {
-    icon: [
-      { url: "/icon.png", type: "image/png" },
-      { url: "/favicon.ico" },
-    ],
-    shortcut: ["/icon.png"],
-    apple: [{ url: "/icon.png" }],
-  },
+  // O favicon e o apple-touch vêm de app/icon.png e app/apple-icon.png (convenção do Next).
 };
 
 export const viewport: Viewport = {
