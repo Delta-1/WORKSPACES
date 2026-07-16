@@ -25,6 +25,7 @@ import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import TeamChatTab from "@/components/tabs/TeamChatTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
+import MessagesTab from "@/components/tabs/MessagesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
@@ -37,7 +38,8 @@ const APPS: AppDef[] = [
   { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "calendario", label: "Calendário", icon: CalendarDays, accent: "bg-rose-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "whatsapp", label: "WhatsApp", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "whatsapp", label: "WhatsApp (clássico)", icon: MessagesSquare, accent: "bg-green-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "equipe", label: "Chat da Equipe", icon: MessagesSquare, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -319,6 +321,7 @@ export default function Home() {
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "calendario" && <CalendarTab profile={profile} />}
+        {tab === "mensagens" && <MessagesTab profile={profile} />}
         {tab === "whatsapp" && <WhatsappHubTab profile={profile} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
