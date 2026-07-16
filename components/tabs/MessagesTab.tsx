@@ -162,9 +162,12 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
   const connectedCount = numbers.filter((n) => n.status === "connected").length;
-  // Número desta conversa (ou o único conectado, se a conversa não tem número fixo).
+  const activeNumberId = server.startsWith("wa:") ? server.slice(3) : null;
+  // Número desta conversa; senão o número do "servidor" ativo; senão o conectado.
   const selNumber = selConv?.number_id
     ? numbers.find((n) => n.id === selConv.number_id) ?? null
+    : activeNumberId
+    ? numbers.find((n) => n.id === activeNumberId) ?? null
     : numbers.find((n) => n.status === "connected") ?? numbers[0] ?? null;
   const botOn = Boolean(selNumber?.auto_reply);
 
@@ -304,16 +307,25 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     }
   }
 
-  // Conversas do "servidor" atual: "whatsapp" = todas; um grupo = só desse grupo.
+  // "servidor" atual: "whatsapp" = todas; "wa:<numeroId>" = só desse número;
+  // "<grupoId>" = só desse grupo. (activeNumberId definido acima)
   const visibleConvs = useMemo(() => {
     const q = query.toLowerCase();
     return conversations.filter((c) => {
-      if (server !== "whatsapp" && server !== "equipe" && c.group_id !== server) return false;
+      if (activeNumberId) {
+        if (c.number_id !== activeNumberId) return false;
+      } else if (server !== "whatsapp" && server !== "equipe" && c.group_id !== server) {
+        return false;
+      }
       return !q || contactLabel(c.contacts).toLowerCase().includes(q);
     });
-  }, [conversations, query, server]);
+  }, [conversations, query, server, activeNumberId]);
 
-  const currentGroupName = server === "whatsapp" ? "Conversas" : groups.find((g) => g.id === server)?.name ?? "Grupo";
+  const currentGroupName = activeNumberId
+    ? numbers.find((n) => n.id === activeNumberId)?.label ?? "Número"
+    : server === "whatsapp"
+    ? "Conversas"
+    : groups.find((g) => g.id === server)?.name ?? "Grupo";
 
   async function deleteGroup(id: string) {
     if (!supabase) return;
@@ -330,9 +342,31 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     <div className="h-full flex overflow-hidden rounded-2xl liquid-glass">
       {/* Rail de servidores (grupos ficam separados aqui) */}
       <div className="w-16 shrink-0 bg-black/30 flex flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll">
-        <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp / Clientes">
+        <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas">
           <MessageSquare size={20} />
         </ServerIcon>
+        {/* Um ícone por número de WhatsApp: acesso múltiplo, todos no mesmo lugar */}
+        {numbers.map((n) => (
+          <ServerIcon
+            key={n.id}
+            active={server === `wa:${n.id}`}
+            onClick={() => setServer(`wa:${n.id}`)}
+            title={`${n.label}${n.phone_number ? ` (${n.phone_number})` : ""} — ${n.status === "connected" ? "conectado" : "desconectado"}`}
+          >
+            <span className="relative">
+              <span className="text-sm font-bold">{(n.label || "W").charAt(0).toUpperCase()}</span>
+              <span
+                className={`absolute -bottom-1 -right-1.5 w-2 h-2 rounded-full border border-black/40 ${
+                  n.status === "connected" ? "bg-emerald-500" : "bg-gray-500"
+                }`}
+              />
+            </span>
+          </ServerIcon>
+        ))}
+        <ServerIcon active={showConnect} onClick={() => setShowConnect(true)} title="Adicionar / conectar número de WhatsApp">
+          <Plug size={16} />
+        </ServerIcon>
+        <div className="w-8 h-px bg-white/10 my-1" />
         <ServerIcon active={server === "equipe"} onClick={() => setServer("equipe")} title="Equipe (interno)">
           <Users size={20} />
         </ServerIcon>
@@ -363,7 +397,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                   <Plug size={14} />
                 </button>
               )}
-              {server !== "whatsapp" && server !== "equipe" && (
+              {server !== "whatsapp" && server !== "equipe" && !activeNumberId && (
                 <button onClick={() => deleteGroup(server)} title="Excluir grupo" className="text-gray-500 hover:text-red-400 cursor-pointer">
                   <Trash2 size={14} />
                 </button>
@@ -391,7 +425,11 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
           {server !== "equipe" && visibleConvs.length === 0 && (
             <p className="text-[11px] text-gray-500 p-3 text-center">
-              {server === "whatsapp" ? "Nenhuma conversa ainda." : "Nenhuma conversa neste grupo. Passe o mouse numa conversa (no WhatsApp) e escolha este grupo."}
+              {server === "whatsapp"
+                ? "Nenhuma conversa ainda."
+                : activeNumberId
+                ? "Nenhuma conversa neste número ainda."
+                : "Nenhuma conversa neste grupo. Passe o mouse numa conversa (no WhatsApp) e escolha este grupo."}
             </p>
           )}
           {server !== "equipe" &&
