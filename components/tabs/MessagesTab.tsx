@@ -1,20 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  FolderPlus,
-  Hash,
-  MessageSquare,
-  Mic,
-  Paperclip,
-  Plus,
-  Search,
-  Send,
-  Square,
-  Users,
-} from "lucide-react";
+import { Hash, MessageSquare, Mic, Paperclip, Plus, Search, Send, Smile, Square, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow } from "@/lib/types";
 
@@ -42,13 +29,15 @@ function mediaTypeFromMime(mime: string): WhatsappMediaType {
   return "document";
 }
 
+const EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😉 🙂 😢 😭 😡 👍 👎 🙏 👏 🙌 💪 🔥 ✅ ❌ ⚠️ 🎉 ❤️ 💚 💙 💛 ⭐ 💯 👀 🤝 🫡 😴 🥳 😱 🤦 🤷 👌 ✌️ 🤙 📌 📎 📞 💬 ⏰ 💰 🚀".split(" ");
+
 export default function MessagesTab({ profile }: { profile: Profile | null }) {
-  const [server, setServer] = useState<"whatsapp" | "equipe">("whatsapp");
+  const [server, setServer] = useState<string>("whatsapp"); // "whatsapp" | "equipe" | <groupId>
   const [conversations, setConversations] = useState<ConvRow[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [colleagues, setColleagues] = useState<Profile[]>([]);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
+  const [showEmoji, setShowEmoji] = useState(false);
 
   const [selConvId, setSelConvId] = useState<string | null>(null);
   const [selColleagueId, setSelColleagueId] = useState<string | null>(null);
@@ -259,45 +248,57 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     }
   }
 
-  // Agrupa conversas por grupo.
-  const filtered = useMemo(() => {
+  // Conversas do "servidor" atual: "whatsapp" = todas; um grupo = só desse grupo.
+  const visibleConvs = useMemo(() => {
     const q = query.toLowerCase();
-    return conversations.filter((c) => !q || contactLabel(c.contacts).toLowerCase().includes(q));
-  }, [conversations, query]);
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, ConvRow[]>();
-    map.set("none", []);
-    groups.forEach((g) => map.set(g.id, []));
-    filtered.forEach((c) => {
-      const key = c.group_id && map.has(c.group_id) ? c.group_id : "none";
-      map.get(key)!.push(c);
+    return conversations.filter((c) => {
+      if (server !== "whatsapp" && server !== "equipe" && c.group_id !== server) return false;
+      return !q || contactLabel(c.contacts).toLowerCase().includes(q);
     });
-    return map;
-  }, [filtered, groups]);
+  }, [conversations, query, server]);
+
+  const currentGroupName = server === "whatsapp" ? "Conversas" : groups.find((g) => g.id === server)?.name ?? "Grupo";
+
+  async function deleteGroup(id: string) {
+    if (!supabase) return;
+    if (!confirm("Excluir este grupo? As conversas voltam para 'sem grupo'.")) return;
+    await supabase.from("contact_groups").delete().eq("id", id);
+    if (server === id) setServer("whatsapp");
+    loadSide();
+    loadConversations();
+  }
 
   const thread = selConv ? messages : selColleague ? internal : [];
 
   return (
     <div className="h-full flex overflow-hidden rounded-2xl liquid-glass">
-      {/* Rail de servidores */}
-      <div className="w-16 shrink-0 bg-black/30 flex flex-col items-center py-3 gap-2 border-r border-white/10">
+      {/* Rail de servidores (grupos ficam separados aqui) */}
+      <div className="w-16 shrink-0 bg-black/30 flex flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll">
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp / Clientes">
           <MessageSquare size={20} />
         </ServerIcon>
         <ServerIcon active={server === "equipe"} onClick={() => setServer("equipe")} title="Equipe (interno)">
           <Users size={20} />
         </ServerIcon>
+        <div className="w-8 h-px bg-white/10 my-1" />
+        {groups.map((g) => (
+          <ServerIcon key={g.id} active={server === g.id} onClick={() => setServer(g.id)} title={g.name}>
+            <span className="text-sm font-bold">{g.name.charAt(0).toUpperCase()}</span>
+          </ServerIcon>
+        ))}
+        <ServerIcon active={false} onClick={newGroup} title="Novo grupo">
+          <Plus size={18} />
+        </ServerIcon>
       </div>
 
       {/* Coluna de canais/contatos */}
       <div className="w-64 shrink-0 flex flex-col overflow-hidden border-r border-white/10 bg-black/10">
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold">{server === "whatsapp" ? "Conversas" : "Equipe"}</h3>
-            {server === "whatsapp" && (
-              <button onClick={newGroup} title="Novo grupo" className="text-gray-400 hover:text-emerald-400 cursor-pointer">
-                <FolderPlus size={15} />
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
+            {server !== "whatsapp" && server !== "equipe" && (
+              <button onClick={() => deleteGroup(server)} title="Excluir grupo" className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
+                <Trash2 size={14} />
               </button>
             )}
           </div>
@@ -320,53 +321,43 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               </button>
             ))}
 
-          {server === "whatsapp" &&
-            [{ id: "none", name: "Sem grupo" }, ...groups].map((g) => {
-              const list = grouped.get(g.id) ?? [];
-              if (g.id === "none" && list.length === 0) return null;
-              const isCol = collapsed[g.id];
-              return (
-                <div key={g.id} className="mb-1">
-                  <button
-                    onClick={() => setCollapsed((p) => ({ ...p, [g.id]: !p[g.id] }))}
-                    className="w-full flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider text-gray-500 hover:text-gray-300 cursor-pointer"
+          {server !== "equipe" && visibleConvs.length === 0 && (
+            <p className="text-[11px] text-gray-500 p-3 text-center">
+              {server === "whatsapp" ? "Nenhuma conversa ainda." : "Nenhuma conversa neste grupo. Passe o mouse numa conversa (no WhatsApp) e escolha este grupo."}
+            </p>
+          )}
+          {server !== "equipe" &&
+            visibleConvs.map((c) => (
+              <div key={c.id} className={`group flex items-center gap-2 px-2 mx-1 rounded-lg hover:bg-white/5 ${selConvId === c.id ? "bg-emerald-950/30" : ""}`}>
+                <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-1.5 text-left cursor-pointer">
+                  {c.contacts?.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">
+                      {contactLabel(c.contacts).charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
+                    <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>
+                  </div>
+                </button>
+                {groups.length > 0 && (
+                  <select
+                    value={c.group_id ?? ""}
+                    onChange={(e) => moveConv(c.id, e.target.value || null)}
+                    title="Mover para grupo"
+                    className="opacity-0 group-hover:opacity-100 bg-transparent text-[10px] text-gray-400 cursor-pointer outline-none max-w-[64px]"
                   >
-                    {isCol ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                    {g.name} <span className="text-gray-600">({list.length})</span>
-                  </button>
-                  {!isCol &&
-                    list.map((c) => (
-                      <div key={c.id} className={`group flex items-center gap-2 px-2 mx-1 rounded-lg hover:bg-white/5 ${selConvId === c.id ? "bg-emerald-950/30" : ""}`}>
-                        <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-1.5 text-left cursor-pointer">
-                          {c.contacts?.avatar_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={c.contacts.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
-                          ) : (
-                            <div className="w-7 h-7 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">
-                              {contactLabel(c.contacts).charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
-                            <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>
-                          </div>
-                        </button>
-                        <select
-                          value={c.group_id ?? ""}
-                          onChange={(e) => moveConv(c.id, e.target.value || null)}
-                          title="Mover para grupo"
-                          className="opacity-0 group-hover:opacity-100 bg-transparent text-[10px] text-gray-400 cursor-pointer outline-none"
-                        >
-                          <option value="">— sem grupo</option>
-                          {groups.map((gr) => (
-                            <option key={gr.id} value={gr.id}>{gr.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <option value="">— sem grupo</option>
+                    {groups.map((gr) => (
+                      <option key={gr.id} value={gr.id}>{gr.name}</option>
                     ))}
-                </div>
-              );
-            })}
+                  </select>
+                )}
+              </div>
+            ))}
         </div>
       </div>
 
@@ -405,7 +396,23 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               {thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
             </div>
 
-            <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0">
+            <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0 relative">
+              {showEmoji && (
+                <div className="absolute bottom-full left-2 mb-2 w-72 max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
+                  {EMOJIS.map((e) => (
+                    <button
+                      key={e}
+                      onClick={() => { setInput((v) => v + e); setShowEmoji(false); }}
+                      className="text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 cursor-pointer"
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => setShowEmoji((v) => !v)} className={`p-2.5 rounded-lg cursor-pointer ${showEmoji ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}>
+                <Smile size={18} />
+              </button>
               {selConv && (
                 <>
                   <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.currentTarget.value = ""; }} />

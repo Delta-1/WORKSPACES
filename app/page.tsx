@@ -23,7 +23,6 @@ import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
-import TeamChatTab from "@/components/tabs/TeamChatTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import MessagesTab from "@/components/tabs/MessagesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
@@ -39,10 +38,9 @@ const APPS: AppDef[] = [
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "calendario", label: "Calendário", icon: CalendarDays, accent: "bg-rose-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "whatsapp", label: "WhatsApp (clássico)", icon: MessagesSquare, accent: "bg-green-900/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "whatsapp", label: "Conexão WhatsApp", icon: MessagesSquare, accent: "bg-green-900/60", roles: ["gestor", "gerente"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
-  { id: "equipe", label: "Chat da Equipe", icon: MessagesSquare, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mural", label: "Mural", icon: Megaphone, accent: "bg-orange-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "funcionarios", label: "Funcionários", icon: Users, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -325,7 +323,6 @@ export default function Home() {
         {tab === "whatsapp" && <WhatsappHubTab profile={profile} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
-        {tab === "equipe" && <TeamChatTab profile={profile} />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "mural" && <AnnouncementsTab profile={profile} />}
         {tab === "funcionarios" && <EmployeesTab profile={profile} />}
