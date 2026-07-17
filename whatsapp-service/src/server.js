@@ -748,8 +748,13 @@ const COPILOT_TOOLS = [
   {
     name: "send_whatsapp",
     description:
-      "Envia uma mensagem de WhatsApp para OUTRO contato (pelo nome ou telefone) em nome do gestor — como um assessor pessoal. Confirme o texto antes de enviar.",
-    input_schema: { type: "object", properties: { contact: { type: "string" }, text: { type: "string" } }, required: ["contact", "text"] },
+      "Envia uma mensagem de WhatsApp para OUTRO contato (pelo nome ou telefone) em nome do gestor. Passe as_audio=true para enviar como ÁUDIO (nota de voz). " +
+      "Se o nome tiver vários contatos, a ferramenta devolve as opções com os telefones — pergunte qual e reenvie com o telefone certo.",
+    input_schema: {
+      type: "object",
+      properties: { contact: { type: "string" }, text: { type: "string" }, as_audio: { type: "boolean" } },
+      required: ["contact", "text"],
+    },
   },
 ];
 
@@ -822,21 +827,29 @@ async function copilotDispatch(companyId, name, input, files, sends) {
     // Resolve o contato (nome ou telefone) e agenda o envio (feito no handler).
     const q = String(input.contact || "").trim();
     const digits = q.replace(/\D/g, "");
+    const asAudio = input.as_audio === true || input.as_audio === "true";
     let contact = null;
     if (digits.length >= 8) {
       const { data } = await supabase.from("contacts").select("id,name,phone,jid").eq("company_id", companyId).eq("phone", digits).maybeSingle();
-      contact = data;
+      contact = data || { id: null, name: q, phone: digits, jid: null };
+    } else {
+      // Por nome: pode haver VÁRIOS — devolve as opções com telefone para escolher.
+      const { data: matches } = await supabase.from("contacts").select("id,name,phone,jid").eq("company_id", companyId).ilike("name", `%${q}%`).limit(6);
+      if (!matches || matches.length === 0) return { ok: false, message: "Não achei esse contato. Passe o nome exato ou o telefone." };
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          needs_choice: true,
+          message: "Há mais de um contato com esse nome. Pergunte para qual enviar e reenvie usando o telefone.",
+          options: matches.map((m) => ({ name: m.name || "(sem nome)", phone: m.phone })),
+        };
+      }
+      contact = matches[0];
     }
-    if (!contact) {
-      const { data } = await supabase.from("contacts").select("id,name,phone,jid").eq("company_id", companyId).ilike("name", `%${q}%`).limit(1).maybeSingle();
-      contact = data;
-    }
-    if (!contact && digits.length >= 8) contact = { id: null, name: q, phone: digits, jid: null };
-    if (!contact) return { ok: false, message: "Contato não encontrado. Passe o nome exato ou o telefone." };
     const to = contact.jid || contact.phone;
     if (!to) return { ok: false, message: "Contato sem telefone/JID para envio." };
-    sends.push({ to, text: input.text, contactId: contact.id, name: contact.name || contact.phone });
-    return { ok: true, message: `Mensagem enfileirada para ${contact.name || contact.phone}.` };
+    sends.push({ to, text: input.text, asAudio, contactId: contact.id, name: contact.name || contact.phone });
+    return { ok: true, message: `Mensagem${asAudio ? " (áudio)" : ""} enfileirada para ${contact.name || contact.phone}.` };
   }
   return await copilotAction(companyId, name, input);
 }
@@ -884,7 +897,8 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `responde dúvidas, cria tarefas, cadastra/consulta clientes, publica avisos, abre/encerra atendimentos e TEM ACESSO ` +
     `aos arquivos da empresa. Quando pedirem um arquivo/imagem, use search_files e depois send_file. Para criar tarefa, ` +
     `pegue o setor com list_sectors. Você também pode FALAR COM OUTRAS PESSOAS pelo gestor: quando ele disser algo como ` +
-    `"manda X para o fulano", use send_whatsapp (confirme o texto antes).\n\n` +
+    `"manda X para o fulano", use send_whatsapp (confirme o texto antes). Se pedirem ÁUDIO, chame send_whatsapp com as_audio=true. ` +
+    `Se o nome tiver mais de um contato, a ferramenta devolve as opções com telefone — PERGUNTE qual e reenvie com o telefone certo.\n\n` +
     `ENTENDA A CONVERSA ANTES DE AGIR: leia o histórico, guarde na memória o que já foi dito (nomes, datas, valores) e ` +
     `responda de forma CLARA e CONCISA. Não repita saudações nem recomece. ` +
     (testMode
@@ -1262,7 +1276,16 @@ async function startSession(numberId) {
             // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
             for (const s of copilotSends) {
               try {
-                await sendMessage(numberId, s.to, s.text, null, null);
+                let media = null;
+                if (s.asAudio) {
+                  // Gera a nota de voz (ElevenLabs) e manda como áudio.
+                  const key = chatbot?.elevenlabs_key || elevenKey;
+                  const mp3 = key ? await synthesizeSpeech(sanitizeForSpeech(s.text), key, chatbot?.elevenlabs_voice_id) : null;
+                  const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
+                  const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
+                  if (url) media = { type: "audio", url, name: null, mime: "audio/ogg" };
+                }
+                await sendMessage(numberId, s.to, media ? "" : s.text, null, media);
               } catch (e) {
                 console.error("copilot relay send failed:", e);
               }

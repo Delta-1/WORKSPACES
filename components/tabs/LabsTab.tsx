@@ -56,7 +56,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   }, [load]);
 
   function newAgent() {
-    setEditing({ name: "", provider: "gemini", api_key: "", persona: "", instructions: "", greeting: "", knowledge: "", enabled: true, test_mode: true, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
+    setEditing({ name: "", provider: "gemini", api_key: "", persona: "", instructions: "", greeting: "", knowledge: "", enabled: true, test_mode: false, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
   }
 
   async function remove(id: string) {
