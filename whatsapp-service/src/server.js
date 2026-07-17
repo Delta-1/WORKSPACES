@@ -873,7 +873,7 @@ async function copilotLoadFile(companyId, id) {
 
 // Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
 // (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
-async function runCopilotReply(companyId, chatbot, customerText, history = []) {
+async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false) {
   const provider = chatbot?.api_key ? chatbot.provider || "anthropic" : fallbackAnthropicKey ? "anthropic" : null;
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
   if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
@@ -888,6 +888,19 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
+  // Ferramentas liberadas pelas CAPACIDADES do agente (Labs). Vazio/nulo = todas.
+  const caps = Array.isArray(chatbot?.capabilities) ? chatbot.capabilities : null;
+  const CAP_TOOLS = {
+    files: ["search_files", "send_file"],
+    tasks: ["list_sectors", "list_employees", "create_task", "list_tasks", "move_task"],
+    clients: ["lookup_client", "create_client"],
+    announcements: ["post_announcement"],
+    attendance: ["set_attendance"],
+    relay: ["send_whatsapp"],
+  };
+  // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
+  const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
+  const tools = allowedNames ? COPILOT_TOOLS.filter((t) => allowedNames.has(t.name)) : COPILOT_TOOLS;
 
   try {
     if (provider === "gemini") {
@@ -895,7 +908,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
         ...hist.map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] })),
         { role: "user", parts: [{ text: customerText }] },
       ];
-      const functionDeclarations = COPILOT_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema }));
+      const functionDeclarations = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema }));
       let reply = "";
       for (let i = 0; i < 6; i++) {
         const res = await fetch(
@@ -926,7 +939,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
     ];
     let reply = "";
     for (let i = 0; i < 6; i++) {
-      const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 1024, system, tools: COPILOT_TOOLS, messages });
+      const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 1024, system, tools, messages });
       reply = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
       const toolUses = res.content.filter((b) => b.type === "tool_use");
       if (res.stop_reason !== "tool_use" || toolUses.length === 0) break;
@@ -1180,8 +1193,11 @@ async function startSession(numberId) {
           );
           await logMessage(conversation.id, "in", text, null, media, cid);
 
-          // Contato liberado pelo gestor → COPILOTO (IA forte com acesso ao workspace).
+          // Contato liberado pelo gestor → COPILOTO (assessor com acesso total).
           const isCopilot = contact?.copilot_access === true;
+          // Agente do Labs com capacidades → usa ferramentas para TODOS deste número.
+          const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
+          const useTools = isCopilot || agentHasCaps;
           // Modo "label" só etiqueta (não responde); demais modos respondem.
           const botOn = number?.auto_reply && chatbot?.enabled && number?.bot_mode !== "label";
           if (isCopilot || botOn) {
@@ -1230,8 +1246,8 @@ async function startSession(numberId) {
             let copilotFiles = [];
             let copilotSends = [];
             let reply = null;
-            if (customerText && isCopilot) {
-              const out = await runCopilotReply(cid, chatbot, customerText, history);
+            if (customerText && useTools) {
+              const out = await runCopilotReply(cid, chatbot, customerText, history, isCopilot);
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];

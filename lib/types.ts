@@ -221,6 +221,8 @@ export type Chatbot = {
   elevenlabs_key: string | null;
   elevenlabs_voice_id: string | null;
   voice_reply: boolean;
+  capabilities: string[] | null;
+  accent: string | null;
   created_at: string;
   updated_at: string;
 };
