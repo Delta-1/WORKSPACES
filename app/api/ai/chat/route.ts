@@ -97,6 +97,21 @@ const TOOLS: Anthropic.Tool[] = [
     description: "Envia um recado interno para um colega, pelo recipient_id (use list_employees).",
     input_schema: { type: "object", properties: { recipient_id: { type: "string" }, text: { type: "string" } }, required: ["recipient_id", "text"] },
   },
+  {
+    name: "list_tasks",
+    description: "Lista as tarefas recentes (id, título, coluna).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "move_task",
+    description: "Move uma tarefa de coluna. column: a_fazer | em_andamento | concluido.",
+    input_schema: { type: "object", properties: { task_id: { type: "string" }, column: { type: "string" } }, required: ["task_id", "column"] },
+  },
+  {
+    name: "set_attendance",
+    description: "Abre/encerra atendimento de um contato pelo nome. status: espera (aguardando) | atendendo | fechado (finalizar).",
+    input_schema: { type: "object", properties: { contact: { type: "string" }, status: { type: "string" } }, required: ["contact", "status"] },
+  },
 ];
 
 type Ctx = { userId: string | null; companyId: string | null };
@@ -152,6 +167,34 @@ async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: 
       if (!ctx.userId) return { ok: false, message: "Sem usuário para enviar." };
       const { error } = await client.from("internal_messages").insert({ sender_id: ctx.userId, recipient_id: input.recipient_id, text: input.text });
       return error ? { ok: false, message: error.message } : { ok: true, message: "Recado enviado." };
+    }
+    if (name === "list_tasks") {
+      const { data } = await client.from("tasks").select("id,title,column_name").order("created_at", { ascending: false }).limit(20);
+      return data ?? [];
+    }
+    if (name === "move_task") {
+      const cols = ["a_fazer", "em_andamento", "concluido"];
+      if (!cols.includes(input.column)) return { ok: false, message: "Coluna inválida." };
+      const { error } = await client.from("tasks").update({ column_name: input.column }).eq("id", input.task_id);
+      return error ? { ok: false, message: error.message } : { ok: true, message: "Tarefa movida." };
+    }
+    if (name === "set_attendance") {
+      const st = ["espera", "atendendo", "fechado"].includes(input.status) ? input.status : null;
+      if (!st) return { ok: false, message: "Status inválido." };
+      const { data: c } = await client.from("contacts").select("id,name").ilike("name", `%${input.contact}%`).limit(1).maybeSingle();
+      if (!c) return { ok: false, message: "Contato não encontrado." };
+      const { data: conv } = await client
+        .from("conversations")
+        .select("id")
+        .eq("contact_id", c.id)
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      if (!conv) return { ok: false, message: "Sem conversa para este contato." };
+      const patch: Record<string, unknown> = { status: st };
+      if (st === "fechado") patch.closed_at = new Date().toISOString();
+      const { error } = await client.from("conversations").update(patch).eq("id", conv.id);
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Atendimento de ${c.name ?? "contato"} → ${st}.` };
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {

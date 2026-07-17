@@ -729,6 +729,21 @@ const COPILOT_TOOLS = [
     description: "Publica um aviso no mural da empresa.",
     input_schema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title", "body"] },
   },
+  {
+    name: "list_tasks",
+    description: "Lista tarefas recentes (id, título, coluna).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "move_task",
+    description: "Move tarefa de coluna. column: a_fazer | em_andamento | concluido.",
+    input_schema: { type: "object", properties: { task_id: { type: "string" }, column: { type: "string" } }, required: ["task_id", "column"] },
+  },
+  {
+    name: "set_attendance",
+    description: "Abre/encerra atendimento de um contato pelo nome. status: espera | atendendo | fechado.",
+    input_schema: { type: "object", properties: { contact: { type: "string" }, status: { type: "string" } }, required: ["contact", "status"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -761,6 +776,26 @@ async function copilotAction(companyId, name, input) {
     if (name === "post_announcement") {
       const { error } = await supabase.from("announcements").insert({ title: input.title, body: input.body, company_id: companyId, pinned: false });
       return error ? { ok: false, message: error.message } : { ok: true, message: "Aviso publicado no mural." };
+    }
+    if (name === "list_tasks") {
+      const { data } = await supabase.from("tasks").select("id,title,column_name").eq("company_id", companyId).order("created_at", { ascending: false }).limit(20);
+      return data ?? [];
+    }
+    if (name === "move_task") {
+      if (!["a_fazer", "em_andamento", "concluido"].includes(input.column)) return { ok: false, message: "Coluna inválida." };
+      const { error } = await supabase.from("tasks").update({ column_name: input.column }).eq("id", input.task_id).eq("company_id", companyId);
+      return error ? { ok: false, message: error.message } : { ok: true, message: "Tarefa movida." };
+    }
+    if (name === "set_attendance") {
+      if (!["espera", "atendendo", "fechado"].includes(input.status)) return { ok: false, message: "Status inválido." };
+      const { data: c } = await supabase.from("contacts").select("id,name").eq("company_id", companyId).ilike("name", `%${input.contact}%`).limit(1).maybeSingle();
+      if (!c) return { ok: false, message: "Contato não encontrado." };
+      const { data: conv } = await supabase.from("conversations").select("id").eq("contact_id", c.id).order("last_message_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+      if (!conv) return { ok: false, message: "Sem conversa para este contato." };
+      const patch = { status: input.status };
+      if (input.status === "fechado") patch.closed_at = new Date().toISOString();
+      const { error } = await supabase.from("conversations").update(patch).eq("id", conv.id);
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Atendimento → ${input.status}.` };
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
@@ -1338,6 +1373,14 @@ async function sendMessage(numberId, to, text, senderId, media) {
   if (contact) {
     const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
     await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
+    // Um humano respondeu (senderId) → "Sendo atendido" (não mexe se já fechado).
+    if (senderId && conversation.status !== "fechado") {
+      await supabase
+        .from("conversations")
+        .update({ status: "atendendo", assignee_id: senderId })
+        .eq("id", conversation.id)
+        .neq("status", "fechado");
+    }
   }
 }
 

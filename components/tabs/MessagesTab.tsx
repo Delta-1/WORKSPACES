@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Download, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Bot, Check, Download, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -19,6 +19,14 @@ function contactLabel(c?: { name?: string | null; phone?: string | null } | null
   if (p.length >= 8 && p.length <= 13) return "+" + p;
   return "Contato WhatsApp";
 }
+// Etiqueta de status do atendimento (aparece no chat e reflete no WhatsApp).
+function StatusTag({ status, small }: { status?: string | null; small?: boolean }) {
+  const base = `${small ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} rounded-full font-semibold whitespace-nowrap`;
+  if (status === "espera") return <span className={`${base} bg-amber-500/20 text-amber-300 border border-amber-500/40`}>Aguardando atendimento</span>;
+  if (status === "atendendo") return <span className={`${base} bg-emerald-500/20 text-emerald-300 border border-emerald-500/40`}>Sendo atendido</span>;
+  return null;
+}
+
 function fmtTime(iso: string | null) {
   if (!iso) return "";
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -177,6 +185,13 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
     await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id);
     setMessages([]);
+    loadConversations();
+  }
+
+  // Finaliza o atendimento (a etiqueta some).
+  async function finalizeConv() {
+    if (!supabase || !selConv) return;
+    await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", selConv.id);
     loadConversations();
   }
 
@@ -578,7 +593,11 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
-                    <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>
+                    {c.status === "espera" || c.status === "atendendo" ? (
+                      <div className="mt-0.5"><StatusTag status={c.status} small /></div>
+                    ) : (
+                      <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>
+                    )}
                   </div>
                   {(unread[c.id] || 0) > 0 && (
                     <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
@@ -632,10 +651,24 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                 ) : (
                   <Users size={16} className="text-emerald-400 shrink-0" />
                 )}
-                <p className="text-sm font-bold truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
+                  {selConv && (selConv.status === "espera" || selConv.status === "atendendo") && (
+                    <div className="mt-0.5"><StatusTag status={selConv.status} small /></div>
+                  )}
+                </div>
               </button>
               {selConv && (
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {selConv.status !== "fechado" && (
+                    <button
+                      onClick={finalizeConv}
+                      title="Finalizar atendimento (a etiqueta some)"
+                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer bg-white/5 text-gray-300 hover:bg-emerald-600 hover:text-white transition-colors"
+                    >
+                      <Check size={12} /> Finalizar
+                    </button>
+                  )}
                   <button
                     onClick={toggleBot}
                     title={botOn ? "Bot ligado — responde os clientes sozinho. Clique para desligar." : "Bot desligado. Clique para o robô responder automaticamente."}
