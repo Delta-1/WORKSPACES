@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Link2, Monitor, MonitorSmartphone, Server, Trash2 } from "lucide-react";
+import { Copy, FolderCheck, FolderSearch, Link2, Monitor, MonitorSmartphone, Server, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
+import AgentFolderPicker from "@/components/AgentFolderPicker";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
 function isOnline(a: RemoteAgent) {
@@ -22,7 +23,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState(false);
   const [rootInput, setRootInput] = useState(""); // diretório escolhido para o servidor
-  const [sharedInput, setSharedInput] = useState(""); // pastas liberadas (uma por linha)
+  const [sharedList, setSharedList] = useState<string[]>([]); // pastas liberadas (allowlist)
+  const [pickTarget, setPickTarget] = useState<"root" | "shared" | null>(null); // seletor visual aberto
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
@@ -85,7 +87,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     setPwInput("");
     setPwError(false);
     setRootInput(a.server_root ?? "");
-    setSharedInput((a.shared_paths ?? []).join("\n"));
+    setSharedList(a.shared_paths ?? []);
     setPwFor(a);
   }
 
@@ -97,7 +99,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       setPwError(true);
       return;
     }
-    const shared = sharedInput.split("\n").map((s) => s.trim()).filter(Boolean);
+    const shared = sharedList.map((s) => s.trim()).filter(Boolean);
     const patch: {
       is_server: boolean;
       graph_folder_id?: string;
@@ -286,29 +288,41 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
               className={`w-full bg-black/20 border rounded-lg px-3 py-2 text-sm outline-none ${pwError ? "border-red-500" : "border-white/10"}`}
             />
             <div className="space-y-1">
-              <label className="text-[11px] text-gray-400">Diretório do servidor (opcional)</label>
-              <input
-                value={rootInput}
-                onChange={(e) => setRootInput(e.target.value)}
-                placeholder="Ex.: D:\\Empresa  •  vazio = pasta padrão"
-                className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono outline-none"
-              />
-              <p className="text-[10px] text-gray-500">
-                Qualquer pasta que a máquina vai administrar. Arquivos, Cerebro e Download são criadas dentro dela.
-              </p>
+              <label className="text-[11px] text-gray-400">Diretório do servidor</label>
+              <div className="flex items-center gap-2">
+                <input
+                  value={rootInput}
+                  onChange={(e) => setRootInput(e.target.value)}
+                  placeholder="vazio = pasta padrão"
+                  className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono outline-none"
+                />
+                <button onClick={() => setPickTarget("root")} disabled={!isOnline(pwFor)} title="Escolher pasta na máquina" className="flex items-center gap-1 text-[11px] bg-sky-600 hover:bg-sky-500 text-white px-2.5 py-2 rounded-lg cursor-pointer disabled:opacity-40 shrink-0">
+                  <FolderSearch size={13} /> Escolher
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-500">Pasta que a máquina vai administrar. Arquivos, Cerebro e Download entram dentro dela.</p>
             </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-gray-400">Pastas liberadas (uma por linha) — bloqueia o resto</label>
-              <textarea
-                value={sharedInput}
-                onChange={(e) => setSharedInput(e.target.value)}
-                rows={3}
-                placeholder={"Vazio = acesso total\nEx.: C:\\Empresa\\Compartilhado\nD:\\Publico"}
-                className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono outline-none resize-none"
-              />
-              <p className="text-[10px] text-gray-500">
-                Se preencher, o acesso remoto só enxerga/edita estas pastas — o resto da máquina fica bloqueado.
-              </p>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-gray-400">Pastas liberadas — bloqueia o resto</label>
+                <button onClick={() => setPickTarget("shared")} disabled={!isOnline(pwFor)} title="Escolher pasta na máquina" className="flex items-center gap-1 text-[11px] text-sky-300 hover:text-white cursor-pointer disabled:opacity-40">
+                  <FolderSearch size={12} /> + adicionar pasta
+                </button>
+              </div>
+              {sharedList.length === 0 ? (
+                <p className="text-[10px] text-gray-500">Vazio = acesso total à máquina. Adicione pastas para liberar só elas.</p>
+              ) : (
+                <div className="space-y-1">
+                  {sharedList.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg px-2 py-1.5">
+                      <FolderCheck size={13} className="text-emerald-400 shrink-0" />
+                      <span className="flex-1 text-[11px] font-mono truncate" title={p}>{p}</span>
+                      <button onClick={() => setSharedList((l) => l.filter((_, k) => k !== i))} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0"><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!isOnline(pwFor) && <p className="text-[10px] text-amber-400/80">A máquina precisa estar online para escolher pastas visualmente.</p>}
             </div>
             {pwError && <p className="text-[11px] text-red-400">Senha incorreta.</p>}
             <div className="flex items-center justify-between gap-2">
@@ -329,6 +343,19 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       )}
 
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
+
+      {pickTarget && pwFor && (
+        <AgentFolderPicker
+          agentId={pwFor.id}
+          onClose={() => setPickTarget(null)}
+          onPick={(path, isDir) => {
+            if (!isDir) return; // só pastas
+            if (pickTarget === "root") setRootInput(path);
+            else setSharedList((l) => (l.includes(path) ? l : [...l, path]));
+            setPickTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
