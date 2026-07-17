@@ -16,6 +16,7 @@ import {
   Monitor as MonitorIcon,
   MousePointerClick,
   Server,
+  Settings2,
   Upload,
   X,
 } from "lucide-react";
@@ -66,6 +67,28 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const pendingDl = useRef<{ mode: "computer" | "server"; serverId: string | null }>({ mode: "computer", serverId: null });
   const [servers, setServers] = useState<RemoteAgent[]>([]);
   const [dlChoice, setDlChoice] = useState<string | null>(null); // nome do arquivo aguardando escolha de destino
+  // Sensibilidade do mouse (trackpad) e do scroll — personalizável.
+  const [showSettings, setShowSettings] = useState(false);
+  const [mouseSens, setMouseSens] = useState(1);
+  const [scrollSens, setScrollSens] = useState(1);
+  useEffect(() => {
+    try {
+      const m = Number(localStorage.getItem("remote:mouseSens"));
+      const s = Number(localStorage.getItem("remote:scrollSens"));
+      if (m) setMouseSens(m);
+      if (s) setScrollSens(s);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function saveMouseSens(v: number) {
+    setMouseSens(v);
+    try { localStorage.setItem("remote:mouseSens", String(v)); } catch { /* ignore */ }
+  }
+  function saveScrollSens(v: number) {
+    setScrollSens(v);
+    try { localStorage.setItem("remote:scrollSens", String(v)); } catch { /* ignore */ }
+  }
 
   useEffect(() => {
     setIsTouch(typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches);
@@ -317,7 +340,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     const dx = t.clientX - p.x;
     const dy = t.clientY - p.y;
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) p.moved = true;
-    sendInput({ kind: "move-rel", dx, dy });
+    sendInput({ kind: "move-rel", dx: dx * mouseSens, dy: dy * mouseSens });
     p.x = t.clientX;
     p.y = t.clientY;
   }
@@ -337,7 +360,8 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     if (scrubRef.current == null) return;
     const y = e.touches[0].clientY;
     const dy = y - scrubRef.current;
-    if (Math.abs(dy) >= 6) {
+    const threshold = Math.max(2, 8 / scrollSens); // + sensível = passos menores
+    if (Math.abs(dy) >= threshold) {
       sendInput({ kind: "scroll", dy });
       scrubRef.current = y;
     }
@@ -389,6 +413,34 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
           >
             <FolderOpen size={14} /> Arquivos
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowSettings((v) => !v)}
+              title="Sensibilidade do mouse e do scroll"
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${showSettings ? "bg-emerald-600 text-white" : "bg-white/5 hover:bg-white/10"}`}
+            >
+              <Settings2 size={14} />
+            </button>
+            {showSettings && (
+              <div className="absolute right-0 top-full mt-2 w-60 bg-[#111826] border border-white/10 rounded-xl p-3 shadow-2xl z-30 space-y-3">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="text-gray-300">Sensibilidade do mouse</span>
+                    <span className="text-gray-500">{mouseSens.toFixed(1)}x</span>
+                  </div>
+                  <input type="range" min={0.4} max={3} step={0.1} value={mouseSens} onChange={(e) => saveMouseSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="text-gray-300">Sensibilidade do scroll</span>
+                    <span className="text-gray-500">{scrollSens.toFixed(1)}x</span>
+                  </div>
+                  <input type="range" min={0.4} max={4} step={0.1} value={scrollSens} onChange={(e) => saveScrollSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
+                </div>
+                <p className="text-[10px] text-gray-500">Vale para o trackpad do celular e a rolagem. Fica salvo no navegador.</p>
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10 cursor-pointer">
             <X size={18} />
           </button>
@@ -417,7 +469,10 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
             onMouseUp={(e) => !isTouch && sendInput({ kind: "up", button: e.button, ...norm(e) })}
             onContextMenu={(e) => e.preventDefault()}
-            onWheel={(e) => sendInput({ kind: "scroll", dy: e.deltaY })}
+            onWheel={(e) => {
+              const n = Math.max(1, Math.round(scrollSens));
+              for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
+            }}
           />
 
           {progress && (
