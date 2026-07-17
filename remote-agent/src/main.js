@@ -331,6 +331,37 @@ ipcMain.handle("server-init", (_e, root) => {
   return base;
 });
 
+// Escreve/atualiza um item do "cérebro" da IA na pasta Cerebro do servidor.
+// O conteúdo textual da base de conhecimento vira um .txt local, para o
+// servidor virar também o banco de dados do cérebro do robô.
+ipcMain.handle("cerebro-write", (_e, { root, name, content }) => {
+  const dir = path.join(serverBase(root), "Cerebro");
+  fs.mkdirSync(dir, { recursive: true });
+  let safe = String(name || "documento").replace(/[\\/:*?"<>|]/g, "_").trim() || "documento";
+  if (!/\.txt$/i.test(safe)) safe += ".txt";
+  fs.writeFileSync(path.join(dir, safe), String(content || ""), "utf8");
+  return { path: path.join(dir, safe) };
+});
+
+// Remove da pasta Cerebro os .txt que não pertencem mais ao cérebro (limpeza).
+ipcMain.handle("cerebro-prune", (_e, { root, keep }) => {
+  const dir = path.join(serverBase(root), "Cerebro");
+  if (!fs.existsSync(dir)) return { removed: 0 };
+  const keepSet = new Set((keep || []).map((k) => String(k)));
+  let removed = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && /\.txt$/i.test(entry.name) && !keepSet.has(entry.name)) {
+      try {
+        fs.unlinkSync(path.join(dir, entry.name));
+        removed++;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return { removed };
+});
+
 // Grava um arquivo recebido (transferência do operador) na pasta Download do servidor.
 ipcMain.handle("server-download-write", (_e, { root, name, base64 }) => {
   const base = serverBase(root);

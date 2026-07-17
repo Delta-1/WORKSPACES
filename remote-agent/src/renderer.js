@@ -222,6 +222,34 @@ async function runTransfers() {
   }
 }
 
+// Espelha o "cérebro" da IA (base de conhecimento da empresa) na pasta Cerebro
+// do servidor, para o servidor virar também o banco de dados do cérebro do robô.
+let brainBusy = false;
+async function runBrainSync() {
+  if (brainBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  brainBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_brain_files", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+    });
+    const kept = [];
+    for (const f of data || []) {
+      const body = f.text_content && f.text_content.trim()
+        ? f.text_content
+        : `(Documento "${f.name}" faz parte do cérebro do robô, mas não tem texto extraído.)`;
+      const res = await ipcRenderer.invoke("cerebro-write", { root: serverRoot, name: f.name, content: body });
+      if (res?.path) kept.push(res.path.split(/[\\/]/).pop());
+    }
+    // Remove do Cerebro o que não faz mais parte do cérebro.
+    await ipcRenderer.invoke("cerebro-prune", { root: serverRoot, keep: kept });
+  } catch {
+    /* ignore */
+  } finally {
+    brainBusy = false;
+  }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
@@ -238,6 +266,8 @@ async function startAgent() {
   setInterval(uploadThumb, 6000); // prévia ao vivo (~a cada 6s)
   runAutomations();
   setInterval(runAutomations, 60000); // rotinas de automação (a cada 1 min)
+  runBrainSync();
+  setInterval(runBrainSync, 180000); // espelha o cérebro da IA (a cada 3 min)
   join();
 }
 
