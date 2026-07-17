@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Bot, Image as ImageIcon, Mic, MicOff, Send, User } from "lucide-react";
+import { Bot, Image as ImageIcon, Mic, MicOff, Paperclip, Send, User } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -12,10 +12,12 @@ async function authHeaders(): Promise<Record<string, string>> {
   return session ? { Authorization: `Bearer ${session.access_token}` } : {};
 }
 
+type SentFile = { name: string; url: string; mime: string | null };
 type Turn = {
   role: "user" | "assistant";
   text: string;
   imagePreview?: string;
+  files?: SentFile[];
 };
 
 type SpeechRecognitionLike = {
@@ -33,7 +35,7 @@ export default function ChatTab() {
   const [turns, setTurns] = useState<Turn[]>([
     {
       role: "assistant",
-      text: "Olá! Sou o copiloto de IA interno. Posso ajudar com respostas para clientes, dúvidas de rotina, ou analisar uma imagem que você enviar. Você também pode gravar um áudio.",
+      text: "Olá! Sou o copiloto de IA interno. Posso ajudar com respostas para clientes, dúvidas de rotina, analisar imagens e também BUSCAR e ENVIAR arquivos da empresa aqui no chat — é só me dizer o nome do arquivo que eu procuro e te mando. Você também pode gravar um áudio.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -198,11 +200,13 @@ export default function ChatTab() {
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ history: historyForApi, system: training ? botSystemPrompt() : undefined }),
+        // No modo treino não usa ferramentas (responde como o bot). Fora dele, o
+        // copiloto pode buscar e ENTREGAR arquivos do workspace.
+        body: JSON.stringify({ history: historyForApi, system: training ? botSystemPrompt() : undefined, tools: !training }),
       });
       const data = await res.json();
       if (data.live !== undefined) setLive(data.live);
-      setTurns((prev) => [...prev, { role: "assistant", text: data.reply || data.error || "(sem resposta)" }]);
+      setTurns((prev) => [...prev, { role: "assistant", text: data.reply || data.error || "(sem resposta)", files: data.files as SentFile[] | undefined }]);
     } catch {
       setTurns((prev) => [...prev, { role: "assistant", text: "Erro ao falar com a IA." }]);
     } finally {
@@ -252,6 +256,31 @@ export default function ChatTab() {
                 <img src={t.imagePreview} alt="anexo" className="rounded-lg mb-2 max-h-40 object-cover" />
               )}
               {t.text}
+              {t.files && t.files.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {t.files.map((f, k) =>
+                    (f.mime ?? "").startsWith("image/") ? (
+                      <a key={k} href={f.url} target="_blank" rel="noreferrer" className="block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={f.url} alt={f.name} className="rounded-lg max-h-52 object-contain border border-white/10" />
+                        <span className="text-[11px] text-emerald-300 underline">{f.name}</span>
+                      </a>
+                    ) : (
+                      <a
+                        key={k}
+                        href={f.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        download={f.name}
+                        className="flex items-center gap-2 text-xs bg-black/20 border border-white/10 rounded-lg px-3 py-2 hover:bg-white/5"
+                      >
+                        <Paperclip size={13} className="text-emerald-400 shrink-0" />
+                        <span className="truncate">{f.name}</span>
+                      </a>
+                    )
+                  )}
+                </div>
+              )}
             </div>
             {t.role === "user" && (
               <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center shrink-0">
