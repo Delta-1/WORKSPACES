@@ -55,6 +55,10 @@ function AgentInfoPanel({ agent }: { agent: RemoteAgent }) {
             </div>
           )}
           {s.uptimeH != null && <p className="text-gray-500">Ligado há {s.uptimeH}h</p>}
+          <p className={`flex items-center gap-1.5 ${s.elevated ? "text-emerald-400" : "text-amber-400"}`}>
+            <Cpu size={11} className={s.elevated ? "text-emerald-400" : "text-amber-400"} />
+            {s.elevated ? "Acesso completo (admin)" : "Acesso limitado (sem admin)"}
+          </p>
         </div>
       ) : (
         <p className="text-[11px] text-gray-500">

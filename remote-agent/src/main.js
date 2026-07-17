@@ -8,6 +8,20 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
+const { execSync } = require("child_process");
+
+// Acesso completo: o agente precisa rodar COMO ADMINISTRADOR para controlar
+// janelas elevadas (Gerenciador de Tarefas, instaladores) e as caixas de UAC.
+function isElevated() {
+  if (process.platform !== "win32") return true; // Linux/mac: sem UIPI
+  try {
+    execSync("net session", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 
 // Gera um código de suporte estável, derivado desta máquina (hostname + MAC).
 // Mesmo PC => sempre o mesmo código de 9 dígitos.
@@ -172,6 +186,7 @@ ipcMain.handle("get-specs", () => {
       memFreeGB: Math.round((os.freemem() / 1024 ** 3) * 10) / 10,
       uptimeH: Math.round((os.uptime() / 3600) * 10) / 10,
       networks: nets,
+      elevated: isElevated(), // acesso completo (admin) disponível?
       reportedAt: new Date().toISOString(),
     };
   } catch {

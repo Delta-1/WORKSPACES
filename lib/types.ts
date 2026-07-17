@@ -83,6 +83,7 @@ export type AgentSpecs = {
   memFreeGB?: number;
   uptimeH?: number;
   networks?: { name: string; ip: string; mac: string }[];
+  elevated?: boolean;
   reportedAt?: string;
 };
 
