@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Hash, MessageSquare, Mic, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Bot, Download, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -44,6 +44,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
+  const [chatMenu, setChatMenu] = useState(false);
   // Não-lidas por conversa (bolinha vermelha estilo Discord), salvo por navegador.
   const [unread, setUnread] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -148,6 +149,37 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     setMessages(data ?? []);
     scrollBottom();
   }
+  // Salva a conversa aberta como arquivo de texto (backup/registro).
+  function saveConversation() {
+    setChatMenu(false);
+    if (!selConv) return;
+    const who = contactLabel(selConv.contacts);
+    const lines = messages.map((m) => {
+      const at = new Date(m.at).toLocaleString("pt-BR");
+      const from = m.direction === "in" ? who : "Nós";
+      const body = m.text || (m.media_type ? `[${m.media_type}] ${m.media_name || ""}`.trim() : "");
+      return `[${at}] ${from}: ${body}`;
+    });
+    const header = `Conversa com ${who}${selConv.contacts?.phone ? ` (${selConv.contacts.phone})` : ""}\nProtocolo #${selConv.protocol}\nExportado em ${new Date().toLocaleString("pt-BR")}\n${"-".repeat(40)}\n`;
+    const blob = new Blob([header + lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `conversa-${who.replace(/[^\w]+/g, "_")}-${selConv.protocol}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // Limpa (apaga) as mensagens da conversa aberta. Não apaga o contato.
+  async function clearConversation() {
+    setChatMenu(false);
+    if (!supabase || !selConv) return;
+    if (!confirm(`Limpar todas as mensagens desta conversa com ${contactLabel(selConv.contacts)}? Isso não pode ser desfeito.`)) return;
+    await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
+    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id);
+    setMessages([]);
+    loadConversations();
+  }
+
   async function openColleague(id: string) {
     setSelConvId(null);
     selConvRef.current = null;
@@ -627,6 +659,28 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                   >
                     <Plug size={15} />
                   </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setChatMenu((v) => !v)}
+                      title="Opções da conversa"
+                      className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
+                    >
+                      <MoreVertical size={15} />
+                    </button>
+                    {chatMenu && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setChatMenu(false)} />
+                        <div className="absolute right-0 top-9 z-50 w-44 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+                          <button onClick={saveConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            <Download size={13} className="text-emerald-400" /> Salvar conversa
+                          </button>
+                          <button onClick={clearConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-red-300">
+                            <Trash2 size={13} /> Limpar conversa
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
