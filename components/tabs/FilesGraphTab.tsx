@@ -73,6 +73,8 @@ function demoNodes(): PositionedNode[] {
     bot_share_status: "none",
     bot_share_requested_by: null,
     text_content: null,
+    storage_path: null,
+    mime: null,
     pos_x: CENTER_X + (Math.random() - 0.5) * 200,
     pos_y: CENTER_Y + (Math.random() - 0.5) * 200,
     created_at: new Date().toISOString(),
@@ -511,15 +513,44 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     }
   }
 
-  function download(node: PositionedNode) {
-    if (!node.data_url) {
-      alert("Este arquivo não possui conteúdo para download (dado de demonstração).");
+  // Abre o arquivo para VISUALIZAR (nova aba) — imagens, PDFs, etc.
+  async function openFile(node: PositionedNode) {
+    if (node.storage_path && supabase) {
+      const { data, error } = await supabase.storage.from("company-files").createSignedUrl(node.storage_path, 300);
+      if (error || !data?.signedUrl) {
+        alert("Não foi possível abrir este arquivo agora. Tente novamente.");
+        return;
+      }
+      window.open(data.signedUrl, "_blank");
       return;
     }
-    const a = document.createElement("a");
-    a.href = node.data_url;
-    a.download = node.name;
-    a.click();
+    if (node.data_url) window.open(node.data_url, "_blank");
+  }
+
+  async function download(node: PositionedNode) {
+    // Arquivo real no bucket persistente (automação/servidor).
+    if (node.storage_path && supabase) {
+      const { data, error } = await supabase.storage.from("company-files").createSignedUrl(node.storage_path, 300, { download: node.name });
+      if (error || !data?.signedUrl) {
+        alert("Não foi possível abrir este arquivo agora. Tente novamente.");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = data.signedUrl;
+      a.download = node.name;
+      a.target = "_blank";
+      a.click();
+      return;
+    }
+    // Arquivo enviado direto pelo site (base64 embutido).
+    if (node.data_url) {
+      const a = document.createElement("a");
+      a.href = node.data_url;
+      a.download = node.name;
+      a.click();
+      return;
+    }
+    alert("Este arquivo ainda não tem conteúdo para baixar.");
   }
 
   function collectSubtree(rootId: string): string[] {
@@ -847,6 +878,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
+              {selectedNode.type === "file" && (selectedNode.storage_path || selectedNode.data_url) && (
+                <button
+                  onClick={() => openFile(selectedNode)}
+                  className="flex items-center gap-1.5 text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                >
+                  <Eye size={12} /> Abrir
+                </button>
+              )}
               {selectedNode.type === "file" && (
                 <button
                   onClick={() => download(selectedNode)}

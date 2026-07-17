@@ -4,6 +4,24 @@
 // 3) Fica online (heartbeat) e aguardando o operador conectar via WebRTC.
 const { ipcRenderer } = require("electron");
 const { createClient } = require("@supabase/supabase-js");
+const zlib = require("zlib");
+
+// Tipo MIME básico a partir da extensão (para o site abrir/baixar corretamente).
+function mimeFor(name) {
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  const map = {
+    pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", txt: "text/plain",
+    csv: "text/csv", json: "application/json", doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    zip: "application/zip", mp4: "video/mp4", mp3: "audio/mpeg", wav: "audio/wav",
+  };
+  return map[ext] || "application/octet-stream";
+}
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 const statusEl = document.getElementById("status");
@@ -127,20 +145,32 @@ async function runDeliveries() {
     });
     for (const d of data || []) {
       try {
-        let savedNames = [];
-        // Pasta de destino: a escolhida na rotina, OU WorkspaceServer/Arquivos/<rotina>.
         const destDir = d.dest_path || null;
+        const routineSafe = (d.routine_name || "Automacao").replace(/[\\/:*?"<>|]/g, "_");
+        // Arquivos reais que vão para o grafo (nome + caminho persistente + mime).
+        let graphFiles = [];
         if (String(d.storage_path).endsWith(".wsz")) {
-          // Novo formato: baixa UM arquivo comprimido e descompacta (rápido).
+          // Novo formato: baixa UM .wsz comprimido, grava local e guarda no grafo.
           const { data: blob, error } = await supabase.storage.from("automation").download(d.storage_path);
           if (error || !blob) throw error || new Error("download vazio");
           const buf = Buffer.from(await blob.arrayBuffer());
-          const res = await ipcRenderer.invoke("server-extract-bundle", {
+          // 1) grava no disco do servidor (banco de arquivos local).
+          await ipcRenderer.invoke("server-extract-bundle", {
             root: serverRoot,
-            dir: destDir || `${serverRoot}/Arquivos/${(d.routine_name || "Automacao").replace(/[\\/:*?"<>|]/g, "_")}`,
+            dir: destDir || `${serverRoot}/Arquivos/${routineSafe}`,
             base64: buf.toString("base64"),
           });
-          savedNames = res?.names || [];
+          // 2) descompacta e sobe cada arquivo REAL ao bucket persistente
+          //    company-files, para o site abrir/baixar e a IA acessar.
+          const payload = JSON.parse(zlib.gunzipSync(buf).toString());
+          for (const f of payload.files || []) {
+            const rel = String(f.rel || "arquivo");
+            const bytes = Buffer.from(f.base64, "base64");
+            const objectPath = `${cfg.agentId}/${routineSafe}/${rel}`.replace(/[^\w./-]/g, "_");
+            const mime = mimeFor(rel);
+            const { error: upErr } = await supabase.storage.from("company-files").upload(objectPath, bytes, { contentType: mime, upsert: true });
+            if (!upErr) graphFiles.push({ name: rel.split("/").pop(), storage_path: objectPath, mime });
+          }
         } else {
           // Formato antigo (compatibilidade): prefixo com vários objetos.
           const prefix = d.storage_path;
@@ -154,16 +184,26 @@ async function runDeliveries() {
             await ipcRenderer.invoke("server-write", {
               root: serverRoot,
               dir: destDir,
-              rel: destDir ? fileName : `${d.routine_name || "Automacao"}/${fileName}`,
+              rel: destDir ? fileName : `${routineSafe}/${fileName}`,
               base64: buf.toString("base64"),
             });
-            savedNames.push(fileName);
+            const objectPath = `${cfg.agentId}/${routineSafe}/${fileName}`.replace(/[^\w./-]/g, "_");
+            const { error: upErr } = await supabase.storage.from("company-files").upload(objectPath, buf, { contentType: mimeFor(fileName), upsert: true });
+            if (!upErr) graphFiles.push({ name: fileName, storage_path: objectPath, mime: mimeFor(fileName) });
           }
         }
-        // NÃO apaga aqui: a limpeza é central (agent_mark_delivered remove do
-        // bucket só quando TODOS os alvos receberam), evitando corrida.
-        // Registra os arquivos no grafo: pasta escolhida na rotina OU a pasta do servidor.
-        await registerInGraph(d.graph_folder_id || serverGraphFolder, savedNames);
+        // NÃO apaga o automation aqui: a limpeza é central (agent_mark_delivered
+        // remove do bucket só quando TODOS os alvos receberam), evitando corrida.
+        // Registra os arquivos no grafo JÁ com o caminho real (abre/baixa + IA).
+        const gf = d.graph_folder_id || serverGraphFolder;
+        if (gf && graphFiles.length) {
+          await supabase.rpc("agent_register_files_v2", {
+            p_agent_id: cfg.agentId,
+            p_access_code: cfg.accessCode,
+            p_folder_id: gf,
+            p_files: graphFiles,
+          });
+        }
         await supabase.rpc("agent_mark_delivered", {
           p_agent_id: cfg.agentId,
           p_access_code: cfg.accessCode,
