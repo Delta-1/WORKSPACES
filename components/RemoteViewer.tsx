@@ -323,6 +323,18 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function combo(name: string) {
     sendInput({ kind: "combo", name });
   }
+  // Orb "aponta": circula o ponteiro na posição atual para destacar a opção.
+  function circlePointer() {
+    const steps = 24;
+    const r = 20;
+    let i = 0;
+    const id = setInterval(() => {
+      const a1 = (i / steps) * 2 * Math.PI;
+      const a2 = ((i + 1) / steps) * 2 * Math.PI;
+      sendInput({ kind: "move-rel", dx: (Math.cos(a2) - Math.cos(a1)) * r, dy: (Math.sin(a2) - Math.sin(a1)) * r });
+      if (++i >= steps * 2) clearInterval(id);
+    }, 18);
+  }
 
   function norm(e: React.MouseEvent) {
     const v = videoRef.current!;
@@ -697,7 +709,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
         </div>
       )}
 
-      {orbOpen && <Orb agentName={agent.name} onClose={() => setOrbOpen(false)} />}
+      {orbOpen && <Orb agentName={agent.name} onPoint={circlePointer} onClose={() => setOrbOpen(false)} />}
     </div>
   );
 }

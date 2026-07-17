@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Mic, Send, Volume2, X } from "lucide-react";
+import { Bot, Crosshair, Mic, Send, Volume2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -20,7 +20,7 @@ type Rec = {
 
 // Assistente estilo JARVIS que aparece durante o acesso remoto. Mini chat +
 // modo voz (bolinha flutuante que escuta e responde falando).
-export default function Orb({ agentName, onClose }: { agentName: string; onClose: () => void }) {
+export default function Orb({ agentName, onPoint, onClose }: { agentName: string; onPoint?: () => void; onClose: () => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([
     { role: "assistant", text: "Oi, eu sou o Orb. Posso te ajudar durante o acesso. Toque no microfone pra falar comigo por voz." },
   ]);
@@ -34,8 +34,10 @@ export default function Orb({ agentName, onClose }: { agentName: string; onClose
 
   const system =
     `Você é o Orb, um assistente de voz estilo JARVIS que ajuda um técnico durante o acesso remoto à máquina "${agentName}". ` +
-    `Seja BREVE e direto — respostas curtas, boas para ouvir. Você tem acesso aos arquivos e ferramentas da empresa. ` +
-    `Quando o técnico disser que vai finalizar/encerrar, apenas se despeça em uma frase.`;
+    `Seja BREVE e direto — respostas curtas, boas para ouvir. ENTENDA a conversa e guarde na memória o que já foi dito. ` +
+    `Você NÃO tira prints da tela. Você ORIENTA passo a passo, perguntando. Quando quiser indicar onde clicar, diga ` +
+    `"vou circular o ponteiro" e PEÇA PERMISSÃO ("posso continuar?") antes de avançar para o próximo passo. ` +
+    `Você tem acesso aos arquivos e ferramentas da empresa. Ao ouvir que o técnico vai finalizar/encerrar, despeça-se em uma frase.`;
 
   function speak(text: string) {
     try {
@@ -149,6 +151,11 @@ export default function Orb({ agentName, onClose }: { agentName: string; onClose
           Orb {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
         </span>
         <div className="flex items-center gap-1">
+          {onPoint && (
+            <button onClick={onPoint} title="Apontar: circula o ponteiro na opção" className="p-1.5 rounded-lg text-gray-300 hover:bg-white/10 cursor-pointer">
+              <Crosshair size={14} />
+            </button>
+          )}
           <button onClick={voiceOn ? stopVoice : startVoice} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
             <Mic size={14} />
           </button>

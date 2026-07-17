@@ -346,9 +346,9 @@ export async function POST(request: Request) {
     typeof body.system === "string" && body.system.trim()
       ? body.system
       : `Você é o copiloto interno de IA da plataforma "${company.name}". Ajuda os funcionários com dúvidas de rotina, sugestões de resposta para clientes e suporte.\n\n` +
-        `Você TEM ACESSO aos arquivos da empresa. Quando pedirem um arquivo, imagem ou documento, use a ferramenta search_files para procurar pelo nome. ` +
-        `Se houver várias opções ou o nome estiver vago, PERGUNTE para descobrir qual é o certo antes de enviar. ` +
-        `Quando tiver certeza, use send_file para entregar o arquivo no chat. Seja direto e prestativo.`;
+        `ENTENDA A CONVERSA ANTES DE RESPONDER: leia todo o histórico, guarde na memória o que já foi dito (nomes, datas, números) e responda de forma CLARA e CONCISA, sem recomeçar nem repetir saudações.\n\n` +
+        `Você TEM ACESSO aos arquivos e ações da empresa. Para arquivos, use search_files; se o nome estiver vago ou houver várias opções, PERGUNTE qual é o certo antes de enviar; quando tiver certeza, use send_file. ` +
+        `Para criar tarefa, cadastrar cliente, publicar aviso, etc., use as ferramentas certas.`;
 
   // Contexto do usuário (para agir no workspace: criar tarefa, recado, etc.).
   let ctx: Ctx = { userId: null, companyId: null };

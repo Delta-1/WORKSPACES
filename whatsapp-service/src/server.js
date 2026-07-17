@@ -878,13 +878,18 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
   if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
   const name = await companyName();
+  const testMode = chatbot?.test_mode !== false;
   const system =
     `Você é o COPILOTO/assessor pessoal do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
     `responde dúvidas, cria tarefas, cadastra/consulta clientes, publica avisos, abre/encerra atendimentos e TEM ACESSO ` +
     `aos arquivos da empresa. Quando pedirem um arquivo/imagem, use search_files e depois send_file. Para criar tarefa, ` +
     `pegue o setor com list_sectors. Você também pode FALAR COM OUTRAS PESSOAS pelo gestor: quando ele disser algo como ` +
-    `"manda X para o fulano", use send_whatsapp para enviar a mensagem ao contato indicado (confirme o texto antes). ` +
-    `Aprenda o jeito da pessoa e seja cada vez mais útil.`;
+    `"manda X para o fulano", use send_whatsapp (confirme o texto antes).\n\n` +
+    `ENTENDA A CONVERSA ANTES DE AGIR: leia o histórico, guarde na memória o que já foi dito (nomes, datas, valores) e ` +
+    `responda de forma CLARA e CONCISA. Não repita saudações nem recomece. ` +
+    (testMode
+      ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
+      : `Aja de forma autônoma, perguntando só o essencial.`);
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];

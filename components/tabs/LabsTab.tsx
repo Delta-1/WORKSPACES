@@ -56,7 +56,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   }, [load]);
 
   function newAgent() {
-    setEditing({ name: "", provider: "gemini", api_key: "", persona: "", instructions: "", greeting: "", knowledge: "", enabled: true, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
+    setEditing({ name: "", provider: "gemini", api_key: "", persona: "", instructions: "", greeting: "", knowledge: "", enabled: true, test_mode: true, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
   }
 
   async function remove(id: string) {
@@ -213,6 +213,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       capabilities: caps,
       accent: f.accent || null,
       apis: apis.filter((a) => a.name && a.url),
+      test_mode: f.test_mode ?? true,
       enabled: f.enabled ?? true,
       company_id: profile?.company_id ?? null,
     };
@@ -305,6 +306,13 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
 
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={f.enabled ?? true} onChange={(e) => set({ enabled: e.target.checked })} className="accent-indigo-500" /> Agente ativo
+        </label>
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2">
+          <input type="checkbox" checked={f.test_mode ?? true} onChange={(e) => set({ test_mode: e.target.checked })} className="accent-amber-500 mt-0.5" />
+          <span>
+            <b className="text-amber-300">Modo teste</b> — o agente <b>pede confirmação</b> antes de qualquer ação e checa se os dados estão certos.
+            <br /><span className="text-gray-500">Desligue quando confiar nele: passa a agir sozinho, perguntando só o essencial.</span>
+          </span>
         </label>
 
         <div className="flex justify-end gap-2 pt-1">
