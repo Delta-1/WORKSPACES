@@ -518,13 +518,16 @@ ipcMain.on("input", async (_e, ev) => {
         await keyboard.releaseKey(Key.LeftControl, Key.V);
       }
     } else if (ev.kind === "down") {
-      await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
+      // Com coordenadas = clique absoluto; sem = segura no ponto atual (arrasto do trackpad).
+      if (ev.x != null && ev.y != null) await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
       await mouse.pressButton(ev.button === 2 ? Button.RIGHT : Button.LEFT);
     } else if (ev.kind === "up") {
       await mouse.releaseButton(ev.button === 2 ? Button.RIGHT : Button.LEFT);
     } else if (ev.kind === "scroll") {
-      if (ev.dy < 0) await mouse.scrollUp(3);
-      else await mouse.scrollDown(3);
+      // amount = quantos "cliques" de scroll (mais sensível). Default 3.
+      const ticks = Math.max(1, Math.min(40, Math.round(Math.abs(ev.amount || 3))));
+      if (ev.dy < 0) await mouse.scrollUp(ticks);
+      else await mouse.scrollDown(ticks);
     } else if (ev.kind === "key") {
       const k = mapKey(Key, ev.key);
       if (k != null) {

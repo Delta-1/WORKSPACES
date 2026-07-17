@@ -329,9 +329,18 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   }
 
   // --- Trackpad do celular (movimento relativo do cursor) ---
+  // Toque duplo + segurar = segura o botão (arrastar para selecionar área).
+  const lastTapRef = useRef(0);
+  const draggingRef = useRef(false);
   function padStart(e: React.TouchEvent) {
     const t = e.touches[0];
-    padRef.current = { x: t.clientX, y: t.clientY, moved: false, t: Date.now() };
+    const now = Date.now();
+    // Se o toque anterior foi um tap rápido há pouco → este é "tap+segurar" = arrasto.
+    if (now - lastTapRef.current < 350) {
+      draggingRef.current = true;
+      sendInput({ kind: "down", button: 0 }); // segura no ponto atual do cursor
+    }
+    padRef.current = { x: t.clientX, y: t.clientY, moved: false, t: now };
   }
   function padMove(e: React.TouchEvent) {
     const p = padRef.current;
@@ -346,8 +355,18 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   }
   function padEnd() {
     const p = padRef.current;
-    // Toque curto sem arrastar = clique esquerdo.
-    if (p && !p.moved && Date.now() - p.t < 300) sendInput({ kind: "click", button: 0 });
+    if (draggingRef.current) {
+      // Fim do arrasto: solta o botão (conclui a seleção).
+      sendInput({ kind: "up", button: 0 });
+      draggingRef.current = false;
+      lastTapRef.current = 0;
+    } else if (p && !p.moved && Date.now() - p.t < 300) {
+      // Toque curto sem arrastar = clique; guarda o horário p/ detectar toque duplo.
+      sendInput({ kind: "click", button: 0 });
+      lastTapRef.current = Date.now();
+    } else {
+      lastTapRef.current = 0;
+    }
     padRef.current = null;
   }
 
@@ -360,9 +379,11 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     if (scrubRef.current == null) return;
     const y = e.touches[0].clientY;
     const dy = y - scrubRef.current;
-    const threshold = Math.max(2, 8 / scrollSens); // + sensível = passos menores
+    const threshold = Math.max(1, 6 / scrollSens); // + sensível = passos menores
     if (Math.abs(dy) >= threshold) {
-      sendInput({ kind: "scroll", dy });
+      // amount = nº de cliques de scroll, proporcional ao movimento e à sensibilidade.
+      const amount = Math.max(1, Math.round((Math.abs(dy) / 6) * scrollSens * 3));
+      sendInput({ kind: "scroll", dy, amount });
       scrubRef.current = y;
     }
   }
@@ -435,7 +456,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
                     <span className="text-gray-300">Sensibilidade do scroll</span>
                     <span className="text-gray-500">{scrollSens.toFixed(1)}x</span>
                   </div>
-                  <input type="range" min={0.4} max={4} step={0.1} value={scrollSens} onChange={(e) => saveScrollSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
+                  <input type="range" min={0.4} max={10} step={0.1} value={scrollSens} onChange={(e) => saveScrollSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
                 </div>
                 <p className="text-[10px] text-gray-500">Vale para o trackpad do celular e a rolagem. Fica salvo no navegador.</p>
               </div>
