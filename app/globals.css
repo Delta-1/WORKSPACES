@@ -136,3 +136,10 @@ html.light .liquid-glass {
 .automation-indeterminate {
   animation: automation-indeterminate 1.1s ease-in-out infinite;
 }
+
+/* Cor de ícones personalizável (só quando o gestor escolhe outra cor) */
+.custom-icons .text-emerald-400,
+.custom-icons .text-emerald-500,
+.custom-icons .text-emerald-300 {
+  color: var(--icon) !important;
+}

@@ -7,10 +7,12 @@ export type CompanyInfo = {
   tvLogoCorner: CompanySettingsRow["tv_logo_corner"];
   googleDriveEnabled: boolean;
   themeColor: string;
+  iconColor: string;
   logoSize: number;
 };
 
 const DEFAULT_THEME = "#10b981";
+const DEFAULT_ICON = "#10b981";
 const DEFAULT_LOGO_SIZE = 36;
 
 export async function fetchCompany(): Promise<CompanyInfo> {
@@ -23,6 +25,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         tvLogoCorner: data.tv_logo_corner,
         googleDriveEnabled: data.google_drive_enabled,
         themeColor: data.theme_color ?? DEFAULT_THEME,
+        iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
       };
     }
@@ -35,6 +38,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
     tvLogoCorner: "top-left",
     googleDriveEnabled: false,
     themeColor: DEFAULT_THEME,
+    iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
   };
 }
@@ -49,6 +53,7 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.tvLogoCorner !== undefined ? { tv_logo_corner: update.tvLogoCorner } : {}),
         ...(update.googleDriveEnabled !== undefined ? { google_drive_enabled: update.googleDriveEnabled } : {}),
         ...(update.themeColor !== undefined ? { theme_color: update.themeColor } : {}),
+        ...(update.iconColor !== undefined ? { icon_color: update.iconColor } : {}),
         ...(update.logoSize !== undefined ? { logo_size: update.logoSize } : {}),
         updated_at: new Date().toISOString(),
       })
@@ -62,6 +67,7 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         tvLogoCorner: data.tv_logo_corner,
         googleDriveEnabled: data.google_drive_enabled,
         themeColor: data.theme_color ?? DEFAULT_THEME,
+        iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
       };
     }
@@ -78,6 +84,7 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
     tvLogoCorner: "top-left",
     googleDriveEnabled: false,
     themeColor: DEFAULT_THEME,
+    iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
   };
 }

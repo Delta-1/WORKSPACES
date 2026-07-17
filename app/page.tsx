@@ -80,6 +80,7 @@ export default function Home() {
   const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editApps, setEditApps] = useState(false); // modo edição (lápis) do menu de apps
   const [quickIds, setQuickIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [company, setCompany] = useState<CompanyInfo>({
@@ -88,6 +89,7 @@ export default function Home() {
     tvLogoCorner: "top-left",
     googleDriveEnabled: false,
     themeColor: "#10b981",
+    iconColor: "#10b981",
     logoSize: 36,
   });
 
@@ -119,6 +121,15 @@ export default function Home() {
     }
     meta.setAttribute("content", color);
   }, [company.themeColor]);
+
+  // Cor dos ícones/realces (independente da cor tema). Só sobrescreve o verde
+  // padrão quando o gestor escolhe outra cor — assim o visual padrão não muda.
+  useEffect(() => {
+    const root = document.documentElement;
+    const icon = company.iconColor || company.themeColor || "#10b981";
+    root.style.setProperty("--icon", icon);
+    root.classList.toggle("custom-icons", icon.toLowerCase() !== "#10b981");
+  }, [company.iconColor, company.themeColor]);
 
   async function loadCompany(companyId: string | null) {
     if (!supabase || !companyId) {
@@ -228,7 +239,7 @@ export default function Home() {
   async function handleUpdateCompany(update: Partial<CompanyInfo>) {
     setCompany((prev) => ({ ...prev, ...update })); // feedback imediato
     const next = await persistCompany(update);
-    setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, logoSize: update.logoSize ?? next.logoSize }));
+    setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, iconColor: update.iconColor ?? next.iconColor, logoSize: update.logoSize ?? next.logoSize }));
   }
 
   const visibleApps = APPS.filter((a) => a.roles.includes(role));
@@ -262,6 +273,16 @@ export default function Home() {
   function unpinApp(id: string) {
     const base = validQuick.length ? validQuick : dockApps.map((a) => a.id);
     saveQuick(base.filter((x) => x !== id));
+  }
+  // Reordena a barra de atalho: move `id` para a posição de `beforeId`.
+  function reorderQuick(id: string, beforeId: string) {
+    const base = (validQuick.length ? validQuick : dockApps.map((a) => a.id)).slice();
+    const from = base.indexOf(id);
+    if (from === -1) return;
+    base.splice(from, 1);
+    const to = base.indexOf(beforeId);
+    base.splice(to === -1 ? base.length : to, 0, id);
+    saveQuick(base);
   }
 
   if (checkingSession) {
@@ -359,6 +380,7 @@ export default function Home() {
             tvLogoCorner={company.tvLogoCorner}
             googleDriveEnabled={company.googleDriveEnabled}
             themeColor={company.themeColor}
+            iconColor={company.iconColor}
             logoSize={company.logoSize}
             onUpdateCompany={handleUpdateCompany}
           />
@@ -372,15 +394,19 @@ export default function Home() {
         apps={dockApps}
         active={tab}
         onSelect={setTab}
-        onOpenDrawer={() => setDrawerOpen(true)}
-        pinMode={drawerOpen}
+        onOpenDrawer={() => setDrawerOpen((v) => { const next = !v; if (!next) setEditApps(false); return next; })}
+        drawerOpen={drawerOpen}
+        pinMode={drawerOpen && editApps}
         onPin={pinApp}
         onUnpin={unpinApp}
+        onReorder={reorderQuick}
       />
       <AppDrawer
         apps={visibleApps}
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        editMode={editApps}
+        onToggleEdit={() => setEditApps((v) => !v)}
+        onClose={() => { setDrawerOpen(false); setEditApps(false); }}
         onSelect={setTab}
         quickIds={dockApps.map((a) => a.id)}
       />

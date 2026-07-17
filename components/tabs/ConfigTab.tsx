@@ -33,6 +33,7 @@ export default function ConfigTab({
   companyCode,
   tvLogoCorner,
   themeColor,
+  iconColor,
   logoSize,
   onUpdateCompany,
 }: {
@@ -41,6 +42,7 @@ export default function ConfigTab({
   tvLogoCorner: Corner;
   googleDriveEnabled: boolean;
   themeColor: string;
+  iconColor: string;
   logoSize: number;
   onUpdateCompany: (update: {
     name?: string;
@@ -48,6 +50,7 @@ export default function ConfigTab({
     tvLogoCorner?: Corner;
     googleDriveEnabled?: boolean;
     themeColor?: string;
+    iconColor?: string;
     logoSize?: number;
   }) => void;
 }) {
@@ -163,6 +166,34 @@ export default function ConfigTab({
                     className="w-8 h-8 rounded cursor-pointer bg-transparent border border-white/10"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cor dos ícones e realces</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {THEME_PRESETS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => onUpdateCompany({ iconColor: c })}
+                      title={c}
+                      className="w-7 h-7 rounded-full cursor-pointer border-2"
+                      style={{ backgroundColor: c, borderColor: iconColor === c ? "#fff" : "transparent" }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={iconColor}
+                    onChange={(e) => onUpdateCompany({ iconColor: e.target.value })}
+                    title="Cor personalizada dos ícones"
+                    className="w-8 h-8 rounded cursor-pointer bg-transparent border border-white/10"
+                  />
+                  <button
+                    onClick={() => onUpdateCompany({ iconColor: "#10b981" })}
+                    className="text-[11px] text-gray-400 hover:text-white underline cursor-pointer ml-1"
+                  >
+                    padrão (verde)
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1">Deixe igual à cor tema para um visual uniforme, ou escolha outra para os ícones.</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Tamanho da logo ({logoSize}px)</label>
