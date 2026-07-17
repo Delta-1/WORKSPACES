@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
+const zlib = require("zlib");
 const { execSync } = require("child_process");
 
 // Acesso completo: o agente precisa rodar COMO ADMINISTRADOR para controlar
@@ -229,10 +230,13 @@ ipcMain.handle("fs-read", (_e, filePath) => {
 });
 // Coleta arquivos de um caminho (arquivo único OU pasta inteira, recursivo)
 // para a automação enviar tudo pro Drive. Retorna [{ rel, base64 }].
-ipcMain.handle("fs-collect", (_e, srcPath) => {
+// Coleta arquivos de um caminho (arquivo único ou pasta inteira, recursiva).
+// Retorna [{ rel, base64 }] preservando a estrutura relativa a partir da
+// pasta de origem (a raiz é o nome da própria pasta/arquivo).
+function collectFiles(srcPath) {
   const out = [];
-  const MAX_FILES = 500;
-  const MAX_BYTES = 80 * 1024 * 1024; // teto total ~80 MB por rodada
+  const MAX_FILES = 2000;
+  const MAX_BYTES = 200 * 1024 * 1024; // teto total ~200 MB por rodada
   let total = 0;
   const stat = fs.statSync(srcPath);
   if (stat.isFile()) {
@@ -249,7 +253,7 @@ ipcMain.handle("fs-collect", (_e, srcPath) => {
       } else if (d.isFile()) {
         try {
           const sz = fs.statSync(full).size;
-          if (sz > 40 * 1024 * 1024) continue; // pula arquivos gigantes
+          if (sz > 90 * 1024 * 1024) continue; // pula arquivos gigantes
           total += sz;
           out.push({ rel, base64: fs.readFileSync(full).toString("base64") });
         } catch {
@@ -260,6 +264,38 @@ ipcMain.handle("fs-collect", (_e, srcPath) => {
   };
   walk(srcPath, path.basename(srcPath));
   return out;
+}
+
+ipcMain.handle("fs-collect", (_e, srcPath) => collectFiles(srcPath));
+
+// Empacota o caminho de origem num ÚNICO arquivo comprimido (.wsz = JSON gzip).
+// Uma só transferência (rápida) que preserva os arquivos reais e a estrutura.
+ipcMain.handle("fs-bundle", (_e, srcPath) => {
+  const files = collectFiles(srcPath);
+  if (!files.length) return { bundle: null, names: [], count: 0 };
+  const payload = { root: path.basename(srcPath), files };
+  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(payload)), { level: 6 });
+  return { bundle: gz.toString("base64"), names: files.map((f) => f.rel.split("/").pop()), count: files.length };
+});
+
+// Recebe um .wsz (JSON gzip), descompacta e grava os arquivos reais preservando
+// a estrutura, dentro da pasta de destino do servidor.
+ipcMain.handle("server-extract-bundle", (_e, { root, dir, base64 }) => {
+  const json = JSON.parse(zlib.gunzipSync(Buffer.from(base64, "base64")).toString());
+  const baseDir = dir && String(dir).trim() ? String(dir) : path.join(serverBase(root), "Arquivos");
+  const written = [];
+  for (const f of json.files || []) {
+    const safeRel = String(f.rel || "arquivo")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter((p) => p && p !== "." && p !== "..")
+      .join("/");
+    const dest = path.join(baseDir, safeRel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, Buffer.from(f.base64, "base64"));
+    written.push(path.basename(dest));
+  }
+  return { count: written.length, names: written };
 });
 
 // ---- Modo SERVIDOR de arquivos ----
@@ -271,7 +307,24 @@ function serverBase(root) {
 ipcMain.handle("server-init", (_e, root) => {
   const base = serverBase(root);
   try {
+    fs.mkdirSync(base, { recursive: true });
     for (const d of ["Cerebro", "Arquivos", "Download"]) fs.mkdirSync(path.join(base, d), { recursive: true });
+    // Deixa um guia para o gestor achar/entender a pasta compartilhada.
+    const readme = path.join(base, "LEIA-ME.txt");
+    if (!fs.existsSync(readme)) {
+      fs.writeFileSync(
+        readme,
+        [
+          "Esta é a pasta do SERVIDOR de arquivos do Workspace.",
+          "",
+          "  • Arquivos  → banco de dados de arquivos da empresa (automações caem aqui).",
+          "  • Cerebro   → base de conhecimento da IA (o cérebro do robô).",
+          "  • Download  → arquivos baixados pelo acesso remoto vão para cá.",
+          "",
+          "Não renomeie estas pastas. Elas aparecem no grafo do site em tempo real.",
+        ].join("\r\n")
+      );
+    }
   } catch (err) {
     console.error("server-init", err);
   }

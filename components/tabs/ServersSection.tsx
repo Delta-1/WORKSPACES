@@ -69,6 +69,11 @@ export default function ServersSection() {
                   <p className="text-[11px] text-gray-500 truncate flex items-center gap-1">
                     <FolderTree size={11} /> {s.graph_folder_id ? folders.get(s.graph_folder_id) ?? "pasta do servidor" : "criando pasta…"}
                   </p>
+                  {s.server_root && (
+                    <p className="text-[10px] text-gray-600 truncate font-mono" title={s.server_root}>
+                      📁 {s.server_root}
+                    </p>
+                  )}
                 </div>
               </div>
               <span className={`text-[11px] shrink-0 ${isOnline(s) ? "text-emerald-400" : "text-gray-500"}`}>

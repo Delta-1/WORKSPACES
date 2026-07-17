@@ -87,6 +87,12 @@ async function refreshServerRole() {
     if (row?.is_server) {
       serverRoot = await ipcRenderer.invoke("server-init", row.server_root || null);
       serverGraphFolder = row.graph_folder_id || null;
+      // Reporta o caminho REAL da pasta (para o site mostrar onde ela fica).
+      try {
+        await supabase.rpc("agent_set_server_path", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_path: serverRoot });
+      } catch {
+        /* ignore */
+      }
     } else {
       serverRoot = null;
       serverGraphFolder = null;
@@ -121,26 +127,41 @@ async function runDeliveries() {
     });
     for (const d of data || []) {
       try {
-        // storage_path é um prefixo (pasta) — lista e baixa tudo.
-        const prefix = d.storage_path;
-        const { data: listed } = await supabase.storage.from("automation").list(prefix, { limit: 1000 });
-        const paths = listed && listed.length > 0 ? listed.filter((o) => o.id).map((o) => `${prefix}/${o.name}`) : [prefix];
-        const savedNames = [];
-        for (const p of paths) {
-          const { data: blob, error } = await supabase.storage.from("automation").download(p);
+        let savedNames = [];
+        // Pasta de destino: a escolhida na rotina, OU WorkspaceServer/Arquivos/<rotina>.
+        const destDir = d.dest_path || null;
+        if (String(d.storage_path).endsWith(".wsz")) {
+          // Novo formato: baixa UM arquivo comprimido e descompacta (rápido).
+          const { data: blob, error } = await supabase.storage.from("automation").download(d.storage_path);
           if (error || !blob) throw error || new Error("download vazio");
           const buf = Buffer.from(await blob.arrayBuffer());
-          const fileName = p.split("/").pop();
-          await ipcRenderer.invoke("server-write", {
+          const res = await ipcRenderer.invoke("server-extract-bundle", {
             root: serverRoot,
-            dir: d.dest_path || null, // pasta de destino escolhida na automação
-            rel: d.dest_path ? fileName : `${d.routine_name || "Automacao"}/${fileName}`,
+            dir: destDir || `${serverRoot}/Arquivos/${(d.routine_name || "Automacao").replace(/[\\/:*?"<>|]/g, "_")}`,
             base64: buf.toString("base64"),
           });
-          savedNames.push(fileName);
-          // Já entregou? limpa do bucket para não reprocessar.
-          await supabase.storage.from("automation").remove([p]);
+          savedNames = res?.names || [];
+        } else {
+          // Formato antigo (compatibilidade): prefixo com vários objetos.
+          const prefix = d.storage_path;
+          const { data: listed } = await supabase.storage.from("automation").list(prefix, { limit: 1000 });
+          const paths = listed && listed.length > 0 ? listed.filter((o) => o.id).map((o) => `${prefix}/${o.name}`) : [prefix];
+          for (const p of paths) {
+            const { data: blob, error } = await supabase.storage.from("automation").download(p);
+            if (error || !blob) throw error || new Error("download vazio");
+            const buf = Buffer.from(await blob.arrayBuffer());
+            const fileName = p.split("/").pop();
+            await ipcRenderer.invoke("server-write", {
+              root: serverRoot,
+              dir: destDir,
+              rel: destDir ? fileName : `${d.routine_name || "Automacao"}/${fileName}`,
+              base64: buf.toString("base64"),
+            });
+            savedNames.push(fileName);
+          }
         }
+        // NÃO apaga aqui: a limpeza é central (agent_mark_delivered remove do
+        // bucket só quando TODOS os alvos receberam), evitando corrida.
         // Registra os arquivos no grafo: pasta escolhida na rotina OU a pasta do servidor.
         await registerInGraph(d.graph_folder_id || serverGraphFolder, savedNames);
         await supabase.rpc("agent_mark_delivered", {
@@ -233,26 +254,22 @@ async function runAutomations() {
     });
     for (const r of data || []) {
       try {
-        // Coleta arquivo único OU pasta inteira (sem limite prático de arquivos).
-        const files = await ipcRenderer.invoke("fs-collect", r.source_path);
-        if (!files || files.length === 0) throw new Error("Nada encontrado no caminho.");
+        // Empacota o arquivo/pasta num único .wsz comprimido (rápido, preserva
+        // os arquivos reais e a estrutura). Uma só transferência.
+        const { bundle, count } = await ipcRenderer.invoke("fs-bundle", r.source_path);
+        if (!bundle || !count) throw new Error("Nada encontrado no caminho.");
         const stamp = Date.now();
-        // Prefixo único desta rodada. Achatamos subpastas no nome (/->__) para
-        // que o servidor liste tudo num nível só e mande cada arquivo pro Drive.
-        const prefix = `${cfg.agentId}/${r.id}/${stamp}`;
-        for (const f of files) {
-          const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
-          const flat = f.rel.replace(/[\\/]/g, "__");
-          const { error } = await supabase.storage
-            .from("automation")
-            .upload(`${prefix}/${flat}`, bytes, { contentType: "application/octet-stream", upsert: true });
-          if (error) throw error;
-        }
+        const objectPath = `${cfg.agentId}/${r.id}/${stamp}/bundle.wsz`;
+        const bytes = Uint8Array.from(atob(bundle), (c) => c.charCodeAt(0));
+        const { error } = await supabase.storage
+          .from("automation")
+          .upload(objectPath, bytes, { contentType: "application/gzip", upsert: true });
+        if (error) throw error;
         await supabase.rpc("agent_record_run", {
           p_agent_id: cfg.agentId,
           p_access_code: cfg.accessCode,
           p_routine_id: r.id,
-          p_storage_path: prefix, // prefixo (pasta) — o servidor lista e envia tudo
+          p_storage_path: objectPath, // .wsz — o servidor baixa e descompacta
           p_status: "uploaded",
           p_error: null,
         });
