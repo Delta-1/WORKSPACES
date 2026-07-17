@@ -695,7 +695,89 @@ const COPILOT_TOOLS = [
     description: "Entrega um arquivo específico (pelo id de search_files) para a pessoa no WhatsApp.",
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
   },
+  {
+    name: "list_sectors",
+    description: "Lista os setores da empresa (id e nome). Use antes de criar uma tarefa.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_employees",
+    description: "Lista funcionários (id, nome, cargo). Use para escolher responsável de tarefa.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "create_task",
+    description: "Cria tarefa no Kanban. Requer sector_id (use list_sectors); assignee_id opcional.",
+    input_schema: {
+      type: "object",
+      properties: { title: { type: "string" }, description: { type: "string" }, sector_id: { type: "string" }, assignee_id: { type: "string" }, due_date: { type: "string" } },
+      required: ["title", "sector_id"],
+    },
+  },
+  {
+    name: "lookup_client",
+    description: "Busca clientes cadastrados pelo nome.",
+    input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+  {
+    name: "create_client",
+    description: "Cadastra um cliente no CRM.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, notes: { type: "string" } }, required: ["name"] },
+  },
+  {
+    name: "post_announcement",
+    description: "Publica um aviso no mural da empresa.",
+    input_schema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title", "body"] },
+  },
 ];
+
+// Executa uma ação do copiloto no workspace (escopo da empresa).
+async function copilotAction(companyId, name, input) {
+  input = input || {};
+  try {
+    if (name === "list_sectors") {
+      const { data } = await supabase.from("sectors").select("id,name").eq("company_id", companyId).order("name");
+      return data ?? [];
+    }
+    if (name === "list_employees") {
+      const { data } = await supabase.from("profiles").select("id,full_name,role").eq("company_id", companyId).order("full_name");
+      return (data ?? []).map((p) => ({ id: p.id, name: p.full_name, role: p.role }));
+    }
+    if (name === "create_task") {
+      const { error } = await supabase.from("tasks").insert({
+        title: input.title, description: input.description ?? null, sector_id: input.sector_id,
+        assignee_id: input.assignee_id ?? null, column_name: "a_fazer", due_date: input.due_date ?? null, company_id: companyId,
+      });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Tarefa "${input.title}" criada.` };
+    }
+    if (name === "lookup_client") {
+      const { data } = await supabase.from("clients").select("id,name,phone,email").eq("company_id", companyId).ilike("name", `%${input.query}%`).limit(10);
+      return data ?? [];
+    }
+    if (name === "create_client") {
+      const { error } = await supabase.from("clients").insert({ name: input.name, phone: input.phone ?? null, email: input.email ?? null, notes: input.notes ?? null, company_id: companyId });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Cliente "${input.name}" cadastrado.` };
+    }
+    if (name === "post_announcement") {
+      const { error } = await supabase.from("announcements").insert({ title: input.title, body: input.body, company_id: companyId, pinned: false });
+      return error ? { ok: false, message: error.message } : { ok: true, message: "Aviso publicado no mural." };
+    }
+    return { error: "ferramenta desconhecida" };
+  } catch (e) {
+    return { ok: false, message: String(e?.message || e) };
+  }
+}
+
+// Dispatch comum das ferramentas do copiloto (arquivos + ações).
+async function copilotDispatch(companyId, name, input, files) {
+  if (name === "search_files") return await copilotSearchFiles(companyId, input.query);
+  if (name === "send_file") {
+    const file = await copilotLoadFile(companyId, input.id);
+    if (file) { files.push(file); return { ok: true, message: `Enviado: ${file.name}` }; }
+    return { ok: false, message: "Arquivo sem conteúdo ou não encontrado." };
+  }
+  return await copilotAction(companyId, name, input);
+}
 
 async function copilotSearchFiles(companyId, query) {
   const q = String(query || "").trim();
@@ -727,25 +809,57 @@ async function copilotLoadFile(companyId, id) {
   return { name: f.name, mime: f.mime || "application/octet-stream", buffer };
 }
 
-// Retorna { reply, files: [{name,mime,buffer}] }.
-async function runCopilotReply(companyId, customerText, history = []) {
-  const key = fallbackAnthropicKey;
-  if (!key) return { reply: "Copiloto sem chave de IA configurada.", files: [] };
+// Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
+// (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
+async function runCopilotReply(companyId, chatbot, customerText, history = []) {
+  const provider = chatbot?.api_key ? chatbot.provider || "anthropic" : fallbackAnthropicKey ? "anthropic" : null;
+  const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
+  if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
   const name = await companyName();
   const system =
-    `Você é o COPILOTO do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
-    `responde dúvidas, ajuda em tarefas e TEM ACESSO aos arquivos da empresa. Quando pedirem um arquivo/imagem, ` +
-    `use search_files para achar pelo nome; se estiver ambíguo, pergunte qual é; quando tiver certeza, use send_file ` +
-    `para entregar. Aprenda com o jeito da pessoa e seja cada vez mais útil.`;
-  const anthropic = new Anthropic({ apiKey: key });
+    `Você é o COPILOTO do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: responde dúvidas, ` +
+    `cria tarefas, cadastra/consulta clientes, publica avisos e TEM ACESSO aos arquivos da empresa. Quando pedirem um ` +
+    `arquivo/imagem, use search_files para achar pelo nome; se ambíguo, pergunte; quando certo, use send_file. ` +
+    `Para criar tarefa, pegue o setor com list_sectors. Aprenda o jeito da pessoa e seja cada vez mais útil.`;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
-  const messages = [
-    ...hist.map((h) => ({ role: h.role, content: [{ type: "text", text: h.text }] })),
-    { role: "user", content: [{ type: "text", text: customerText }] },
-  ];
   const files = [];
-  let reply = "";
+
   try {
+    if (provider === "gemini") {
+      const contents = [
+        ...hist.map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] })),
+        { role: "user", parts: [{ text: customerText }] },
+      ];
+      const functionDeclarations = COPILOT_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema }));
+      let reply = "";
+      for (let i = 0; i < 6; i++) {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, tools: [{ functionDeclarations }] }) }
+        );
+        const data = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts ?? [];
+        reply = parts.filter((p) => p.text).map((p) => p.text).join("\n") || reply;
+        const calls = parts.filter((p) => p.functionCall);
+        if (calls.length === 0) break;
+        contents.push({ role: "model", parts });
+        const responseParts = [];
+        for (const c of calls) {
+          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files);
+          responseParts.push({ functionResponse: { name: c.functionCall.name, response: { result: out } } });
+        }
+        contents.push({ role: "user", parts: responseParts });
+      }
+      return { reply, files };
+    }
+
+    // Anthropic (default)
+    const anthropic = new Anthropic({ apiKey: key });
+    const messages = [
+      ...hist.map((h) => ({ role: h.role, content: [{ type: "text", text: h.text }] })),
+      { role: "user", content: [{ type: "text", text: customerText }] },
+    ];
+    let reply = "";
     for (let i = 0; i < 6; i++) {
       const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 1024, system, tools: COPILOT_TOOLS, messages });
       reply = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
@@ -754,22 +868,16 @@ async function runCopilotReply(companyId, customerText, history = []) {
       messages.push({ role: "assistant", content: res.content });
       const results = [];
       for (const tu of toolUses) {
-        let out;
-        if (tu.name === "search_files") out = await copilotSearchFiles(companyId, tu.input.query);
-        else if (tu.name === "send_file") {
-          const file = await copilotLoadFile(companyId, tu.input.id);
-          if (file) { files.push(file); out = { ok: true, message: `Enviado: ${file.name}` }; }
-          else out = { ok: false, message: "Arquivo sem conteúdo ou não encontrado." };
-        } else out = { error: "desconhecida" };
+        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files);
         results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
       }
       messages.push({ role: "user", content: results });
     }
+    return { reply, files };
   } catch (err) {
     console.error("Copilot reply failed:", err);
     return { reply: "Tive um problema para processar agora. Tente de novo.", files };
   }
-  return { reply, files };
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,7 +1138,7 @@ async function startSession(numberId) {
             let copilotFiles = [];
             let reply = null;
             if (customerText && isCopilot) {
-              const out = await runCopilotReply(cid, customerText, history);
+              const out = await runCopilotReply(cid, chatbot, customerText, history);
               reply = out.reply;
               copilotFiles = out.files || [];
             } else if (customerText) {

@@ -48,7 +48,116 @@ const TOOLS: Anthropic.Tool[] = [
       required: ["id"],
     },
   },
+  {
+    name: "list_sectors",
+    description: "Lista os setores da empresa (id e nome). Use antes de criar uma tarefa para escolher o setor.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_employees",
+    description: "Lista os funcionários da empresa (id, nome, cargo). Use para escolher responsável de tarefa ou destinatário de recado.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "create_task",
+    description: "Cria uma tarefa no Kanban. Requer sector_id (use list_sectors). assignee_id é opcional (use list_employees).",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        sector_id: { type: "string" },
+        assignee_id: { type: "string" },
+        due_date: { type: "string", description: "AAAA-MM-DD (opcional)" },
+      },
+      required: ["title", "sector_id"],
+    },
+  },
+  {
+    name: "lookup_client",
+    description: "Busca clientes cadastrados pelo nome. Retorna nome, telefone, email.",
+    input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+  {
+    name: "create_client",
+    description: "Cadastra um cliente novo no CRM.",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, notes: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
+    name: "post_announcement",
+    description: "Publica um aviso no mural da empresa.",
+    input_schema: { type: "object", properties: { title: { type: "string" }, body: { type: "string" } }, required: ["title", "body"] },
+  },
+  {
+    name: "send_internal_message",
+    description: "Envia um recado interno para um colega, pelo recipient_id (use list_employees).",
+    input_schema: { type: "object", properties: { recipient_id: { type: "string" }, text: { type: "string" } }, required: ["recipient_id", "text"] },
+  },
 ];
+
+type Ctx = { userId: string | null; companyId: string | null };
+
+async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: Record<string, string>) {
+  try {
+    if (name === "list_sectors") {
+      const { data } = await client.from("sectors").select("id,name").order("name");
+      return data ?? [];
+    }
+    if (name === "list_employees") {
+      const { data } = await client.from("profiles").select("id,full_name,role").order("full_name");
+      return (data ?? []).map((p) => ({ id: p.id, name: p.full_name, role: p.role }));
+    }
+    if (name === "create_task") {
+      const { error } = await client.from("tasks").insert({
+        title: input.title,
+        description: input.description ?? null,
+        sector_id: input.sector_id,
+        assignee_id: input.assignee_id ?? null,
+        column_name: "a_fazer",
+        due_date: input.due_date ?? null,
+        company_id: ctx.companyId,
+      });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Tarefa "${input.title}" criada em A fazer.` };
+    }
+    if (name === "lookup_client") {
+      const { data } = await client.from("clients").select("id,name,phone,email").ilike("name", `%${input.query}%`).limit(10);
+      return data ?? [];
+    }
+    if (name === "create_client") {
+      const { error } = await client.from("clients").insert({
+        name: input.name,
+        phone: input.phone ?? null,
+        email: input.email ?? null,
+        notes: input.notes ?? null,
+        company_id: ctx.companyId,
+        created_by: ctx.userId,
+      });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `Cliente "${input.name}" cadastrado.` };
+    }
+    if (name === "post_announcement") {
+      const { error } = await client.from("announcements").insert({
+        title: input.title,
+        body: input.body,
+        author_id: ctx.userId,
+        company_id: ctx.companyId,
+        pinned: false,
+      });
+      return error ? { ok: false, message: error.message } : { ok: true, message: "Aviso publicado no mural." };
+    }
+    if (name === "send_internal_message") {
+      if (!ctx.userId) return { ok: false, message: "Sem usuário para enviar." };
+      const { error } = await client.from("internal_messages").insert({ sender_id: ctx.userId, recipient_id: input.recipient_id, text: input.text });
+      return error ? { ok: false, message: error.message } : { ok: true, message: "Recado enviado." };
+    }
+    return { error: "ferramenta desconhecida" };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "erro" };
+  }
+}
 
 async function runSearchFiles(client: SupabaseClient, query: string) {
   const q = String(query || "").trim();
@@ -87,9 +196,16 @@ async function runSendFile(client: SupabaseClient, id: string, sent: SentFile[])
 }
 
 // Loop de tool-use da Anthropic (só quando há chave Anthropic).
+async function dispatchTool(client: SupabaseClient, ctx: Ctx, name: string, input: Record<string, string>, sent: SentFile[]) {
+  if (name === "search_files") return await runSearchFiles(client, input.query);
+  if (name === "send_file") return await runSendFile(client, input.id, sent);
+  return await runAction(client, ctx, name, input);
+}
+
 async function runCopilot(
   apiKey: string,
   client: SupabaseClient,
+  ctx: Ctx,
   history: ChatTurn[],
   system: string
 ): Promise<{ reply: string; files: SentFile[] }> {
@@ -124,13 +240,51 @@ async function runCopilot(
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const tu of toolUses) {
       const input = tu.input as Record<string, string>;
-      let out: unknown;
-      if (tu.name === "search_files") out = await runSearchFiles(client, input.query);
-      else if (tu.name === "send_file") out = await runSendFile(client, input.id, sent);
-      else out = { error: "ferramenta desconhecida" };
+      const out = await dispatchTool(client, ctx, tu.name, input, sent);
       results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
     }
     messages.push({ role: "user", content: results });
+  }
+  return { reply, files: sent };
+}
+
+// Mesmo copiloto, mas com Gemini (function calling) — para quem usa chave Gemini.
+type GeminiPart = { text?: string; functionCall?: { name: string; args: Record<string, string> }; functionResponse?: { name: string; response: unknown } };
+async function runCopilotGemini(
+  apiKey: string,
+  client: SupabaseClient,
+  ctx: Ctx,
+  history: ChatTurn[],
+  system: string
+): Promise<{ reply: string; files: SentFile[] }> {
+  const contents: { role: string; parts: GeminiPart[] }[] = history
+    .filter((h) => h.text)
+    .map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] }));
+  const functionDeclarations = TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema }));
+  const sent: SentFile[] = [];
+  let reply = "";
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, tools: [{ functionDeclarations }] }),
+      }
+    );
+    const data = await res.json();
+    const parts: GeminiPart[] = data?.candidates?.[0]?.content?.parts ?? [];
+    reply = parts.filter((p) => p.text).map((p) => p.text).join("\n") || reply;
+    const calls = parts.filter((p) => p.functionCall);
+    if (calls.length === 0) break;
+    contents.push({ role: "model", parts });
+    const responseParts: GeminiPart[] = [];
+    for (const c of calls) {
+      const fc = c.functionCall!;
+      const out = await dispatchTool(client, ctx, fc.name, (fc.args || {}) as Record<string, string>, sent);
+      responseParts.push({ functionResponse: { name: fc.name, response: { result: out } } });
+    }
+    contents.push({ role: "user", parts: responseParts });
   }
   return { reply, files: sent };
 }
@@ -153,14 +307,28 @@ export async function POST(request: Request) {
         `Se houver várias opções ou o nome estiver vago, PERGUNTE para descobrir qual é o certo antes de enviar. ` +
         `Quando tiver certeza, use send_file para entregar o arquivo no chat. Seja direto e prestativo.`;
 
-  // Modo com ferramentas: só com Anthropic (env ou override anthropic) e sem system de treino.
+  // Contexto do usuário (para agir no workspace: criar tarefa, recado, etc.).
+  let ctx: Ctx = { userId: null, companyId: null };
+  if (client) {
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    if (user) {
+      const { data: prof } = await client.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+      ctx = { userId: user.id, companyId: prof?.company_id ?? null };
+    }
+  }
+
   const anthropicKey =
     override?.provider === "anthropic" ? override.apiKey : !override ? process.env.ANTHROPIC_API_KEY : undefined;
-  const useTools = body.tools !== false && Boolean(anthropicKey) && Boolean(client);
+  const geminiKey = override?.provider === "gemini" ? override.apiKey : undefined;
+  const useTools = body.tools !== false && Boolean(client) && Boolean(anthropicKey || geminiKey);
 
   try {
-    if (useTools && anthropicKey && client) {
-      const { reply, files } = await runCopilot(anthropicKey, client, history, systemPrompt);
+    if (useTools && client) {
+      const { reply, files } = geminiKey
+        ? await runCopilotGemini(geminiKey, client, ctx, history, systemPrompt)
+        : await runCopilot(anthropicKey as string, client, ctx, history, systemPrompt);
       return NextResponse.json({ reply, files, live: true });
     }
     const reply = await runChat(history, systemPrompt, override);
