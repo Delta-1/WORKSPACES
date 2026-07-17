@@ -329,17 +329,16 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   }
 
   // --- Trackpad do celular (movimento relativo do cursor) ---
-  // Toque duplo + segurar = segura o botão (arrastar para selecionar área).
+  // Toque duplo SEM mover = duplo-clique. Toque duplo E arrastar = seleção (segura
+  // o botão só quando o dedo começa a se mover, evitando pulos do cursor).
   const lastTapRef = useRef(0);
+  const armDragRef = useRef(false); // toque duplo detectado, aguardando movimento
   const draggingRef = useRef(false);
   function padStart(e: React.TouchEvent) {
     const t = e.touches[0];
     const now = Date.now();
-    // Se o toque anterior foi um tap rápido há pouco → este é "tap+segurar" = arrasto.
-    if (now - lastTapRef.current < 350) {
-      draggingRef.current = true;
-      sendInput({ kind: "down", button: 0 }); // segura no ponto atual do cursor
-    }
+    armDragRef.current = now - lastTapRef.current < 350; // pode virar arrasto se mover
+    draggingRef.current = false;
     padRef.current = { x: t.clientX, y: t.clientY, moved: false, t: now };
   }
   function padMove(e: React.TouchEvent) {
@@ -349,6 +348,11 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     const dx = t.clientX - p.x;
     const dy = t.clientY - p.y;
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) p.moved = true;
+    // Começou a mover depois de um toque duplo → inicia o arrasto (segura o botão).
+    if (armDragRef.current && !draggingRef.current && p.moved) {
+      draggingRef.current = true;
+      sendInput({ kind: "down", button: 0 });
+    }
     sendInput({ kind: "move-rel", dx: dx * mouseSens, dy: dy * mouseSens });
     p.x = t.clientX;
     p.y = t.clientY;
@@ -356,17 +360,17 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function padEnd() {
     const p = padRef.current;
     if (draggingRef.current) {
-      // Fim do arrasto: solta o botão (conclui a seleção).
-      sendInput({ kind: "up", button: 0 });
+      sendInput({ kind: "up", button: 0 }); // conclui a seleção
       draggingRef.current = false;
       lastTapRef.current = 0;
     } else if (p && !p.moved && Date.now() - p.t < 300) {
-      // Toque curto sem arrastar = clique; guarda o horário p/ detectar toque duplo.
+      // Toque curto sem mover = clique (dois seguidos = duplo-clique).
       sendInput({ kind: "click", button: 0 });
       lastTapRef.current = Date.now();
     } else {
       lastTapRef.current = 0;
     }
+    armDragRef.current = false;
     padRef.current = null;
   }
 

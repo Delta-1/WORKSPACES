@@ -218,11 +218,11 @@ export default function ConfigTab({
             <div className="liquid-glass rounded-2xl p-5 space-y-2 max-w-lg">
               <label className="flex items-center justify-between gap-2 cursor-pointer">
                 <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                  <Bell size={14} /> Som de notificação de novo cliente
+                  <Bell size={14} /> Som de "Aguardando atendimento"
                 </span>
                 <input type="checkbox" checked={!notifMuted} onChange={(e) => toggleNotif(!e.target.checked)} className="accent-emerald-600 w-4 h-4" />
               </label>
-              <p className="text-[11px] text-gray-500">Desmarque para silenciar o som e a notificação quando entra um cliente novo no WhatsApp.</p>
+              <p className="text-[11px] text-gray-500">Toca um som e mostra uma notificação sempre que um contato entra na fila <b>Aguardando atendimento</b> (cliente novo ou mensagem sem resposta). Desmarque para silenciar.</p>
             </div>
           )}
         </div>

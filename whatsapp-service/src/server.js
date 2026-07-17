@@ -744,6 +744,12 @@ const COPILOT_TOOLS = [
     description: "Abre/encerra atendimento de um contato pelo nome. status: espera | atendendo | fechado.",
     input_schema: { type: "object", properties: { contact: { type: "string" }, status: { type: "string" } }, required: ["contact", "status"] },
   },
+  {
+    name: "send_whatsapp",
+    description:
+      "Envia uma mensagem de WhatsApp para OUTRO contato (pelo nome ou telefone) em nome do gestor — como um assessor pessoal. Confirme o texto antes de enviar.",
+    input_schema: { type: "object", properties: { contact: { type: "string" }, text: { type: "string" } }, required: ["contact", "text"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -803,13 +809,33 @@ async function copilotAction(companyId, name, input) {
   }
 }
 
-// Dispatch comum das ferramentas do copiloto (arquivos + ações).
-async function copilotDispatch(companyId, name, input, files) {
+// Dispatch comum das ferramentas do copiloto (arquivos + ações + relay).
+async function copilotDispatch(companyId, name, input, files, sends) {
   if (name === "search_files") return await copilotSearchFiles(companyId, input.query);
   if (name === "send_file") {
     const file = await copilotLoadFile(companyId, input.id);
     if (file) { files.push(file); return { ok: true, message: `Enviado: ${file.name}` }; }
     return { ok: false, message: "Arquivo sem conteúdo ou não encontrado." };
+  }
+  if (name === "send_whatsapp") {
+    // Resolve o contato (nome ou telefone) e agenda o envio (feito no handler).
+    const q = String(input.contact || "").trim();
+    const digits = q.replace(/\D/g, "");
+    let contact = null;
+    if (digits.length >= 8) {
+      const { data } = await supabase.from("contacts").select("id,name,phone,jid").eq("company_id", companyId).eq("phone", digits).maybeSingle();
+      contact = data;
+    }
+    if (!contact) {
+      const { data } = await supabase.from("contacts").select("id,name,phone,jid").eq("company_id", companyId).ilike("name", `%${q}%`).limit(1).maybeSingle();
+      contact = data;
+    }
+    if (!contact && digits.length >= 8) contact = { id: null, name: q, phone: digits, jid: null };
+    if (!contact) return { ok: false, message: "Contato não encontrado. Passe o nome exato ou o telefone." };
+    const to = contact.jid || contact.phone;
+    if (!to) return { ok: false, message: "Contato sem telefone/JID para envio." };
+    sends.push({ to, text: input.text, contactId: contact.id, name: contact.name || contact.phone });
+    return { ok: true, message: `Mensagem enfileirada para ${contact.name || contact.phone}.` };
   }
   return await copilotAction(companyId, name, input);
 }
@@ -852,12 +878,15 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
   if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
   const name = await companyName();
   const system =
-    `Você é o COPILOTO do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: responde dúvidas, ` +
-    `cria tarefas, cadastra/consulta clientes, publica avisos e TEM ACESSO aos arquivos da empresa. Quando pedirem um ` +
-    `arquivo/imagem, use search_files para achar pelo nome; se ambíguo, pergunte; quando certo, use send_file. ` +
-    `Para criar tarefa, pegue o setor com list_sectors. Aprenda o jeito da pessoa e seja cada vez mais útil.`;
+    `Você é o COPILOTO/assessor pessoal do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
+    `responde dúvidas, cria tarefas, cadastra/consulta clientes, publica avisos, abre/encerra atendimentos e TEM ACESSO ` +
+    `aos arquivos da empresa. Quando pedirem um arquivo/imagem, use search_files e depois send_file. Para criar tarefa, ` +
+    `pegue o setor com list_sectors. Você também pode FALAR COM OUTRAS PESSOAS pelo gestor: quando ele disser algo como ` +
+    `"manda X para o fulano", use send_whatsapp para enviar a mensagem ao contato indicado (confirme o texto antes). ` +
+    `Aprenda o jeito da pessoa e seja cada vez mais útil.`;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
+  const sends = [];
 
   try {
     if (provider === "gemini") {
@@ -880,12 +909,12 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
         contents.push({ role: "model", parts });
         const responseParts = [];
         for (const c of calls) {
-          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files);
+          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files, sends);
           responseParts.push({ functionResponse: { name: c.functionCall.name, response: { result: out } } });
         }
         contents.push({ role: "user", parts: responseParts });
       }
-      return { reply, files };
+      return { reply, files, sends };
     }
 
     // Anthropic (default)
@@ -903,15 +932,15 @@ async function runCopilotReply(companyId, chatbot, customerText, history = []) {
       messages.push({ role: "assistant", content: res.content });
       const results = [];
       for (const tu of toolUses) {
-        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files);
+        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files, sends);
         results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
       }
       messages.push({ role: "user", content: results });
     }
-    return { reply, files };
+    return { reply, files, sends };
   } catch (err) {
     console.error("Copilot reply failed:", err);
-    return { reply: "Tive um problema para processar agora. Tente de novo.", files };
+    return { reply: "Tive um problema para processar agora. Tente de novo.", files, sends };
   }
 }
 
@@ -1169,15 +1198,25 @@ async function startSession(numberId) {
             } catch {
               /* ignore */
             }
-            // Copiloto: IA com ferramentas (busca/entrega arquivos). Bot normal: resposta comum.
+            // Copiloto: IA com ferramentas (busca/entrega arquivos, relay). Bot normal: resposta comum.
             let copilotFiles = [];
+            let copilotSends = [];
             let reply = null;
             if (customerText && isCopilot) {
               const out = await runCopilotReply(cid, chatbot, customerText, history);
               reply = out.reply;
               copilotFiles = out.files || [];
+              copilotSends = out.sends || [];
             } else if (customerText) {
               reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai");
+            }
+            // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
+            for (const s of copilotSends) {
+              try {
+                await sendMessage(numberId, s.to, s.text, null, null);
+              } catch (e) {
+                console.error("copilot relay send failed:", e);
+              }
             }
             // Entrega os arquivos que o copiloto decidiu mandar (imagem/documento).
             for (const f of copilotFiles) {
