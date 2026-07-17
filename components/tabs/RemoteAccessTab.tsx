@@ -35,12 +35,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    // Só as máquinas já sincronizadas com esta empresa (não as pendentes de terceiros).
-    const { data } = await supabase
-      .from("remote_agents")
-      .select("*")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false });
+    // Dispositivos que a empresa possui OU tem acesso pelo código (compartilhados).
+    const { data } = await supabase.rpc("my_remote_agents");
     if (data) setAgents(data as RemoteAgent[]);
   }, [companyId]);
 
@@ -79,7 +75,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   async function remove(id: string) {
     if (!supabase) return;
     if (!confirm("Remover esta máquina do acesso remoto?")) return;
-    await supabase.from("remote_agents").delete().eq("id", id);
+    await supabase.rpc("release_agent", { p_id: id });
     load();
   }
 
