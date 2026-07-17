@@ -130,6 +130,8 @@ async function refreshServerRole() {
       } catch {
         /* ignore */
       }
+      // Assim que vira servidor, já espelha as pastas no grafo (não espera o ciclo).
+      void runServerGraphSync();
     } else {
       serverRoot = null;
       serverGraphFolder = null;
@@ -311,6 +313,28 @@ async function runBrainSync() {
   }
 }
 
+// Espelha a árvore de pastas/arquivos do servidor no grafo do site (ao vivo).
+let graphSyncBusy = false;
+async function runServerGraphSync() {
+  if (graphSyncBusy || !serverRoot || !serverGraphFolder || !supabase || !cfg?.agentId) return;
+  graphSyncBusy = true;
+  try {
+    const entries = await ipcRenderer.invoke("server-tree", serverRoot);
+    if (entries && entries.length) {
+      await supabase.rpc("agent_sync_server_graph", {
+        p_agent_id: cfg.agentId,
+        p_access_code: cfg.accessCode,
+        p_root: serverGraphFolder,
+        p_entries: entries,
+      });
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    graphSyncBusy = false;
+  }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
@@ -329,6 +353,8 @@ async function startAgent() {
   setInterval(runAutomations, 60000); // rotinas de automação (a cada 1 min)
   runBrainSync();
   setInterval(runBrainSync, 180000); // espelha o cérebro da IA (a cada 3 min)
+  runServerGraphSync();
+  setInterval(runServerGraphSync, 45000); // espelha as pastas do servidor no grafo
   join();
 }
 

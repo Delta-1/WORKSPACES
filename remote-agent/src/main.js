@@ -395,6 +395,28 @@ ipcMain.handle("cerebro-prune", (_e, { root, keep }) => {
   return { removed };
 });
 
+// Lê a árvore de pastas/arquivos do servidor (Cerebro/Arquivos/Download) para
+// espelhar no grafo do site. Retorna [{ rel, dir }].
+ipcMain.handle("server-tree", (_e, root) => {
+  const base = serverBase(root);
+  const out = [];
+  const walk = (dir, prefix, depth) => {
+    if (depth > 6 || out.length > 2000) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of entries) {
+      const rel = prefix ? `${prefix}/${d.name}` : d.name;
+      if (d.isDirectory()) { out.push({ rel, dir: true }); walk(path.join(dir, d.name), rel, depth + 1); }
+      else if (d.isFile()) { out.push({ rel, dir: false }); }
+    }
+  };
+  for (const top of ["Cerebro", "Arquivos", "Download"]) {
+    const p = path.join(base, top);
+    if (fs.existsSync(p)) { out.push({ rel: top, dir: true }); walk(p, top, 1); }
+  }
+  return out;
+});
+
 // Grava um arquivo recebido (transferência do operador) na pasta Download do servidor.
 ipcMain.handle("server-download-write", (_e, { root, name, base64 }) => {
   const base = serverBase(root);
