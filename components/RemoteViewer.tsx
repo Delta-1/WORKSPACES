@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import Orb from "@/components/Orb";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -69,6 +70,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const [dlChoice, setDlChoice] = useState<string | null>(null); // nome do arquivo aguardando escolha de destino
   // Sensibilidade do mouse (trackpad) e do scroll — personalizável.
   const [showSettings, setShowSettings] = useState(false);
+  const [orbOpen, setOrbOpen] = useState(false);
   const [mouseSens, setMouseSens] = useState(1);
   const [scrollSens, setScrollSens] = useState(1);
   useEffect(() => {
@@ -438,6 +440,13 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
           >
             <FolderOpen size={14} /> Arquivos
           </button>
+          <button
+            onClick={() => setOrbOpen((v) => !v)}
+            title="Orb — assistente de IA por voz durante o acesso"
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${orbOpen ? "bg-indigo-600 text-white" : "bg-white/5 hover:bg-white/10"}`}
+          >
+            <Bot size={14} /> Orb
+          </button>
           <div className="relative">
             <button
               onClick={() => setShowSettings((v) => !v)}
@@ -687,6 +696,8 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
           </div>
         </div>
       )}
+
+      {orbOpen && <Orb agentName={agent.name} onClose={() => setOrbOpen(false)} />}
     </div>
   );
 }

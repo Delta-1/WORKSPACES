@@ -1,0 +1,180 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Bot, Mic, Send, Volume2, X } from "lucide-react";
+import { supabase } from "@/lib/supabase-client";
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const { data } = await supabase.auth.getSession();
+  return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
+}
+
+type Msg = { role: "user" | "assistant"; text: string };
+type Rec = {
+  lang: string; continuous: boolean; interimResults: boolean;
+  start: () => void; stop: () => void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onend: (() => void) | null; onerror: (() => void) | null;
+};
+
+// Assistente estilo JARVIS que aparece durante o acesso remoto. Mini chat +
+// modo voz (bolinha flutuante que escuta e responde falando).
+export default function Orb({ agentName, onClose }: { agentName: string; onClose: () => void }) {
+  const [msgs, setMsgs] = useState<Msg[]>([
+    { role: "assistant", text: "Oi, eu sou o Orb. Posso te ajudar durante o acesso. Toque no microfone pra falar comigo por voz." },
+  ]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const recRef = useRef<Rec | null>(null);
+  const activeRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const system =
+    `Você é o Orb, um assistente de voz estilo JARVIS que ajuda um técnico durante o acesso remoto à máquina "${agentName}". ` +
+    `Seja BREVE e direto — respostas curtas, boas para ouvir. Você tem acesso aos arquivos e ferramentas da empresa. ` +
+    `Quando o técnico disser que vai finalizar/encerrar, apenas se despeça em uma frase.`;
+
+  function speak(text: string) {
+    try {
+      window.speechSynthesis?.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "pt-BR";
+      window.speechSynthesis?.speak(u);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
+  }, [msgs]);
+
+  async function ask(text: string) {
+    if (!text.trim()) return;
+    const next: Msg[] = [...msgs, { role: "user", text }];
+    setMsgs(next);
+    setBusy(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ history: next.map((m) => ({ role: m.role, text: m.text })), system, tools: true }),
+      });
+      const data = await res.json();
+      const reply = data.reply || "Não entendi, pode repetir?";
+      setMsgs((m) => [...m, { role: "assistant", text: reply }]);
+      if (voiceOn) speak(reply);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema para responder agora." }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function farewellAndClose() {
+    speak("Tchau! Precisando, é só me chamar.");
+    stopVoice();
+    setTimeout(onClose, 1400);
+  }
+
+  function handleTranscript(t: string) {
+    // Frase de encerramento → se despede e desliga.
+    if (/(finaliz|encerr|deslig|tchau orb|é isso orb|pode sair orb|obrigado orb)/i.test(t)) {
+      farewellAndClose();
+      return;
+    }
+    ask(t);
+  }
+
+  function startVoice() {
+    const w = window as unknown as { webkitSpeechRecognition?: new () => Rec; SpeechRecognition?: new () => Rec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) {
+      alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome.");
+      return;
+    }
+    const rec = new Ctor();
+    rec.lang = "pt-BR";
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      const t = e.results[e.results.length - 1][0].transcript;
+      handleTranscript(t);
+    };
+    rec.onend = () => {
+      if (activeRef.current) {
+        try { rec.start(); } catch { /* ignore */ }
+      }
+    };
+    rec.onerror = () => {};
+    recRef.current = rec;
+    activeRef.current = true;
+    try { rec.start(); } catch { /* ignore */ }
+    setVoiceOn(true);
+    setMinimized(true);
+    speak("Estou ouvindo.");
+  }
+  function stopVoice() {
+    activeRef.current = false;
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+    recRef.current = null;
+    setVoiceOn(false);
+    setMinimized(false);
+  }
+  useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
+
+  // Modo bolinha flutuante (voz ativa e minimizado) — vibe JARVIS.
+  if (minimized) {
+    return (
+      <button
+        onClick={() => setMinimized(false)}
+        title="Orb ouvindo — toque para abrir o chat"
+        className="fixed bottom-5 right-5 z-[95] w-16 h-16 rounded-full cursor-pointer orb-float flex items-center justify-center"
+      >
+        <span className="absolute inset-0 rounded-full orb-glow" />
+        <Volume2 size={22} className="text-white relative z-10" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-5 right-5 z-[95] w-[320px] max-w-[92vw] bg-[#0b0f16]/95 backdrop-blur border border-indigo-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-indigo-950/40">
+        <span className="text-sm font-bold flex items-center gap-2">
+          <span className="w-6 h-6 rounded-full orb-glow flex items-center justify-center"><Bot size={13} className="text-white" /></span>
+          Orb {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
+        </span>
+        <div className="flex items-center gap-1">
+          <button onClick={voiceOn ? stopVoice : startVoice} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
+            <Mic size={14} />
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={14} /></button>
+        </div>
+      </div>
+      <div ref={scrollRef} className="flex-1 max-h-64 overflow-y-auto custom-scroll p-3 space-y-2">
+        {msgs.map((m, i) => (
+          <div key={i} className={`text-xs ${m.role === "user" ? "text-right" : ""}`}>
+            <span className={`inline-block rounded-2xl px-3 py-1.5 ${m.role === "user" ? "bg-indigo-600 text-white" : "bg-white/10"}`}>{m.text}</span>
+          </div>
+        ))}
+        {busy && <p className="text-[11px] text-gray-500 italic">Orb pensando…</p>}
+      </div>
+      <div className="p-2 border-t border-white/10 flex items-center gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { ask(input); setInput(""); } }}
+          placeholder="Fale ou escreva pro Orb…"
+          className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none"
+        />
+        <button onClick={() => { ask(input); setInput(""); }} disabled={busy || !input.trim()} className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer disabled:opacity-50">
+          <Send size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -143,3 +143,15 @@ html.light .liquid-glass {
 .custom-icons .text-emerald-300 {
   color: var(--icon) !important;
 }
+
+/* Orb (assistente JARVIS do acesso remoto) */
+.orb-glow {
+  background: radial-gradient(circle at 30% 30%, #a5b4fc, #6366f1 45%, #4338ca 80%);
+  box-shadow: 0 0 18px 3px rgba(99, 102, 241, 0.55);
+}
+.orb-float { background: transparent; }
+.orb-float .orb-glow { animation: orb-pulse 1.8s ease-in-out infinite; }
+@keyframes orb-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 18px 3px rgba(99,102,241,0.5); }
+  50% { transform: scale(1.12); box-shadow: 0 0 30px 8px rgba(99,102,241,0.8); }
+}
