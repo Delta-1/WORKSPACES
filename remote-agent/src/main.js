@@ -272,6 +272,16 @@ ipcMain.handle("server-download-write", (_e, { root, name, base64 }) => {
   fs.writeFileSync(dest, Buffer.from(base64, "base64"));
   return { path: dest };
 });
+
+// Máquina comum (não-servidor) que recebe um arquivo distribuído: guarda em
+// ~/WorkspaceDownloads (caixa de entrada).
+ipcMain.handle("inbox-write", (_e, { name, base64 }) => {
+  const dir = path.join(os.homedir(), "WorkspaceDownloads");
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, path.basename(name || "arquivo"));
+  fs.writeFileSync(dest, Buffer.from(base64, "base64"));
+  return { path: dest };
+});
 ipcMain.handle("server-write", (_e, { root, dir, rel, base64 }) => {
   // Sanitiza o caminho relativo (nunca escapa da pasta base).
   const safeRel = String(rel || "arquivo")

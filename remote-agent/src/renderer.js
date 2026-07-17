@@ -171,7 +171,8 @@ async function runDeliveries() {
 // pasta Download do servidor.
 let transferBusy = false;
 async function runTransfers() {
-  if (transferBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  // Roda em QUALQUER máquina (para receber arquivos distribuídos), não só servidores.
+  if (transferBusy || !supabase || !cfg?.agentId) return;
   transferBusy = true;
   try {
     const { data } = await supabase.rpc("agent_pending_transfers", {
@@ -183,9 +184,11 @@ async function runTransfers() {
         const { data: blob, error } = await supabase.storage.from("automation").download(t.storage_path);
         if (error || !blob) throw error || new Error("download vazio");
         const buf = Buffer.from(await blob.arrayBuffer());
-        await ipcRenderer.invoke("server-download-write", { root: serverRoot, name: t.filename, base64: buf.toString("base64") });
+        const b64 = buf.toString("base64");
+        if (serverRoot) await ipcRenderer.invoke("server-download-write", { root: serverRoot, name: t.filename, base64: b64 });
+        else await ipcRenderer.invoke("inbox-write", { name: t.filename, base64: b64 });
         await supabase.storage.from("automation").remove([t.storage_path]);
-        await registerInGraph(serverGraphFolder, [t.filename]); // aparece no grafo do servidor
+        if (serverRoot) await registerInGraph(serverGraphFolder, [t.filename]); // grafo do servidor
         await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "done", p_error: null });
       } catch (e) {
         await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "error", p_error: String(e?.message || e).slice(0, 200) });

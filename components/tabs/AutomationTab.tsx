@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Bot, Clock, FolderSearch, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Bot, Clock, Plus, RefreshCw, Send, Server, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import AgentFolderPicker from "@/components/AgentFolderPicker";
+import AutomationFlowBuilder from "@/components/AutomationFlowBuilder";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
 type Routine = {
@@ -46,10 +46,26 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [folders, setFolders] = useState<GraphFolder[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [flowOpen, setFlowOpen] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const bcastRef = useRef<HTMLInputElement>(null);
   const companyId = profile?.company_id ?? null;
+
+  // Distribui um arquivo para TODOS os computadores (cai na pasta Download de cada um).
+  async function broadcastFile(file: File) {
+    if (!supabase || agents.length === 0) return;
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let n = 0;
+    for (const a of agents) {
+      const path = `transfers/${a.id}/${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`;
+      const { error: up } = await supabase.storage.from("automation").upload(path, buf, { contentType: file.type || "application/octet-stream", upsert: true });
+      if (up) continue;
+      const { error: ins } = await supabase.from("server_transfers").insert({ dest_agent_id: a.id, filename: file.name, storage_path: path, subfolder: "Download", created_by: profile?.id ?? null });
+      if (!ins) n++;
+    }
+    setSyncMsg({ ok: true, text: `"${file.name}" enviado para ${n} computador(es) — chega na pasta Download de cada um.` });
+  }
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -107,8 +123,12 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
           <Bot className="text-emerald-400" size={20} /> Automação de acessos
         </h3>
         <div className="flex items-center gap-2">
-          <button onClick={() => setAdding(true)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
-            <Plus size={14} /> Nova rotina
+          <input ref={bcastRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) broadcastFile(f); e.currentTarget.value = ""; }} />
+          <button onClick={() => bcastRef.current?.click()} disabled={agents.length === 0} className="flex items-center gap-2 liquid-glass text-xs font-medium px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50" title="Enviar um arquivo para todos os computadores">
+            <Send size={14} /> Enviar p/ todos os PCs
+          </button>
+          <button onClick={() => setFlowOpen(true)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
+            <Plus size={14} /> Nova automação
           </button>
         </div>
       </div>
@@ -193,195 +213,7 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
         })}
       </div>
 
-      {adding && <AddRoutineModal agents={agents} folders={folders} createdBy={profile?.id ?? null} onClose={() => setAdding(false)} onSaved={load} />}
-    </div>
-  );
-}
-
-function AddRoutineModal({
-  agents,
-  folders,
-  createdBy,
-  onClose,
-  onSaved,
-}: {
-  agents: RemoteAgent[];
-  folders: GraphFolder[];
-  createdBy: string | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
-  const [sourcePath, setSourcePath] = useState("");
-  const [destPath, setDestPath] = useState("");
-  const [graphFolderId, setGraphFolderId] = useState("");
-  const [every, setEvery] = useState(1);
-  const [unit, setUnit] = useState<"minutos" | "horas" | "dias">("dias");
-  const servers = agents.filter((a) => a.is_server);
-  const [dest, setDest] = useState(() => servers[0]?.id ?? ""); // id do servidor de destino
-  const [saving, setSaving] = useState(false);
-  const [picking, setPicking] = useState<"source" | "dest" | null>(null);
-
-  const factor = unit === "dias" ? 1440 : unit === "horas" ? 60 : 1;
-  const toServer = Boolean(dest);
-
-  async function save() {
-    if (!supabase || !name.trim() || !agentId || !sourcePath.trim() || !dest) return;
-    setSaving(true);
-    const { error } = await supabase.from("automation_routines").insert({
-      name: name.trim(),
-      agent_id: agentId,
-      source_path: sourcePath.trim(),
-      interval_minutes: Math.max(1, Math.round(every * factor)),
-      to_drive: !toServer,
-      dest_type: toServer ? "server" : "drive",
-      dest_agent_id: toServer ? dest : null,
-      dest_path: toServer && destPath.trim() ? destPath.trim() : null,
-      graph_folder_id: graphFolderId || null,
-      created_by: createdBy,
-      next_run_at: new Date().toISOString(), // já roda no próximo ciclo do agente
-    });
-    setSaving(false);
-    if (error) {
-      alert("Erro: " + error.message);
-      return;
-    }
-    onSaved();
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="liquid-glass rounded-2xl p-6 w-full max-w-md space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h4 className="text-base font-bold">Nova rotina de automação</h4>
-          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer">
-            <X size={18} />
-          </button>
-        </div>
-
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da rotina (ex.: Backup do relatório)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Computador</label>
-          <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
-            {agents.length === 0 && <option value="">Nenhuma máquina sincronizada</option>}
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Arquivo ou pasta</label>
-          <div className="flex items-center gap-2">
-            <input
-              value={sourcePath}
-              onChange={(e) => setSourcePath(e.target.value)}
-              placeholder="Selecione na máquina (ou digite o caminho)"
-              className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
-            />
-            <button
-              onClick={() => setPicking("source")}
-              disabled={!agentId}
-              title={agentId ? "Navegar na máquina e escolher" : "Escolha um computador primeiro"}
-              className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer disabled:opacity-40 shrink-0"
-            >
-              <FolderSearch size={14} /> Escolher
-            </button>
-          </div>
-          <p className="text-[11px] text-gray-500 mt-1">A máquina precisa estar ligada/online para navegar nas pastas.</p>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Frequência</label>
-          <div className="flex items-center gap-2">
-            <input type="number" min={1} step={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} className="w-24 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
-            <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
-              <option value="minutos">minuto(s)</option>
-              <option value="horas">hora(s)</option>
-              <option value="dias">dia(s)</option>
-            </select>
-          </div>
-          <p className="text-[11px] text-gray-500 mt-1">A cada quanto tempo coletar e enviar. A rotina já roda a primeira vez ao ser criada.</p>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Enviar para o servidor</label>
-          <select value={dest} onChange={(e) => setDest(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
-            {servers.length === 0 && <option value="">Nenhum servidor — crie um no Acesso Remoto</option>}
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>Servidor: {s.name}</option>
-            ))}
-          </select>
-          <p className="text-[11px] text-gray-500 mt-1">
-            {servers.length === 0
-              ? "Marque uma máquina como servidor no Acesso Remoto (o robô guarda os arquivos nela)."
-              : "Uma máquina sua guarda os arquivos e eles aparecem na pasta do servidor no grafo."}
-          </p>
-        </div>
-
-        {toServer && (
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Pasta de destino no servidor</label>
-            <div className="flex items-center gap-2">
-              <input
-                value={destPath}
-                onChange={(e) => setDestPath(e.target.value)}
-                placeholder="Onde colar (vazio = WorkspaceServer/Arquivos)"
-                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
-              />
-              <button
-                onClick={() => setPicking("dest")}
-                title="Navegar no servidor e escolher/criar a pasta de destino"
-                className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer shrink-0"
-              >
-                <FolderSearch size={14} /> Escolher
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Mostrar no grafo (opcional)</label>
-          <select value={graphFolderId} onChange={(e) => setGraphFolderId(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
-            <option value="">Não mostrar no grafo</option>
-            {folders.map((f) => (
-              <option key={f.id} value={f.id}>Pasta: {f.name}</option>
-            ))}
-          </select>
-          <p className="text-[11px] text-gray-500 mt-1">Os arquivos coletados aparecem nessa pasta do grafo (atualiza sozinho).</p>
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
-          <button onClick={save} disabled={saving || !name.trim() || !agentId || !sourcePath.trim()} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60">
-            {saving ? "Salvando..." : "Criar rotina"}
-          </button>
-        </div>
-      </div>
-
-      {picking === "source" && agentId && (
-        <AgentFolderPicker
-          agentId={agentId}
-          onClose={() => setPicking(null)}
-          onPick={(path) => {
-            setSourcePath(path);
-            setPicking(null);
-          }}
-        />
-      )}
-      {picking === "dest" && toServer && (
-        <AgentFolderPicker
-          agentId={dest}
-          onClose={() => setPicking(null)}
-          onPick={(path) => {
-            setDestPath(path);
-            setPicking(null);
-          }}
-        />
-      )}
+      {flowOpen && <AutomationFlowBuilder agents={agents} folders={folders} createdBy={profile?.id ?? null} onClose={() => setFlowOpen(false)} onSaved={load} />}
     </div>
   );
 }
