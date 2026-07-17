@@ -43,6 +43,22 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
+  // Não-lidas por conversa (bolinha vermelha estilo Discord), salvo por navegador.
+  const [unread, setUnread] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      setUnread(JSON.parse(localStorage.getItem("wa:unread") || "{}"));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("wa:unread", JSON.stringify(unread));
+    } catch {
+      /* ignore */
+    }
+  }, [unread]);
 
   const [selConvId, setSelConvId] = useState<string | null>(null);
   const [selColleagueId, setSelColleagueId] = useState<string | null>(null);
@@ -100,6 +116,9 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
         if (m.conversation_id === selConvRef.current) {
           setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
           scrollBottom();
+        } else if (m.direction === "in") {
+          // Mensagem nova de cliente numa conversa que não está aberta → não-lida.
+          setUnread((prev) => ({ ...prev, [m.conversation_id]: (prev[m.conversation_id] || 0) + 1 }));
         }
         loadConversations();
       })
@@ -122,6 +141,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     selColRef.current = null;
     setSelConvId(id);
     selConvRef.current = id;
+    setUnread((prev) => (prev[id] ? { ...prev, [id]: 0 } : prev)); // zera as não-lidas ao abrir
     if (!supabase) return;
     const { data } = await supabase.from("whatsapp_messages").select("*").eq("conversation_id", id).order("at");
     setMessages(data ?? []);
@@ -156,7 +176,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   }
 
   // Inicia uma conversa a partir de um número de telefone (novo contato ou já existente).
-  async function startChat(rawPhone: string, name: string) {
+  async function startChat(rawPhone: string, name: string, chosenNumberId?: string | null) {
     if (!supabase) return;
     let phone = rawPhone.replace(/\D/g, "");
     if (!phone) {
@@ -180,6 +200,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     }
 
     const numberId =
+      chosenNumberId ??
       (activeNumberId ? numbers.find((n) => n.id === activeNumberId) : numbers.find((n) => n.status === "connected"))?.id ??
       numbers[0]?.id ??
       null;
@@ -364,6 +385,17 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     }
   }
 
+  // Contagem de não-lidas por número (para a bolinha no rail) e total.
+  const totalUnread = useMemo(() => Object.values(unread).reduce((a, b) => a + (b || 0), 0), [unread]);
+  const unreadByNumber = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const c of conversations) {
+      const u = unread[c.id] || 0;
+      if (u && c.number_id) m[c.number_id] = (m[c.number_id] || 0) + u;
+    }
+    return m;
+  }, [conversations, unread]);
+
   // "servidor" atual: "whatsapp" = todas; "wa:<numeroId>" = só desse número;
   // "<grupoId>" = só desse grupo. (activeNumberId definido acima)
   const visibleConvs = useMemo(() => {
@@ -399,7 +431,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     <div className="h-full flex overflow-hidden rounded-2xl liquid-glass">
       {/* Rail de servidores (grupos ficam separados aqui) */}
       <div className="w-16 shrink-0 bg-black/30 flex flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll">
-        <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas">
+        <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
           <MessageSquare size={20} />
         </ServerIcon>
         {/* Um ícone por número de WhatsApp: acesso múltiplo, todos no mesmo lugar */}
@@ -408,6 +440,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
             key={n.id}
             active={server === `wa:${n.id}`}
             onClick={() => setServer(`wa:${n.id}`)}
+            badge={unreadByNumber[n.id] || 0}
             title={`${n.label}${n.phone_number ? ` (${n.phone_number})` : ""} — ${n.status === "connected" ? "conectado" : "desconectado"}`}
           >
             <span className="relative">
@@ -510,10 +543,15 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                       {contactLabel(c.contacts).charAt(0).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
                     <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>
                   </div>
+                  {(unread[c.id] || 0) > 0 && (
+                    <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                      {unread[c.id] > 99 ? "99+" : unread[c.id]}
+                    </span>
+                  )}
                 </button>
                 {groups.length > 0 && (
                   <select
@@ -661,7 +699,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
         </div>
       )}
 
-      {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onStart={startChat} />}
+      {showNewChat && (
+        <NewChatModal
+          onClose={() => setShowNewChat(false)}
+          onStart={startChat}
+          numbers={numbers.filter((n) => n.status === "connected")}
+          forcedNumberId={activeNumberId}
+        />
+      )}
       {showProfile && selConv?.contacts && (
         <ContactProfileModal
           contact={selConv.contacts}
@@ -676,15 +721,29 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   );
 }
 
-function NewChatModal({ onClose, onStart }: { onClose: () => void; onStart: (phone: string, name: string) => void | Promise<void> }) {
+function NewChatModal({
+  onClose,
+  onStart,
+  numbers,
+  forcedNumberId,
+}: {
+  onClose: () => void;
+  onStart: (phone: string, name: string, numberId?: string | null) => void | Promise<void>;
+  numbers: WhatsappNumber[];
+  forcedNumberId: string | null;
+}) {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // Se um número já está selecionado no painel, usa ele; senão pergunta.
+  const [numberId, setNumberId] = useState<string>(forcedNumberId ?? numbers[0]?.id ?? "");
+  const forcedNumber = forcedNumberId ? numbers.find((n) => n.id === forcedNumberId) ?? null : null;
+  const needsPick = !forcedNumberId && numbers.length > 1;
   async function go() {
     if (!phone.trim() || busy) return;
     setBusy(true);
     try {
-      await onStart(phone, name);
+      await onStart(phone, name, forcedNumberId ?? (numberId || null));
     } finally {
       setBusy(false);
     }
@@ -700,6 +759,26 @@ function NewChatModal({ onClose, onStart }: { onClose: () => void; onStart: (pho
             <X size={16} />
           </button>
         </div>
+        {needsPick ? (
+          <div className="space-y-1.5">
+            <label className="text-[11px] text-gray-400">Salvar neste número</label>
+            <select
+              value={numberId}
+              onChange={(e) => setNumberId(e.target.value)}
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer"
+            >
+              {numbers.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.label}{n.phone_number ? ` · ${n.phone_number}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : forcedNumber ? (
+          <p className="text-[11px] text-gray-400">
+            Salvando em <span className="text-emerald-400 font-semibold">{forcedNumber.label}</span>
+          </p>
+        ) : null}
         <div className="space-y-1.5">
           <label className="text-[11px] text-gray-400 flex items-center gap-1"><Phone size={11} /> Número de telefone (com DDD)</label>
           <input
@@ -815,17 +894,24 @@ function ContactProfileModal({
   );
 }
 
-function ServerIcon({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
+function ServerIcon({ active, onClick, title, children, badge = 0 }: { active: boolean; onClick: () => void; title: string; children: React.ReactNode; badge?: number }) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`w-11 h-11 rounded-2xl flex items-center justify-center cursor-pointer transition-all ${
-        active ? "bg-emerald-600 text-white rounded-xl" : "bg-white/5 text-gray-400 hover:bg-emerald-600/30 hover:text-white hover:rounded-xl"
-      }`}
-    >
-      {children}
-    </button>
+    <div className="relative">
+      <button
+        onClick={onClick}
+        title={title}
+        className={`w-11 h-11 rounded-2xl flex items-center justify-center cursor-pointer transition-all ${
+          active ? "bg-emerald-600 text-white rounded-xl" : "bg-white/5 text-gray-400 hover:bg-emerald-600/30 hover:text-white hover:rounded-xl"
+        }`}
+      >
+        {children}
+      </button>
+      {badge > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0b0f16]">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+    </div>
   );
 }
 
