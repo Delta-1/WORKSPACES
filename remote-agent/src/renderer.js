@@ -76,6 +76,7 @@ async function reportSpecs() {
 
 // ---- Modo SERVIDOR: recebe os arquivos das automações e guarda localmente ----
 let serverRoot = null;
+let serverGraphFolder = null; // pasta do servidor no grafo (registra os arquivos lá)
 let deliverBusy = false;
 
 async function refreshServerRole() {
@@ -85,9 +86,26 @@ async function refreshServerRole() {
     const row = Array.isArray(data) ? data[0] : data;
     if (row?.is_server) {
       serverRoot = await ipcRenderer.invoke("server-init", row.server_root || null);
+      serverGraphFolder = row.graph_folder_id || null;
     } else {
       serverRoot = null;
+      serverGraphFolder = null;
     }
+  } catch {
+    /* ignore */
+  }
+}
+
+// Registra nomes de arquivos numa pasta do grafo (best-effort).
+async function registerInGraph(folderId, names) {
+  if (!folderId || !names || names.length === 0 || !supabase) return;
+  try {
+    await supabase.rpc("agent_register_files", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+      p_folder_id: folderId,
+      p_names: names,
+    });
   } catch {
     /* ignore */
   }
@@ -123,15 +141,8 @@ async function runDeliveries() {
           // Já entregou? limpa do bucket para não reprocessar.
           await supabase.storage.from("automation").remove([p]);
         }
-        // Registra os arquivos no grafo (pasta escolhida) para aparecer atualizado lá.
-        if (d.graph_folder_id && savedNames.length) {
-          await supabase.rpc("agent_register_files", {
-            p_agent_id: cfg.agentId,
-            p_access_code: cfg.accessCode,
-            p_folder_id: d.graph_folder_id,
-            p_names: savedNames,
-          });
-        }
+        // Registra os arquivos no grafo: pasta escolhida na rotina OU a pasta do servidor.
+        await registerInGraph(d.graph_folder_id || serverGraphFolder, savedNames);
         await supabase.rpc("agent_mark_delivered", {
           p_agent_id: cfg.agentId,
           p_access_code: cfg.accessCode,
@@ -174,6 +185,7 @@ async function runTransfers() {
         const buf = Buffer.from(await blob.arrayBuffer());
         await ipcRenderer.invoke("server-download-write", { root: serverRoot, name: t.filename, base64: buf.toString("base64") });
         await supabase.storage.from("automation").remove([t.storage_path]);
+        await registerInGraph(serverGraphFolder, [t.filename]); // aparece no grafo do servidor
         await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "done", p_error: null });
       } catch (e) {
         await supabase.rpc("agent_mark_transfer", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode, p_id: t.id, p_status: "error", p_error: String(e?.message || e).slice(0, 200) });

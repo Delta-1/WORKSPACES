@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Clock, CloudUpload, FolderSearch, HardDrive, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Bot, Clock, FolderSearch, Plus, RefreshCw, Server, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import AgentFolderPicker from "@/components/AgentFolderPicker";
 import type { Profile, RemoteAgent } from "@/lib/types";
@@ -47,7 +47,6 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [folders, setFolders] = useState<GraphFolder[]>([]);
   const [adding, setAdding] = useState(false);
-  const [draining, setDraining] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [now, setNow] = useState(Date.now());
   const companyId = profile?.company_id ?? null;
@@ -99,24 +98,6 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
     setSyncMsg({ ok: true, text: `"${r.name}" vai coletar no próximo ciclo do agente (até ~1 min).` });
     load();
   }
-  async function drain() {
-    if (!supabase) return;
-    setDraining(true);
-    try {
-      const { data } = await supabase.auth.getSession();
-      const res = await fetch("/api/automation/drain", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}) },
-      });
-      const json = await res.json();
-      if (res.ok) setSyncMsg({ ok: true, text: `Enviados ${json.sent ?? 0} arquivo(s) para o Google Drive.` });
-      else setSyncMsg({ ok: false, text: json.error || "Erro ao enviar para o Drive." });
-      load();
-    } finally {
-      setDraining(false);
-    }
-  }
-
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
 
   return (
@@ -126,9 +107,6 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
           <Bot className="text-emerald-400" size={20} /> Automação de acessos
         </h3>
         <div className="flex items-center gap-2">
-          <button onClick={drain} disabled={draining} className="flex items-center gap-2 liquid-glass text-xs font-medium px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50">
-            <CloudUpload size={14} /> {draining ? "Enviando..." : "Enviar coletados p/ Drive"}
-          </button>
           <button onClick={() => setAdding(true)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
             <Plus size={14} /> Nova rotina
           </button>
@@ -136,9 +114,10 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
       </div>
 
       <p className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-2">
-        <HardDrive size={13} className="text-sky-400 shrink-0" />
-        O robô coleta um arquivo <b>ou pasta inteira</b> da máquina (mesmo sem você conectar) e envia pro Google Drive na
-        frequência escolhida. Precisa do app instalado na máquina e do <b>Drive conectado</b> (Configurações → Drive).
+        <Server size={13} className="text-sky-400 shrink-0" />
+        O robô coleta um arquivo <b>ou pasta inteira</b> da máquina (mesmo sem você conectar) e envia pro seu
+        <b> servidor</b> na frequência escolhida. Os arquivos aparecem na <b>pasta do servidor no grafo</b>. Precisa do
+        app instalado nas máquinas e de um servidor marcado no Acesso Remoto.
       </p>
 
       {syncMsg && (
@@ -239,16 +218,16 @@ function AddRoutineModal({
   const [graphFolderId, setGraphFolderId] = useState("");
   const [every, setEvery] = useState(1);
   const [unit, setUnit] = useState<"minutos" | "horas" | "dias">("dias");
-  const [dest, setDest] = useState("drive"); // "drive" | <serverAgentId>
+  const servers = agents.filter((a) => a.is_server);
+  const [dest, setDest] = useState(() => servers[0]?.id ?? ""); // id do servidor de destino
   const [saving, setSaving] = useState(false);
   const [picking, setPicking] = useState<"source" | "dest" | null>(null);
 
   const factor = unit === "dias" ? 1440 : unit === "horas" ? 60 : 1;
-  const servers = agents.filter((a) => a.is_server);
-  const toServer = dest !== "drive";
+  const toServer = Boolean(dest);
 
   async function save() {
-    if (!supabase || !name.trim() || !agentId || !sourcePath.trim()) return;
+    if (!supabase || !name.trim() || !agentId || !sourcePath.trim() || !dest) return;
     setSaving(true);
     const { error } = await supabase.from("automation_routines").insert({
       name: name.trim(),
@@ -329,17 +308,17 @@ function AddRoutineModal({
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Enviar para</label>
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Enviar para o servidor</label>
           <select value={dest} onChange={(e) => setDest(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
-            <option value="drive">Google Drive</option>
+            {servers.length === 0 && <option value="">Nenhum servidor — crie um no Acesso Remoto</option>}
             {servers.map((s) => (
               <option key={s.id} value={s.id}>Servidor: {s.name}</option>
             ))}
           </select>
           <p className="text-[11px] text-gray-500 mt-1">
             {servers.length === 0
-              ? "Dica: marque uma máquina como servidor no Acesso Remoto para enviar sem depender do Drive."
-              : "Drive (nuvem) ou um servidor (uma máquina sua guarda os arquivos, sem depender do Google)."}
+              ? "Marque uma máquina como servidor no Acesso Remoto (o robô guarda os arquivos nela)."
+              : "Uma máquina sua guarda os arquivos e eles aparecem na pasta do servidor no grafo."}
           </p>
         </div>
 

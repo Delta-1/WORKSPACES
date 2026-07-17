@@ -96,7 +96,17 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       return;
     }
     const next = !pwFor.is_server;
-    await supabase.from("remote_agents").update({ is_server: next }).eq("id", pwFor.id);
+    const patch: { is_server: boolean; graph_folder_id?: string } = { is_server: next };
+    // Ao virar servidor, cria automaticamente a pasta dele no grafo (rápido e prático).
+    if (next && !pwFor.graph_folder_id) {
+      const { data: folder } = await supabase
+        .from("files")
+        .insert({ name: `Servidor: ${pwFor.name}`, type: "folder", parent_id: null })
+        .select("id")
+        .single();
+      if (folder) patch.graph_folder_id = folder.id;
+    }
+    await supabase.from("remote_agents").update(patch).eq("id", pwFor.id);
     setPwFor(null);
     setPwInput("");
     load();

@@ -69,6 +69,7 @@ export type RemoteAgent = {
   specs: AgentSpecs | null;
   is_server: boolean | null;
   server_root: string | null;
+  graph_folder_id: string | null;
 };
 
 export type AgentSpecs = {
