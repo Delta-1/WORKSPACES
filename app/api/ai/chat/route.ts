@@ -333,7 +333,7 @@ async function runCopilotGemini(
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as { history?: ChatTurn[]; system?: string; tools?: boolean };
+  const body = (await request.json()) as { history?: ChatTurn[]; system?: string; tools?: boolean; agentId?: string };
   const history = body.history ?? [];
   // A IA exige que a conversa COMECE com uma mensagem do usuário. A saudação
   // inicial do assistente (Orb/ChatTab) quebrava a chamada — removemos os turnos
@@ -342,17 +342,29 @@ export async function POST(request: Request) {
   if (history.length === 0) {
     return NextResponse.json({ error: "Histórico vazio." }, { status: 400 });
   }
-  const override = await loadOverride(request);
+  let override = await loadOverride(request);
   const company = getCompany();
   const client = supabaseForRequest(request);
 
-  const systemPrompt =
+  // Agente do Labs (Orb / Copiloto interno): usa a chave e a personalidade dele.
+  let agentContext = "";
+  if (body.agentId && client) {
+    const { data: ag } = await client.from("chatbots").select("provider,api_key,persona,instructions,knowledge").eq("id", body.agentId).maybeSingle();
+    if (ag) {
+      if (ag.api_key) override = { provider: ag.provider, apiKey: ag.api_key };
+      const bits = [ag.persona && `Personalidade: ${ag.persona}`, ag.instructions && `Instruções: ${ag.instructions}`, ag.knowledge && `Conhecimento:\n${ag.knowledge}`].filter(Boolean);
+      if (bits.length) agentContext = bits.join("\n") + "\n\n";
+    }
+  }
+
+  const baseSystem =
     typeof body.system === "string" && body.system.trim()
       ? body.system
       : `Você é o copiloto interno de IA da plataforma "${company.name}". Ajuda os funcionários com dúvidas de rotina, sugestões de resposta para clientes e suporte.\n\n` +
         `ENTENDA A CONVERSA ANTES DE RESPONDER: leia todo o histórico, guarde na memória o que já foi dito (nomes, datas, números) e responda de forma CLARA e CONCISA, sem recomeçar nem repetir saudações.\n\n` +
         `Você TEM ACESSO aos arquivos e ações da empresa. Para arquivos, use search_files; se o nome estiver vago ou houver várias opções, PERGUNTE qual é o certo antes de enviar; quando tiver certeza, use send_file. ` +
         `Para criar tarefa, cadastrar cliente, publicar aviso, etc., use as ferramentas certas.`;
+  const systemPrompt = agentContext + baseSystem;
 
   // Contexto do usuário (para agir no workspace: criar tarefa, recado, etc.).
   let ctx: Ctx = { userId: null, companyId: null };

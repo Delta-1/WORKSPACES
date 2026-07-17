@@ -225,6 +225,7 @@ export type Chatbot = {
   accent: string | null;
   apis: AgentApi[] | null;
   test_mode: boolean | null;
+  slot: string | null;
   created_at: string;
   updated_at: string;
 };

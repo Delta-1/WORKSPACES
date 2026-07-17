@@ -49,6 +49,10 @@ export default function ChatTab() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const botRef = useRef<{ id: string; name: string; persona: string | null; instructions: string | null; knowledge: string | null } | null>(null);
+  const agentIdRef = useRef<string | null>(null);
+  useState(() => {
+    if (supabase) supabase.from("chatbots").select("id").eq("slot", "internal").maybeSingle().then(({ data }) => { agentIdRef.current = data?.id ?? null; });
+  });
 
   function botSystemPrompt() {
     const b = botRef.current;
@@ -202,7 +206,7 @@ export default function ChatTab() {
         headers: { "Content-Type": "application/json", ...headers },
         // No modo treino não usa ferramentas (responde como o bot). Fora dele, o
         // copiloto pode buscar e ENTREGAR arquivos do workspace.
-        body: JSON.stringify({ history: historyForApi, system: training ? botSystemPrompt() : undefined, tools: !training }),
+        body: JSON.stringify({ history: historyForApi, system: training ? botSystemPrompt() : undefined, tools: !training, agentId: training ? undefined : agentIdRef.current }),
       });
       const data = await res.json();
       if (data.live !== undefined) setLive(data.live);

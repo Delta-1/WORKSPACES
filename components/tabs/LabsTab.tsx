@@ -34,13 +34,20 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [a, n] = await Promise.all([
-      supabase.from("chatbots").select("*").order("created_at"),
-      supabase.from("whatsapp_numbers").select("*").order("created_at"),
-    ]);
-    setAgents((a.data as Agent[]) ?? []);
-    setNumbers((n.data as WhatsappNumber[]) ?? []);
-  }, []);
+    let list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? [];
+    // Garante os agentes de sistema (Orb e Copiloto interno) na lista do Labs.
+    if (canManage && profile?.company_id) {
+      const need: { slot: string; name: string; accent: string }[] = [];
+      if (!list.some((x) => x.slot === "orb")) need.push({ slot: "orb", name: "Orb (acesso remoto)", accent: "#6366f1" });
+      if (!list.some((x) => x.slot === "internal")) need.push({ slot: "internal", name: "Copiloto interno (chat)", accent: "#10b981" });
+      if (need.length) {
+        await supabase.from("chatbots").insert(need.map((s) => ({ name: s.name, slot: s.slot, provider: "gemini", accent: s.accent, capabilities: ["files"], enabled: true, test_mode: false, company_id: profile.company_id })));
+        list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? list;
+      }
+    }
+    setAgents(list);
+    setNumbers(((await supabase.from("whatsapp_numbers").select("*").order("created_at")).data as WhatsappNumber[]) ?? []);
+  }, [canManage, profile?.company_id]);
 
   useEffect(() => {
     load();
@@ -102,14 +109,17 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
                   <Bot size={18} />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-bold truncate">{ag.name || "Sem nome"}</p>
+                  <p className="text-sm font-bold truncate flex items-center gap-1.5">
+                    {ag.name || "Sem nome"}
+                    {ag.slot && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">sistema</span>}
+                  </p>
                   <p className="text-[10px] text-gray-500 truncate">{ag.provider} · {ag.enabled ? "ativo" : "pausado"}</p>
                 </div>
               </div>
               {canManage && (
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => setEditing(ag)} className="text-[11px] text-indigo-300 hover:text-white cursor-pointer">editar</button>
-                  <button onClick={() => remove(ag.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={13} /></button>
+                  {!ag.slot && <button onClick={() => remove(ag.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={13} /></button>}
                 </div>
               )}
             </div>
@@ -119,7 +129,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
                 <span key={c} className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-gray-300">{CAPS.find((x) => x.id === c)?.label ?? c}</span>
               ))}
             </div>
-            {canManage && numbers.length > 0 && (
+            {canManage && !ag.slot && numbers.length > 0 && (
               <div className="mt-1 border-t border-white/10 pt-2">
                 <p className="text-[10px] text-gray-500 mb-1">Responde nos números:</p>
                 <div className="space-y-1">

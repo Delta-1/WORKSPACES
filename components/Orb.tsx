@@ -31,27 +31,43 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
   const recRef = useRef<Rec | null>(null);
   const activeRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [agentId, setAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("chatbots").select("id").eq("slot", "orb").maybeSingle().then(({ data }) => setAgentId(data?.id ?? null));
+  }, []);
 
   const system =
     `Você é o Orb, um assistente de voz estilo JARVIS que ajuda um técnico durante o acesso remoto à máquina "${agentName}". ` +
     `Seja BREVE e direto — respostas curtas, boas para ouvir. ENTENDA a conversa e guarde na memória o que já foi dito. ` +
     `Você NÃO tira prints da tela. Você ORIENTA passo a passo, perguntando. Quando quiser indicar onde clicar, diga ` +
     `"vou circular o ponteiro" e PEÇA PERMISSÃO ("posso continuar?") antes de avançar para o próximo passo. ` +
-    `Você tem acesso aos arquivos e ferramentas da empresa. Ao ouvir que o técnico vai finalizar/encerrar, despeça-se em uma frase.`;
+    `Você tem acesso aos arquivos e ferramentas da empresa. Responda com CONFIANÇA e sem enrolação — não fique quieto nem hesite; ` +
+    `se faltar algo, pergunte objetivo. Ao ouvir que o técnico vai finalizar/encerrar, despeça-se em uma frase.`;
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  function browserSpeak(text: string) {
+  const speakingRef = useRef(false);
+  function browserSpeak(text: string, done: () => void) {
     try {
       window.speechSynthesis?.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "pt-BR";
+      u.onend = done;
+      u.onerror = done;
       window.speechSynthesis?.speak(u);
     } catch {
-      /* ignore */
+      done();
     }
   }
   // Fala com a voz do ElevenLabs; se não houver chave configurada, usa o navegador.
+  // Pausa a escuta enquanto fala (para o Orb não ouvir a própria voz) e retoma depois.
   async function speak(text: string) {
+    speakingRef.current = true;
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+    const resume = () => {
+      speakingRef.current = false;
+      if (activeRef.current) { try { recRef.current?.start(); } catch { /* ignore */ } }
+    };
     try {
       const headers = await authHeaders();
       const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ text }) });
@@ -60,13 +76,15 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
         audioRef.current?.pause();
         const a = new Audio(url);
         audioRef.current = a;
+        a.onended = resume;
+        a.onerror = resume;
         await a.play();
         return;
       }
     } catch {
       /* cai no navegador */
     }
-    browserSpeak(text);
+    browserSpeak(text, resume);
   }
 
   useEffect(() => {
@@ -83,7 +101,7 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ history: next.map((m) => ({ role: m.role, text: m.text })), system, tools: true }),
+        body: JSON.stringify({ history: next.map((m) => ({ role: m.role, text: m.text })), system, tools: true, agentId }),
       });
       const data = await res.json();
       const reply = data.reply || "Não entendi, pode repetir?";
@@ -120,15 +138,16 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
     }
     const rec = new Ctor();
     rec.lang = "pt-BR";
-    rec.continuous = true;
+    rec.continuous = false; // uma fala por vez é mais confiável; reinicia sozinho
     rec.interimResults = false;
     rec.onresult = (e) => {
-      const t = e.results[e.results.length - 1][0].transcript;
-      handleTranscript(t);
+      const t = e.results[e.results.length - 1][0].transcript?.trim();
+      if (t) handleTranscript(t); // mostra no chat como sua mensagem e responde
     };
     rec.onend = () => {
-      if (activeRef.current) {
-        try { rec.start(); } catch { /* ignore */ }
+      // Reinicia a escuta (menos quando o Orb está falando, p/ não se ouvir).
+      if (activeRef.current && !speakingRef.current) {
+        setTimeout(() => { try { rec.start(); } catch { /* ignore */ } }, 250);
       }
     };
     rec.onerror = () => {};
@@ -137,7 +156,7 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
     try { rec.start(); } catch { /* ignore */ }
     setVoiceOn(true);
     setMinimized(true);
-    speak("Estou ouvindo.");
+    speak("Pode falar, estou te ouvindo.");
   }
   function stopVoice() {
     activeRef.current = false;
