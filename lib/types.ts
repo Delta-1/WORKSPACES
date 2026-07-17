@@ -223,9 +223,12 @@ export type Chatbot = {
   voice_reply: boolean;
   capabilities: string[] | null;
   accent: string | null;
+  apis: AgentApi[] | null;
   created_at: string;
   updated_at: string;
 };
+
+export type AgentApi = { name: string; url: string; description?: string };
 
 export type Tag = {
   id: string;

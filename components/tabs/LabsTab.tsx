@@ -1,9 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, FlaskConical, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FlaskConical, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Chatbot, Profile, WhatsappNumber, AiProvider } from "@/lib/types";
+import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi } from "@/lib/types";
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const { data } = await supabase.auth.getSession();
+  return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
+}
 
 // Capacidades que um agente pode ter dentro do workspace.
 const CAPS: { id: string; label: string; desc: string }[] = [
@@ -139,17 +145,58 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
 function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agent>; profile: Profile | null; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<Partial<Agent>>(agent);
   const [saving, setSaving] = useState(false);
+  const [studying, setStudying] = useState(false);
+  const [studyMsg, setStudyMsg] = useState<string | null>(null);
   const set = (patch: Partial<Agent>) => setF((p) => ({ ...p, ...patch }));
   const caps = f.capabilities ?? [];
   const toggleCap = (id: string) => set({ capabilities: caps.includes(id) ? caps.filter((c) => c !== id) : [...caps, id] });
+  const apis = f.apis ?? [];
+  const setApi = (i: number, patch: Partial<AgentApi>) => set({ apis: apis.map((a, k) => (k === i ? { ...a, ...patch } : a)) });
+  const addApi = () => set({ apis: [...apis, { name: "", url: "", description: "" }] });
+  const removeApi = (i: number) => set({ apis: apis.filter((_, k) => k !== i) });
 
-  async function learnFromFile(file: File) {
-    const text = await file.text().catch(() => "");
-    if (!text) {
-      alert("Só consigo aprender de arquivos de texto (.txt, .csv, .md) por enquanto.");
+  // "Estudar": extrai o texto do arquivo (PDF/DOCX/HTML/texto), a IA do agente
+  // transforma em memória (.txt de dados + .md de lógica) e grava no cérebro dele.
+  async function studyFile(file: File) {
+    if (!f.id) {
+      alert("Salve o agente primeiro para ele poder estudar e guardar na memória.");
       return;
     }
-    set({ knowledge: `${f.knowledge ? f.knowledge + "\n\n" : ""}# ${file.name}\n${text}`.slice(0, 40000) });
+    setStudying(true);
+    setStudyMsg("Lendo o arquivo…");
+    try {
+      let text = "";
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc")) {
+        const dataUrl = await new Promise<string>((res) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result as string);
+          r.readAsDataURL(file);
+        });
+        const ex = await fetch("/api/extract-text", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl, name: file.name }) });
+        text = (await ex.json()).text || "";
+      } else {
+        text = await file.text().catch(() => "");
+      }
+      if (!text.trim()) {
+        setStudyMsg("Não consegui ler texto desse arquivo.");
+        return;
+      }
+      setStudyMsg("Estudando e organizando a memória…");
+      const headers = await authHeaders();
+      const res = await fetch("/api/labs/study", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ agentId: f.id, filename: file.name, text }),
+      });
+      const data = await res.json();
+      if (data.ok) setStudyMsg(`✓ Aprendido! Criou na memória: ${data.created.join(", ")}`);
+      else setStudyMsg(data.error || "Falha ao estudar.");
+    } catch {
+      setStudyMsg("Erro ao estudar o arquivo.");
+    } finally {
+      setStudying(false);
+    }
   }
 
   async function save() {
@@ -165,6 +212,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       knowledge: f.knowledge || null,
       capabilities: caps,
       accent: f.accent || null,
+      apis: apis.filter((a) => a.name && a.url),
       enabled: f.enabled ?? true,
       company_id: profile?.company_id ?? null,
     };
@@ -216,13 +264,31 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
 
         <div>
           <div className="flex items-center justify-between mb-1">
-            <label className="text-[11px] text-gray-400">Conhecimento (o que ele aprendeu)</label>
-            <label className="text-[11px] text-indigo-300 hover:text-white cursor-pointer flex items-center gap-1">
-              <Upload size={11} /> aprender de arquivo
-              <input type="file" accept=".txt,.csv,.md,.json" className="hidden" onChange={(e) => e.target.files?.[0] && learnFromFile(e.target.files[0])} />
+            <label className="text-[11px] text-gray-400">Conhecimento base (colar direto)</label>
+            <label className={`text-[11px] cursor-pointer flex items-center gap-1 ${studying ? "text-gray-500" : "text-indigo-300 hover:text-white"}`}>
+              <BrainCircuit size={12} /> {studying ? "estudando…" : "estudar arquivo"}
+              <input type="file" accept=".txt,.csv,.md,.json,.html,.htm,.pdf,.docx" className="hidden" disabled={studying} onChange={(e) => e.target.files?.[0] && studyFile(e.target.files[0])} />
             </label>
           </div>
-          <textarea value={f.knowledge ?? ""} onChange={(e) => set({ knowledge: e.target.value })} rows={4} placeholder="Cole informações ou envie arquivos para o agente aprender." className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-none" />
+          <textarea value={f.knowledge ?? ""} onChange={(e) => set({ knowledge: e.target.value })} rows={3} placeholder="Cole informações fixas aqui. Para PDFs/planilhas/HTML, use 'estudar arquivo' — o agente lê, resume em .txt (dados) + .md (lógica) e guarda na memória dele." className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-none" />
+          {studyMsg && <p className={`text-[10px] mt-1 ${studyMsg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{studyMsg}</p>}
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11px] text-gray-400 flex items-center gap-1"><Plug size={11} /> APIs do agente (opcional)</label>
+            <button onClick={addApi} className="text-[11px] text-indigo-300 hover:text-white cursor-pointer">+ adicionar API</button>
+          </div>
+          {apis.length === 0 && <p className="text-[10px] text-gray-600">Sem API própria — o agente usa a IA/API já registrada.</p>}
+          <div className="space-y-1.5">
+            {apis.map((a, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <input value={a.name} onChange={(e) => setApi(i, { name: e.target.value })} placeholder="Nome" className="w-24 bg-black/20 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none" />
+                <input value={a.url} onChange={(e) => setApi(i, { url: e.target.value })} placeholder="https://..." className="flex-1 bg-black/20 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none" />
+                <button onClick={() => removeApi(i)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0"><Trash2 size={13} /></button>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div>
