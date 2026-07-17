@@ -709,7 +709,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
         </div>
       )}
 
-      {orbOpen && <Orb agentName={agent.name} onPoint={circlePointer} onClose={() => setOrbOpen(false)} />}
+      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onClose={() => setOrbOpen(false)} />}
     </div>
   );
 }

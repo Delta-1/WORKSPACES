@@ -24,6 +24,13 @@ const CAPS: { id: string; label: string; desc: string }[] = [
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];
 
+// Prompt-base já pronto — a pessoa só edita os trechos entre colchetes.
+const TEMPLATE_PERSONA = "[Nome], um assistente [ex.: cordial, objetivo] especialista em [área de atuação da empresa].";
+const TEMPLATE_INSTRUCTIONS =
+  "Entenda bem o que a pessoa quer antes de responder. Seja claro e conciso. Use o histórico e o conhecimento abaixo como verdade. " +
+  "Quando precisar de uma informação, pergunte de forma objetiva. Confirme dados importantes antes de agir. " +
+  "Nunca invente valores; se não souber, diga que vai verificar.";
+
 type Agent = Chatbot;
 
 export default function LabsTab({ profile }: { profile: Profile | null }) {
@@ -37,11 +44,14 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
     let list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? [];
     // Garante os agentes de sistema (Orb e Copiloto interno) na lista do Labs.
     if (canManage && profile?.company_id) {
-      const need: { slot: string; name: string; accent: string }[] = [];
-      if (!list.some((x) => x.slot === "orb")) need.push({ slot: "orb", name: "Orb (acesso remoto)", accent: "#6366f1" });
-      if (!list.some((x) => x.slot === "internal")) need.push({ slot: "internal", name: "Copiloto interno (chat)", accent: "#10b981" });
+      const allCaps = CAPS.map((c) => c.id);
+      const need: { slot: string; name: string; accent: string; caps: string[]; persona: string }[] = [];
+      if (!list.some((x) => x.slot === "orb"))
+        need.push({ slot: "orb", name: "Orb", accent: "#6366f1", caps: ["files", "tasks", "clients", "attendance", "remote"], persona: "Orb, o copiloto de voz do acesso remoto — objetivo, calmo e prestativo." });
+      if (!list.some((x) => x.slot === "internal"))
+        need.push({ slot: "internal", name: "Copilot", accent: "#10b981", caps: allCaps, persona: "Copilot, o copiloto de voz e ADMINISTRADOR do sistema — tem acesso a tudo, é confiante, claro e direto." });
       if (need.length) {
-        await supabase.from("chatbots").insert(need.map((s) => ({ name: s.name, slot: s.slot, provider: "gemini", accent: s.accent, capabilities: ["files"], enabled: true, test_mode: false, company_id: profile.company_id })));
+        await supabase.from("chatbots").insert(need.map((s) => ({ name: s.name, slot: s.slot, provider: "gemini", accent: s.accent, capabilities: s.caps, persona: s.persona, instructions: TEMPLATE_INSTRUCTIONS, enabled: true, test_mode: false, company_id: profile.company_id })));
         list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? list;
       }
     }
@@ -63,7 +73,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   }, [load]);
 
   function newAgent() {
-    setEditing({ name: "", provider: "gemini", api_key: "", persona: "", instructions: "", greeting: "", knowledge: "", enabled: true, test_mode: false, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
+    setEditing({ name: "", provider: "gemini", api_key: "", persona: TEMPLATE_PERSONA, instructions: TEMPLATE_INSTRUCTIONS, greeting: "", knowledge: "", enabled: true, test_mode: false, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
   }
 
   async function remove(id: string) {

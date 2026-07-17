@@ -20,9 +20,24 @@ type Rec = {
 
 // Assistente estilo JARVIS que aparece durante o acesso remoto. Mini chat +
 // modo voz (bolinha flutuante que escuta e responde falando).
-export default function Orb({ agentName, onPoint, onClose }: { agentName: string; onPoint?: () => void; onClose: () => void }) {
+export default function Orb({
+  slot = "orb",
+  title = "Orb",
+  contextLabel,
+  autoVoice = false,
+  onPoint,
+  onClose,
+}: {
+  slot?: string;
+  title?: string;
+  contextLabel?: string;
+  autoVoice?: boolean;
+  onPoint?: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(title);
   const [msgs, setMsgs] = useState<Msg[]>([
-    { role: "assistant", text: "Oi, eu sou o Orb. Posso te ajudar durante o acesso. Toque no microfone pra falar comigo por voz." },
+    { role: "assistant", text: `Oi, eu sou o ${title}. Toque no microfone (ou fale) que eu te ajudo.` },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,16 +49,20 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
   const [agentId, setAgentId] = useState<string | null>(null);
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("chatbots").select("id").eq("slot", "orb").maybeSingle().then(({ data }) => setAgentId(data?.id ?? null));
-  }, []);
+    supabase.from("chatbots").select("id,name").eq("slot", slot).maybeSingle().then(({ data }) => {
+      setAgentId(data?.id ?? null);
+      if (data?.name) setName(data.name);
+    });
+  }, [slot]);
 
-  const system =
-    `Você é o Orb, um assistente de voz estilo JARVIS que ajuda um técnico durante o acesso remoto à máquina "${agentName}". ` +
-    `Seja BREVE e direto — respostas curtas, boas para ouvir. ENTENDA a conversa e guarde na memória o que já foi dito. ` +
-    `Você NÃO tira prints da tela. Você ORIENTA passo a passo, perguntando. Quando quiser indicar onde clicar, diga ` +
-    `"vou circular o ponteiro" e PEÇA PERMISSÃO ("posso continuar?") antes de avançar para o próximo passo. ` +
-    `Você tem acesso aos arquivos e ferramentas da empresa. Responda com CONFIANÇA e sem enrolação — não fique quieto nem hesite; ` +
-    `se faltar algo, pergunte objetivo. Ao ouvir que o técnico vai finalizar/encerrar, despeça-se em uma frase.`;
+  const system = onPoint
+    ? `Você é o ${name}, assistente de voz estilo JARVIS que ajuda um técnico no acesso remoto à máquina "${contextLabel || ""}". ` +
+      `Seja BREVE e falado. ENTENDA a conversa e guarde o que já foi dito. NÃO tira prints; ORIENTA passo a passo, ` +
+      `dizendo "vou circular o ponteiro" e PEDINDO PERMISSÃO antes de avançar. Tem acesso aos arquivos/ferramentas. ` +
+      `Responda com CONFIANÇA, sem hesitar. Ao ouvir que o técnico vai finalizar, despeça-se em uma frase.`
+    : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
+      `arquivos, tarefas, clientes, mural, atendimentos e envio no WhatsApp. Seja BREVE e falado, ENTENDA a intenção, ` +
+      `guarde o que já foi dito e responda com CONFIANÇA e clareza. Ao ouvir que a pessoa vai encerrar, despeça-se em uma frase.`;
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakingRef = useRef(false);
@@ -166,13 +185,15 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
     setMinimized(false);
   }
   useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
+  // Ao ser chamado por atalho (tecla "v"), já entra ouvindo.
+  useEffect(() => { if (autoVoice) startVoice(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   // Modo bolinha flutuante (voz ativa e minimizado) — vibe JARVIS.
   if (minimized) {
     return (
       <button
         onClick={() => setMinimized(false)}
-        title="Orb ouvindo — toque para abrir o chat"
+        title={`${name} ouvindo — toque para abrir o chat`}
         className="fixed bottom-5 right-5 z-[95] w-16 h-16 rounded-full cursor-pointer orb-float flex items-center justify-center"
       >
         <span className="absolute inset-0 rounded-full orb-glow" />
@@ -186,7 +207,7 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-indigo-950/40">
         <span className="text-sm font-bold flex items-center gap-2">
           <span className="w-6 h-6 rounded-full orb-glow flex items-center justify-center"><Bot size={13} className="text-white" /></span>
-          Orb {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
+          {name} {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
         </span>
         <div className="flex items-center gap-1">
           {onPoint && (

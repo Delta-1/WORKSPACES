@@ -24,6 +24,7 @@ import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import LabsTab from "@/components/tabs/LabsTab";
+import Orb from "@/components/Orb";
 import LogTab from "@/components/tabs/LogTab";
 import MessagesTab from "@/components/tabs/MessagesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
@@ -80,6 +81,7 @@ export default function Home() {
   const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false); // copiloto de voz global (tecla "v")
   const [editApps, setEditApps] = useState(false); // modo edição (lápis) do menu de apps
   const [quickIds, setQuickIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -106,6 +108,19 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
+
+  // Atalho "v" chama o copiloto de voz (menos quando está digitando num campo).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "v" && e.key !== "V") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      setCopilotOpen(true);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     const color = company.themeColor || "#10b981";
@@ -386,6 +401,8 @@ export default function Home() {
           />
         )}
       </main>
+
+      {copilotOpen && <Orb slot="internal" title="Copilot" autoVoice onClose={() => setCopilotOpen(false)} />}
 
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
