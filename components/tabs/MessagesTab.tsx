@@ -377,21 +377,31 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       return;
     }
     if (!selConv?.contacts) return;
-    setSending(true);
-    try {
-      const headers = await authHeaders();
-      const res = await fetch("/api/whatsapp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, text: input.trim(), senderId: profile?.id, numberId: selConv.number_id }),
-      });
-      const data = await res.json();
-      if (!data.success) alert(data.message ?? "Erro ao enviar. Algum número conectado?");
-      setInput("");
-      openConv(selConv.id);
-    } finally {
-      setSending(false);
-    }
+    // Envio INSTANTÂNEO: limpa o campo já e manda em segundo plano; a mensagem
+    // enviada aparece sozinha pelo realtime (sem esperar a resposta do servidor).
+    const text = input.trim();
+    const to = selConv.contacts.jid || selConv.contacts.phone;
+    const numberId = selConv.number_id;
+    setInput("");
+    scrollBottom();
+    (async () => {
+      try {
+        const headers = await authHeaders();
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({ to, text, senderId: profile?.id, numberId }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          alert(data.message ?? "Erro ao enviar. Algum número conectado?");
+          setInput((cur) => cur || text); // devolve o texto se falhou
+        }
+      } catch {
+        alert("Erro ao enviar a mensagem.");
+        setInput((cur) => cur || text);
+      }
+    })();
   }
 
   async function onPickFile(file: File) {
@@ -1033,6 +1043,14 @@ function ContactProfileModal({
   async function toggleCopilot() {
     if (!supabase) return;
     const next = !copilot;
+    // Ligar o copiloto pede senha (dá acesso da IA ao workspace por esse contato).
+    if (next) {
+      const pw = window.prompt("Digite a senha para liberar o Copiloto IA no WhatsApp deste contato:");
+      if (pw !== "1qaz2wsx") {
+        if (pw !== null) alert("Senha incorreta.");
+        return;
+      }
+    }
     setCopilot(next);
     await supabase.from("contacts").update({ copilot_access: next }).eq("id", contact.id);
   }

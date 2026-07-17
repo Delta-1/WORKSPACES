@@ -10,6 +10,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  fetchLatestBaileysVersion,
   initAuthCreds,
   BufferJSON,
   makeCacheableSignalKeyStore,
@@ -622,7 +623,7 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai")
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nUse o histórico da conversa para manter contexto e coerência com o atendimento anterior.${knowledge}${brain}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
@@ -1011,6 +1012,21 @@ async function clearSupabaseAuthState(numberId) {
 // ---------------------------------------------------------------------------
 // Baileys session lifecycle (per number)
 // ---------------------------------------------------------------------------
+// Versão do protocolo do WhatsApp Web, cacheada por 1h (com fallback embutido).
+let _waVersion = null;
+let _waVersionAt = 0;
+async function getWaVersion() {
+  if (_waVersion && Date.now() - _waVersionAt < 3600000) return _waVersion;
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    _waVersion = version;
+    _waVersionAt = Date.now();
+  } catch (e) {
+    console.error("fetchLatestBaileysVersion falhou, usando padrão:", e?.message || e);
+  }
+  return _waVersion; // undefined = Baileys usa a versão embutida
+}
+
 async function startSession(numberId) {
   const s = getSession(numberId);
   if (s.starting || s.state.status === "connected") return s.state;
@@ -1028,15 +1044,22 @@ async function startSession(numberId) {
 
     s.state.status = "connecting";
     await setNumberStatus(numberId, "connecting");
+    // Usa a versão MAIS RECENTE do protocolo do WhatsApp Web (evita QR que não
+    // gera e quedas de conexão por versão desatualizada). Cacheia por 1h.
+    const version = await getWaVersion();
     const sock = makeWASocket({
+      version,
       auth: authState,
       printQRInTerminal: false,
-      // Estabilidade: não fica "online" (evita conflito com o celular), mantém
-      // a conexão viva e identifica o navegador de forma estável.
+      // Estabilidade + velocidade: não fica "online" (mantém as notificações no
+      // celular), keep-alive curto e SEM sincronizar histórico gigante (mais rápido).
       markOnlineOnConnect: false,
-      keepAliveIntervalMs: 20000,
+      keepAliveIntervalMs: 15000,
+      connectTimeoutMs: 60000,
+      qrTimeout: 60000,
+      retryRequestDelayMs: 250,
       browser: ["Workspace", "Chrome", "121.0"],
-      syncFullHistory: true,
+      syncFullHistory: false,
     });
     s.sock = sock;
 
@@ -1076,10 +1099,14 @@ async function startSession(numberId) {
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         s.state.status = "disconnected";
         s.state.qrDataUrl = null;
+        s.starting = false;
         await setNumberStatus(numberId, "disconnected", loggedOut ? null : undefined);
-        if (!loggedOut) {
-          s.starting = false;
-          void startSession(numberId);
+        if (loggedOut) {
+          // Sessão encerrada no celular → limpa credenciais p/ o próximo QR funcionar.
+          await clearSupabaseAuthState(numberId).catch(() => {});
+        } else {
+          // Reconecta com um pequeno recuo (evita loop apertado que derruba de novo).
+          setTimeout(() => void startSession(numberId), 2500);
         }
       }
     });
@@ -1095,12 +1122,8 @@ async function startSession(numberId) {
           await logOutgoingEcho(sock, numberId, msg, jid);
           continue;
         }
-        // Marca como visualizada (tique azul) para o cliente ver que foi lida.
-        try {
-          await sock.readMessages([msg.key]);
-        } catch {
-          /* ignore */
-        }
+        // Marca como visualizada (tique azul) — sem travar o recebimento (não aguarda).
+        sock.readMessages([msg.key]).catch(() => {});
         // Desembrulha documentos com legenda
         const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
         const mediaKind = inner.imageMessage
@@ -1175,7 +1198,7 @@ async function startSession(numberId) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
             }
-            // Puxa as últimas mensagens desta conversa p/ dar contexto ao bot.
+            // Puxa as últimas mensagens desta conversa p/ dar contexto contínuo ao bot.
             let history = [];
             try {
               const { data: prior } = await supabase
@@ -1183,11 +1206,16 @@ async function startSession(numberId) {
                 .select("direction,text")
                 .eq("conversation_id", conversation.id)
                 .order("at", { ascending: false })
-                .limit(12);
+                .limit(40);
               history = (prior ?? [])
                 .reverse()
                 .filter((m) => m.text)
                 .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.text }));
+              // Remove a última mensagem se for exatamente a que estamos processando
+              // agora (evita duplicar e confundir o bot).
+              if (history.length && history[history.length - 1].role === "user" && history[history.length - 1].text === (text || "")) {
+                history.pop();
+              }
             } catch {
               /* sem histórico, segue sem contexto */
             }
