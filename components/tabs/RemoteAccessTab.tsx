@@ -21,6 +21,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [pwFor, setPwFor] = useState<RemoteAgent | null>(null); // máquina aguardando senha p/ virar/deixar de ser servidor
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState(false);
+  const [rootInput, setRootInput] = useState(""); // diretório escolhido para o servidor
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
@@ -86,6 +87,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   function toggleServer(a: RemoteAgent) {
     setPwInput("");
     setPwError(false);
+    setRootInput(a.server_root ?? "");
     setPwFor(a);
   }
 
@@ -96,7 +98,9 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       return;
     }
     const next = !pwFor.is_server;
-    const patch: { is_server: boolean; graph_folder_id?: string } = { is_server: next };
+    const patch: { is_server: boolean; graph_folder_id?: string; server_root?: string | null } = { is_server: next };
+    // Diretório escolhido pelo gestor (qualquer pasta). Vazio = padrão do agente.
+    if (next) patch.server_root = rootInput.trim() || null;
     // Ao virar servidor, cria automaticamente a pasta dele no grafo (rápido e prático).
     if (next && !pwFor.graph_folder_id) {
       const { data: folder } = await supabase
@@ -281,6 +285,21 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
               placeholder="Senha"
               className={`w-full bg-black/20 border rounded-lg px-3 py-2 text-sm outline-none ${pwError ? "border-red-500" : "border-white/10"}`}
             />
+            {!pwFor.is_server && (
+              <div className="space-y-1">
+                <label className="text-[11px] text-gray-400">Diretório do servidor (opcional)</label>
+                <input
+                  value={rootInput}
+                  onChange={(e) => setRootInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && confirmServerChange()}
+                  placeholder="Ex.: D:\\Empresa  •  vazio = pasta padrão"
+                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono outline-none"
+                />
+                <p className="text-[10px] text-gray-500">
+                  Escolha qualquer pasta que a máquina poderá administrar online. As pastas Arquivos, Cerebro e Download são criadas dentro dela. Se deixar vazio, usa a pasta padrão do app.
+                </p>
+              </div>
+            )}
             {pwError && <p className="text-[11px] text-red-400">Senha incorreta.</p>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setPwFor(null)} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>

@@ -20,7 +20,10 @@ type Routine = {
   next_run_at: string;
   dest_type: string | null;
   dest_agent_id: string | null;
+  repeat: boolean | null;
 };
+
+type RunRow = { routine_id: string; status: string; error: string | null; created_at: string };
 
 function fmtEvery(min: number): string {
   if (min % 1440 === 0) return `${min / 1440}d`;
@@ -45,6 +48,7 @@ type GraphFolder = { id: string; name: string };
 export default function AutomationTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [latestRun, setLatestRun] = useState<Record<string, RunRow>>({});
   const [folders, setFolders] = useState<GraphFolder[]>([]);
   const [flowOpen, setFlowOpen] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -82,6 +86,17 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
     setAgents((a.data as RemoteAgent[]) ?? []);
     setRoutines((r.data as Routine[]) ?? []);
     setFolders((f.data as GraphFolder[]) ?? []);
+    // Última rodada de cada rotina (para mostrar progresso/OK/erro reais).
+    const { data: runs } = await supabase
+      .from("automation_runs")
+      .select("routine_id,status,error,created_at")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    const latest: Record<string, RunRow> = {};
+    for (const run of (runs as RunRow[]) ?? []) {
+      if (!latest[run.routine_id]) latest[run.routine_id] = run;
+    }
+    setLatestRun(latest);
   }, [companyId]);
 
   useEffect(() => {
@@ -90,6 +105,7 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
     const ch = supabase
       .channel("automation")
       .on("postgres_changes", { event: "*", schema: "public", table: "automation_routines" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "automation_runs" }, () => load())
       .subscribe();
     return () => {
       if (supabase) supabase.removeChannel(ch);
@@ -152,10 +168,13 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
         )}
         {routines.map((r) => {
           const nextMs = new Date(r.next_run_at).getTime();
-          const startMs = r.last_run_at ? new Date(r.last_run_at).getTime() : nextMs - r.interval_minutes * 60000;
-          const totalMs = Math.max(1, nextMs - startMs);
-          const pct = Math.min(100, Math.max(0, ((now - startMs) / totalMs) * 100));
           const remaining = nextMs - now;
+          const run = latestRun[r.id];
+          // Estado da barra: coletando (em voo) / concluído / erro.
+          const runStatus = run?.status ?? null;
+          const collecting = runStatus === "uploaded"; // subiu, aguardando o servidor
+          const done = runStatus === "in_server";
+          const errored = runStatus === "error" || r.last_status === "error";
           return (
             <div key={r.id} className="liquid-glass rounded-2xl p-4 flex flex-col gap-2">
               <div className="flex items-start justify-between gap-2">
@@ -177,7 +196,7 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
               </p>
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-gray-500 flex items-center gap-1">
-                  <RefreshCw size={11} /> a cada {fmtEvery(r.interval_minutes)}
+                  {r.repeat === false ? <>✅ uma vez</> : <><RefreshCw size={11} /> a cada {fmtEvery(r.interval_minutes)}</>}
                   {r.dest_type === "server"
                     ? ` → ${agentName.get(r.dest_agent_id ?? "") ?? "servidor"}`
                     : " → Drive"}
@@ -188,26 +207,35 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
                 </label>
               </div>
 
-              {/* Barrinha de contagem até a próxima ativação */}
-              {r.enabled && (
-                <div className="mt-0.5">
-                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
-                    <Clock size={10} /> próxima coleta em {fmtRemaining(remaining)}
-                  </p>
+              {/* Barra de estado da transferência: coletando / concluído / erro */}
+              <div className="mt-0.5">
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  {collecting ? (
+                    <div className="h-full w-1/3 bg-amber-400 rounded-full automation-indeterminate" />
+                  ) : (
+                    <div
+                      className={`h-full rounded-full transition-all ${errored ? "bg-red-500" : done ? "bg-emerald-500" : "bg-white/20"}`}
+                      style={{ width: errored || done ? "100%" : "0%" }}
+                    />
+                  )}
                 </div>
-              )}
-
-              {r.last_run_at && (
-                <p className="text-[10px] text-gray-600">
-                  Última: {new Date(r.last_run_at).toLocaleString("pt-BR")} ·{" "}
-                  <span className={r.last_status === "error" ? "text-red-400" : "text-emerald-500"}>
-                    {r.last_status === "error" ? `erro: ${r.last_error?.slice(0, 40)}` : r.last_status}
-                  </span>
+                <p className="text-[10px] mt-1 flex items-center gap-1">
+                  {collecting ? (
+                    <span className="text-amber-300 flex items-center gap-1"><RefreshCw size={10} className="animate-spin" /> Coletando e enviando…</span>
+                  ) : errored ? (
+                    <span className="text-red-400">✕ Erro{run?.error || r.last_error ? `: ${(run?.error || r.last_error || "").slice(0, 60)}` : ""}</span>
+                  ) : done ? (
+                    <span className="text-emerald-400">✓ Concluído{r.last_run_at ? ` em ${new Date(r.last_run_at).toLocaleString("pt-BR")}` : ""}</span>
+                  ) : (
+                    <span className="text-gray-500">Aguardando primeira coleta…</span>
+                  )}
                 </p>
-              )}
+                {r.enabled && r.repeat !== false && (done || errored) && (
+                  <p className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1">
+                    <Clock size={10} /> próxima em {fmtRemaining(remaining)}
+                  </p>
+                )}
+              </div>
             </div>
           );
         })}

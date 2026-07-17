@@ -27,6 +27,7 @@ export default function AutomationFlowBuilder({
   const [name, setName] = useState("");
   const [every, setEvery] = useState(1);
   const [unit, setUnit] = useState<"minutos" | "horas" | "dias">("dias");
+  const [repeat, setRepeat] = useState(true);
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [sourcePath, setSourcePath] = useState("");
   const [dest, setDest] = useState(() => servers[0]?.id ?? "");
@@ -64,6 +65,7 @@ export default function AutomationFlowBuilder({
       source_path: sourcePath.trim(),
       interval_minutes: Math.max(1, Math.round(every * factor)),
       to_drive: false,
+      repeat,
       dest_type: "server",
       dest_scope: scope,
       // dest_agent_id continua sendo o "principal" (usado no scope 'one').
@@ -141,6 +143,22 @@ export default function AutomationFlowBuilder({
                     <option value="horas">hora(s)</option>
                     <option value="dias">dia(s)</option>
                   </select>
+                </div>
+                <div className="pt-1 space-y-1.5">
+                  <button
+                    onClick={() => setRepeat(true)}
+                    className={`w-full text-left rounded-lg p-2.5 border cursor-pointer transition-colors ${repeat ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 bg-black/20 hover:bg-white/5"}`}
+                  >
+                    <p className="text-xs font-semibold flex items-center gap-1.5">🔁 Repetir sempre</p>
+                    <p className="text-[10px] text-gray-400">Faz a coleta a cada período. Ex.: pega o XML todo dia 1º do mês.</p>
+                  </button>
+                  <button
+                    onClick={() => setRepeat(false)}
+                    className={`w-full text-left rounded-lg p-2.5 border cursor-pointer transition-colors ${!repeat ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 bg-black/20 hover:bg-white/5"}`}
+                  >
+                    <p className="text-xs font-semibold flex items-center gap-1.5">✅ Rodar uma vez</p>
+                    <p className="text-[10px] text-gray-400">Coleta uma única vez, conclui e pausa sozinha (sem loop).</p>
+                  </button>
                 </div>
                 <p className="text-[11px] text-gray-500">A automação já roda a primeira vez ao ser criada.</p>
               </div>
