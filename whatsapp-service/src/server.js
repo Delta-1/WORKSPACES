@@ -762,6 +762,16 @@ const COPILOT_TOOLS = [
       "Encaminha um ARQUIVO para outro contato pelo WhatsApp. Primeiro ache o arquivo com search_files (pegue o id) e CONFIRME com o gestor que é esse arquivo e esse contato antes de enviar.",
     input_schema: { type: "object", properties: { contact: { type: "string" }, file_id: { type: "string" } }, required: ["contact", "file_id"] },
   },
+  {
+    name: "forward_media",
+    description:
+      "Pega a última mídia (áudio/imagem/documento) que CHEGOU na conversa de um contato e repassa para OUTRO contato. Ex.: 'pega o áudio que a Maria mandou e manda pro financeiro'. Confirme antes.",
+    input_schema: {
+      type: "object",
+      properties: { from_contact: { type: "string" }, to_contact: { type: "string" }, kind: { type: "string", description: "audio|image|document (opcional)" } },
+      required: ["from_contact", "to_contact"],
+    },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -866,6 +876,27 @@ async function copilotDispatch(companyId, name, input, files, sends) {
     sends.push({ to, file, name: r.contact.name || r.contact.phone });
     return { ok: true, message: `Arquivo "${file.name}" enfileirado para ${r.contact.name || r.contact.phone}.` };
   }
+  if (name === "forward_media") {
+    // Acha a última mídia que CHEGOU na conversa de from_contact e repassa.
+    const from = await resolveSendContact(companyId, input.from_contact);
+    if (from.error) return { ok: false, message: "Origem: " + from.error };
+    if (from.choice) return { ok: false, needs_choice: true, message: "Vários contatos com esse nome (origem). Qual é?", options: from.choice };
+    const { data: conv } = await supabase.from("conversations").select("id").eq("contact_id", from.contact.id).order("last_message_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+    if (!conv) return { ok: false, message: "Não achei conversa com esse contato." };
+    let q = supabase.from("whatsapp_messages").select("media_url,media_type,media_name,media_mime").eq("conversation_id", conv.id).eq("direction", "in").not("media_url", "is", null).order("at", { ascending: false }).limit(1);
+    if (input.kind) q = supabase.from("whatsapp_messages").select("media_url,media_type,media_name,media_mime").eq("conversation_id", conv.id).eq("direction", "in").eq("media_type", input.kind).not("media_url", "is", null).order("at", { ascending: false }).limit(1);
+    const { data: m } = await q.maybeSingle();
+    if (!m?.media_url) return { ok: false, message: "Não achei mídia recebida nessa conversa." };
+    const dest = await resolveSendContact(companyId, input.to_contact);
+    if (dest.error) return { ok: false, message: "Destino: " + dest.error };
+    if (dest.choice) return { ok: false, needs_choice: true, message: "Vários contatos com esse nome (destino). Qual é?", options: dest.choice };
+    const to = dest.contact.jid || dest.contact.phone;
+    let buffer = null;
+    try { const resp = await fetch(m.media_url); if (resp.ok) buffer = Buffer.from(await resp.arrayBuffer()); } catch { /* ignore */ }
+    if (!buffer) return { ok: false, message: "Não consegui baixar a mídia para repassar." };
+    sends.push({ to, file: { name: m.media_name || `${m.media_type || "midia"}`, mime: m.media_mime || "application/octet-stream", buffer } });
+    return { ok: true, message: `Mídia (${m.media_type}) de ${from.contact.name || "contato"} enfileirada para ${dest.contact.name || dest.contact.phone}.` };
+  }
   return await copilotAction(companyId, name, input);
 }
 
@@ -915,8 +946,10 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `"manda X para o fulano", use send_whatsapp (confirme o texto antes). Se pedirem ÁUDIO, chame send_whatsapp com as_audio=true. ` +
     `Se o nome tiver mais de um contato, a ferramenta devolve as opções com telefone — PERGUNTE qual e reenvie com o telefone certo. ` +
     `Para ENCAMINHAR um arquivo a alguém (ex.: "manda o contrato pro João"), ache com search_files, CONFIRME "é esse contrato pro João?" e só então use send_file_to_contact.\n\n` +
-    `ENTENDA A CONVERSA ANTES DE AGIR: leia o histórico, guarde na memória o que já foi dito (nomes, datas, valores) e ` +
-    `responda de forma CLARA e CONCISA. Não repita saudações nem recomece. ` +
+    `ENTENDA BEM A INTENÇÃO antes de agir: leia o histórico, pense no que a pessoa REALMENTE quer e, se estiver ambíguo, ` +
+    `pergunte em vez de chutar. Guarde na memória o que já foi dito (nomes, datas, valores) e responda CLARO e CONCISO, sem recomeçar. ` +
+    `Ao enviar mensagem/arquivo para alguém, CONFIRME o destinatário juntando NOME + TELEFONE (ex.: "confirmando: João, +55 11 9...., certo?") antes de mandar. ` +
+    `Se for algo ROTINEIRO que você já fez com o mesmo contato, seja direto e não fique repetindo perguntas de confirmação bobas. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
       : `Aja de forma autônoma, perguntando só o essencial.`);
@@ -931,7 +964,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     clients: ["lookup_client", "create_client"],
     announcements: ["post_announcement"],
     attendance: ["set_attendance"],
-    relay: ["send_whatsapp", "send_file_to_contact"],
+    relay: ["send_whatsapp", "send_file_to_contact", "forward_media"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));

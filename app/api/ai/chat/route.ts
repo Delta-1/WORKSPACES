@@ -335,6 +335,10 @@ async function runCopilotGemini(
 export async function POST(request: Request) {
   const body = (await request.json()) as { history?: ChatTurn[]; system?: string; tools?: boolean };
   const history = body.history ?? [];
+  // A IA exige que a conversa COMECE com uma mensagem do usuário. A saudação
+  // inicial do assistente (Orb/ChatTab) quebrava a chamada — removemos os turnos
+  // de "assistant" do início.
+  while (history.length && history[0].role === "assistant") history.shift();
   if (history.length === 0) {
     return NextResponse.json({ error: "Histórico vazio." }, { status: 400 });
   }

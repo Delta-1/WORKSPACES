@@ -39,7 +39,8 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
     `"vou circular o ponteiro" e PEÇA PERMISSÃO ("posso continuar?") antes de avançar para o próximo passo. ` +
     `Você tem acesso aos arquivos e ferramentas da empresa. Ao ouvir que o técnico vai finalizar/encerrar, despeça-se em uma frase.`;
 
-  function speak(text: string) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  function browserSpeak(text: string) {
     try {
       window.speechSynthesis?.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -48,6 +49,24 @@ export default function Orb({ agentName, onPoint, onClose }: { agentName: string
     } catch {
       /* ignore */
     }
+  }
+  // Fala com a voz do ElevenLabs; se não houver chave configurada, usa o navegador.
+  async function speak(text: string) {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ text }) });
+      if (res.ok && res.headers.get("content-type")?.includes("audio")) {
+        const url = URL.createObjectURL(await res.blob());
+        audioRef.current?.pause();
+        const a = new Audio(url);
+        audioRef.current = a;
+        await a.play();
+        return;
+      }
+    } catch {
+      /* cai no navegador */
+    }
+    browserSpeak(text);
   }
 
   useEffect(() => {
