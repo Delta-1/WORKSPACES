@@ -25,7 +25,7 @@ import type { Profile, RemoteAgent } from "@/lib/types";
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 
-type Entry = { name: string; isDir: boolean; size: number };
+type Entry = { name: string; isDir: boolean; size: number; full?: string };
 type Quality = "alta" | "media" | "baixa";
 type Progress = { label: string; pct: number } | null;
 
@@ -517,14 +517,14 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
                     {en.isDir ? (
                       <>
                         <button
-                          onClick={() => listDir(dir + sep + en.name)}
+                          onClick={() => listDir(en.full ?? dir + sep + en.name)}
                           className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left"
                         >
                           <Folder size={14} className="text-emerald-400 shrink-0" />
                           <span className="truncate">{en.name}</span>
                         </button>
                         <button
-                          onClick={() => automate(dir + sep + en.name, true)}
+                          onClick={() => automate(en.full ?? dir + sep + en.name, true)}
                           className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-cyan-400 cursor-pointer shrink-0"
                           title="Automatizar envio desta pasta pro Drive"
                         >

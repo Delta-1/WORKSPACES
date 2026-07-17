@@ -207,9 +207,39 @@ ipcMain.on("hide-window", () => {
 });
 
 // ---- Gerenciador de arquivos remoto (o operador navega/baixa/envia) ----
-ipcMain.handle("fs-home", () => os.homedir());
+// ---- Allowlist de pastas ("bloquear acesso") ----
+// Quando o gestor define pastas liberadas, o operador só navega/lê/grava dentro
+// delas. Vazio = sem restrição (comportamento antigo).
+let sharedPaths = [];
+ipcMain.handle("set-shared-paths", (_e, paths) => {
+  sharedPaths = Array.isArray(paths) ? paths.filter((p) => p && String(p).trim()).map((p) => String(p)) : [];
+  return sharedPaths.length;
+});
+function norm(p) {
+  return path.resolve(String(p || "")).replace(/[\\/]+$/, "").toLowerCase();
+}
+// Um caminho é permitido se não há restrição, OU está dentro de alguma pasta liberada.
+function isAllowed(p) {
+  if (!sharedPaths.length) return true;
+  const t = norm(p);
+  return sharedPaths.some((root) => {
+    const r = norm(root);
+    return t === r || t.startsWith(r + path.sep.toLowerCase()) || t.startsWith(r + "/");
+  });
+}
+function ensureAllowed(p) {
+  if (!isAllowed(p)) throw new Error("Acesso bloqueado: esta pasta não está liberada pelo gestor.");
+}
+
+ipcMain.handle("fs-home", () => (sharedPaths.length ? sharedPaths[0] : os.homedir()));
 ipcMain.handle("fs-list", (_e, dir) => {
+  // Sem pasta definida e com restrição → mostra as pastas liberadas como "raízes".
+  if ((!dir || dir === "~") && sharedPaths.length) {
+    const entries = sharedPaths.map((p) => ({ name: p, isDir: true, size: 0, full: p }));
+    return { dir: "", parent: "", sep: path.sep, entries, roots: true };
+  }
   const target = dir && dir !== "~" ? dir : os.homedir();
+  ensureAllowed(target);
   const entries = fs.readdirSync(target, { withFileTypes: true }).map((d) => {
     let size = 0;
     try {
@@ -221,9 +251,12 @@ ipcMain.handle("fs-list", (_e, dir) => {
   });
   // pastas primeiro, depois arquivos, ambos ordenados
   entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-  return { dir: target, parent: path.dirname(target), sep: path.sep, entries };
+  // Se estamos numa raiz liberada, não deixa "subir" além dela.
+  const atSharedRoot = sharedPaths.some((r) => norm(r) === norm(target));
+  return { dir: target, parent: atSharedRoot ? "" : path.dirname(target), sep: path.sep, entries };
 });
 ipcMain.handle("fs-read", (_e, filePath) => {
+  ensureAllowed(filePath);
   const stat = fs.statSync(filePath);
   if (stat.size > 60 * 1024 * 1024) throw new Error("Arquivo muito grande (limite 60 MB).");
   return { name: path.basename(filePath), base64: fs.readFileSync(filePath).toString("base64") };
@@ -398,21 +431,25 @@ ipcMain.handle("server-write", (_e, { root, dir, rel, base64 }) => {
 
 // Operações de pasta (para o seletor: criar/renomear/apagar).
 ipcMain.handle("fs-mkdir", (_e, { dir, name }) => {
+  ensureAllowed(dir || os.homedir());
   const dest = path.join(dir || os.homedir(), path.basename(name || "Nova Pasta"));
   fs.mkdirSync(dest, { recursive: true });
   return { path: dest };
 });
 ipcMain.handle("fs-rename", (_e, { fromPath, toName }) => {
+  ensureAllowed(fromPath);
   const dest = path.join(path.dirname(fromPath), path.basename(toName || "renomeado"));
   fs.renameSync(fromPath, dest);
   return { path: dest };
 });
 ipcMain.handle("fs-delete", (_e, targetPath) => {
+  ensureAllowed(targetPath);
   fs.rmSync(targetPath, { recursive: true, force: true });
   return { ok: true };
 });
 
 ipcMain.handle("fs-write", (_e, { dir, name, base64 }) => {
+  ensureAllowed(dir || os.homedir());
   const safeName = path.basename(name || "arquivo");
   const dest = path.join(dir || os.homedir(), safeName);
   fs.writeFileSync(dest, Buffer.from(base64, "base64"));

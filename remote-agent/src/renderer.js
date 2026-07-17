@@ -95,6 +95,18 @@ async function reportSpecs() {
 // ---- Modo SERVIDOR: recebe os arquivos das automações e guarda localmente ----
 let serverRoot = null;
 let serverGraphFolder = null; // pasta do servidor no grafo (registra os arquivos lá)
+let agentSharedPaths = []; // pastas liberadas (allowlist); vazio = sem restrição
+
+// O destino está numa pasta liberada? (para decidir se mostra no grafo)
+function destShared(destDir) {
+  if (!agentSharedPaths.length) return true; // sem restrição → mostra
+  const norm = (p) => String(p || "").replace(/[\\/]+$/, "").toLowerCase();
+  const t = norm(destDir);
+  return agentSharedPaths.some((r) => {
+    const n = norm(r);
+    return t === n || t.startsWith(n + "\\") || t.startsWith(n + "/");
+  });
+}
 let deliverBusy = false;
 
 async function refreshServerRole() {
@@ -102,6 +114,13 @@ async function refreshServerRole() {
   try {
     const { data } = await supabase.rpc("agent_role", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode });
     const row = Array.isArray(data) ? data[0] : data;
+    // Allowlist de pastas (vale para qualquer máquina, servidor ou não).
+    agentSharedPaths = Array.isArray(row?.shared_paths) ? row.shared_paths : [];
+    try {
+      await ipcRenderer.invoke("set-shared-paths", agentSharedPaths);
+    } catch {
+      /* ignore */
+    }
     if (row?.is_server) {
       serverRoot = await ipcRenderer.invoke("server-init", row.server_root || null);
       serverGraphFolder = row.graph_folder_id || null;
@@ -194,9 +213,11 @@ async function runDeliveries() {
         }
         // NÃO apaga o automation aqui: a limpeza é central (agent_mark_delivered
         // remove do bucket só quando TODOS os alvos receberam), evitando corrida.
-        // Registra os arquivos no grafo JÁ com o caminho real (abre/baixa + IA).
+        // Registra no grafo só se a pasta destino estiver liberada (allowlist).
+        // Se o gestor escolheu uma pasta do grafo na rotina, respeita a escolha.
+        const destForCheck = destDir || `${serverRoot}/Arquivos/${routineSafe}`;
         const gf = d.graph_folder_id || serverGraphFolder;
-        if (gf && graphFiles.length) {
+        if (gf && graphFiles.length && (d.graph_folder_id || destShared(destForCheck))) {
           await supabase.rpc("agent_register_files_v2", {
             p_agent_id: cfg.agentId,
             p_access_code: cfg.accessCode,
