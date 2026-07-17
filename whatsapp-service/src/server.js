@@ -602,13 +602,27 @@ async function buildBotBrain(chatbot) {
 
 // history: array de { role: 'user'|'assistant', text } com as mensagens
 // anteriores da conversa — dá contexto ao bot p/ responder no mesmo tom/padrão.
-async function runChatbotReply(chatbot, customerText, history = []) {
+// Orientação extra conforme o tipo de automação escolhido para o número.
+function modeGuidance(mode) {
+  switch (mode) {
+    case "triage":
+      return "\nSeu objetivo principal é TRIAGEM: descubra com poucas perguntas qual o assunto/setor do cliente (ex.: financeiro, suporte, vendas) e confirme antes de encaminhar. Seja objetivo.";
+    case "menu":
+      return "\nApresente um MENU numerado de opções (1, 2, 3…) e conduza o cliente conforme o número que ele escolher. Repita o menu se a resposta não corresponder a uma opção.";
+    case "faq":
+      return "\nResponda apenas dúvidas frequentes de forma direta. Se a pergunta fugir do que você sabe, diga que vai chamar um atendente humano.";
+    default:
+      return "";
+  }
+}
+
+async function runChatbotReply(chatbot, customerText, history = [], mode = "ai") {
   const name = await companyName();
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}\nUse o histórico da conversa para manter contexto e coerência com o atendimento anterior.${knowledge}${brain}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nUse o histórico da conversa para manter contexto e coerência com o atendimento anterior.${knowledge}${brain}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
@@ -879,7 +893,8 @@ async function startSession(numberId) {
           );
           await logMessage(conversation.id, "in", text, null, media, cid);
 
-          const botOn = number?.auto_reply && chatbot?.enabled;
+          // Modo "label" só etiqueta (não responde); demais modos respondem.
+          const botOn = number?.auto_reply && chatbot?.enabled && number?.bot_mode !== "label";
           if (botOn) {
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para o bot "ouvir".
             const wasAudio = mediaKind === "audio";
@@ -917,7 +932,7 @@ async function startSession(numberId) {
             } catch {
               /* ignore */
             }
-            const reply = customerText ? await runChatbotReply(chatbot, customerText, history) : null;
+            const reply = customerText ? await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai") : null;
             if (reply) {
               // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
               let sentAsAudio = false;

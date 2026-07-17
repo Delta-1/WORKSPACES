@@ -243,6 +243,7 @@ export type WhatsappNumber = {
   sector_id: string | null;
   chatbot_id: string | null;
   auto_reply: boolean;
+  bot_mode: string | null;
   status: string;
   created_at: string;
   updated_at: string;

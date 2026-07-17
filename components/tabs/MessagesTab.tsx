@@ -43,6 +43,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
+  const [showBotSetup, setShowBotSetup] = useState(false);
   // Não-lidas por conversa (bolinha vermelha estilo Discord), salvo por navegador.
   const [unread, setUnread] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -613,6 +614,13 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                     <Bot size={12} /> {botOn ? "Bot ON" : "Bot OFF"}
                   </button>
                   <button
+                    onClick={() => setShowBotSetup(true)}
+                    title="Escolher tipo de automação do WhatsApp para este número"
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-sky-300 cursor-pointer"
+                  >
+                    <Bot size={15} />
+                  </button>
+                  <button
                     onClick={() => setShowConnect(true)}
                     title="Configurar / conectar WhatsApp"
                     className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
@@ -705,6 +713,16 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
           onStart={startChat}
           numbers={numbers.filter((n) => n.status === "connected")}
           forcedNumberId={activeNumberId}
+        />
+      )}
+      {showBotSetup && selNumber && (
+        <BotAutomationModal
+          number={selNumber}
+          onClose={() => setShowBotSetup(false)}
+          onSaved={(mode) => {
+            setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, bot_mode: mode, auto_reply: true } : n)));
+            setShowBotSetup(false);
+          }}
         />
       )}
       {showProfile && selConv?.contacts && (
@@ -807,6 +825,91 @@ function NewChatModal({
           className="w-full text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
         >
           {busy ? "Abrindo..." : "Iniciar conversa"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Tipos de automação de WhatsApp que o robô pode assumir por número.
+const BOT_MODES: { id: string; title: string; desc: string; emoji: string }[] = [
+  { id: "ai", title: "Atendimento inteligente (IA)", desc: "O robô lê a mensagem e responde sozinho usando a IA e o cérebro da empresa.", emoji: "🧠" },
+  { id: "triage", title: "Triagem por setor", desc: "O robô recebe, descobre o assunto e encaminha para o setor certo — tudo no mesmo chat.", emoji: "🔀" },
+  { id: "menu", title: "Menu de opções (URA)", desc: "Envia um menu (1, 2, 3…) e direciona o cliente conforme a escolha.", emoji: "🔢" },
+  { id: "faq", title: "Perguntas frequentes", desc: "Responde automaticamente dúvidas comuns e só chama um humano quando não sabe.", emoji: "💬" },
+  { id: "label", title: "Só etiquetar", desc: "Não responde: apenas classifica e etiqueta o contato para a equipe atender.", emoji: "🏷️" },
+  { id: "off", title: "Desligado", desc: "Nenhuma automação. Todo atendimento é manual.", emoji: "✋" },
+];
+
+function BotAutomationModal({
+  number,
+  onClose,
+  onSaved,
+}: {
+  number: WhatsappNumber;
+  onClose: () => void;
+  onSaved: (mode: string) => void;
+}) {
+  const [sel, setSel] = useState<string>(number.auto_reply ? number.bot_mode || "ai" : "off");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    if (!supabase || busy) return;
+    setBusy(true);
+    const autoReply = sel !== "off";
+    const { error } = await supabase
+      .from("whatsapp_numbers")
+      .update({ bot_mode: sel === "off" ? null : sel, auto_reply: autoReply })
+      .eq("id", number.id);
+    setBusy(false);
+    if (error) {
+      alert("Erro ao salvar: " + error.message);
+      return;
+    }
+    if (autoReply && (sel === "ai" || sel === "faq" || sel === "triage")) {
+      // Esses modos usam IA — lembra de configurar a chave.
+    }
+    onSaved(sel === "off" ? "" : sel);
+  }
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto custom-scroll" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Bot size={16} className="text-sky-400" /> Automação do WhatsApp
+          </h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
+            <X size={16} />
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-400">
+          Escolha como o robô atende no número <span className="text-white font-semibold">{number.label}</span>.
+        </p>
+        <div className="space-y-2">
+          {BOT_MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setSel(m.id)}
+              className={`w-full text-left rounded-xl p-3 border transition-all cursor-pointer flex items-start gap-3 ${
+                sel === m.id ? "border-sky-500 bg-sky-950/30" : "border-white/10 bg-black/20 hover:bg-white/5"
+              }`}
+            >
+              <span className="text-xl leading-none shrink-0">{m.emoji}</span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold">{m.title}</p>
+                <p className="text-[11px] text-gray-400">{m.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-500">
+          Modos com IA precisam de uma chave em Configurações → Chatbot. Persona, saudação e conhecimento também ficam lá.
+        </p>
+        <button
+          onClick={save}
+          disabled={busy}
+          className="w-full text-sm px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white cursor-pointer disabled:opacity-50"
+        >
+          {busy ? "Salvando..." : "Aplicar automação"}
         </button>
       </div>
     </div>
