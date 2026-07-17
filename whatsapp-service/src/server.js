@@ -944,6 +944,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `aos arquivos da empresa. Quando pedirem um arquivo/imagem, use search_files e depois send_file. Para criar tarefa, ` +
     `pegue o setor com list_sectors. Você também pode FALAR COM OUTRAS PESSOAS pelo gestor: quando ele disser algo como ` +
     `"manda X para o fulano", use send_whatsapp (confirme o texto antes). Se pedirem ÁUDIO, chame send_whatsapp com as_audio=true. ` +
+    `IMPORTANTE: use EXATAMENTE o destinatário e o texto que a pessoa pediu AGORA, nesta última mensagem. NUNCA reaproveite ` +
+    `nomes, números ou textos de mensagens/pedidos ANTIGOS do histórico. Se o pedido atual é "manda pra minha mãe: chego 18h", ` +
+    `o destinatário é a mãe e o texto é "chego 18h" — não misture com pedidos anteriores. ` +
     `Se o nome tiver mais de um contato, a ferramenta devolve as opções com telefone — PERGUNTE qual e reenvie com o telefone certo. ` +
     `Para ENCAMINHAR um arquivo a alguém (ex.: "manda o contrato pro João"), ache com search_files, CONFIRME "é esse contrato pro João?" e só então use send_file_to_contact.\n\n` +
     `ENTENDA BEM A INTENÇÃO antes de agir: leia o histórico, pense no que a pessoa REALMENTE quer e, se estiver ambíguo, ` +
@@ -1277,6 +1280,22 @@ async function startSession(numberId) {
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
             }
+            // Preferência de voz do COPILOTO: responde em áudio por padrão; se a
+            // pessoa pedir texto ("não posso ouvir áudio", "responde por texto"),
+            // troca para texto até ela pedir áudio de novo.
+            let copilotVoice = conversation.copilot_voice !== false;
+            if (isCopilot && customerText) {
+              if (/(responde|manda|escreve|prefiro|pode ser).{0,20}(por )?texto|n[aã]o posso (ouvir|escutar)|sem [aá]udio|por escrito/i.test(customerText)) {
+                copilotVoice = false;
+                await supabase.from("conversations").update({ copilot_voice: false }).eq("id", conversation.id);
+              } else if (/(responde|manda|prefiro|pode ser|volta).{0,20}(por )?([aá]udio|voz)|fala comigo|me manda [aá]udio/i.test(customerText)) {
+                copilotVoice = true;
+                await supabase.from("conversations").update({ copilot_voice: true }).eq("id", conversation.id);
+              }
+            }
+            // Quando responder por voz: copiloto segue a preferência; bot normal só
+            // responde em áudio se a mensagem recebida foi áudio.
+            const wantVoice = (isCopilot ? copilotVoice : wasAudio) && voiceReplyOn && !!botElevenKey;
             // Saudação apenas na abertura da conversa (só no bot de atendimento).
             if (!isCopilot && created && chatbot?.greeting) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
@@ -1304,9 +1323,8 @@ async function startSession(numberId) {
               /* sem histórico, segue sem contexto */
             }
             // Mostra ao cliente "digitando…" ou "gravando áudio…" enquanto pensa.
-            const willVoice = wasAudio && voiceReplyOn && botElevenKey;
             try {
-              await sock.sendPresenceUpdate(willVoice ? "recording" : "composing", jid);
+              await sock.sendPresenceUpdate(wantVoice ? "recording" : "composing", jid);
             } catch {
               /* ignore */
             }
@@ -1368,9 +1386,9 @@ async function startSession(numberId) {
               }
             }
             if (reply) {
-              // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
+              // Responde por áudio conforme a preferência (copiloto) ou se o cliente falou por áudio.
               let sentAsAudio = false;
-              if (wasAudio && voiceReplyOn && botElevenKey) {
+              if (wantVoice) {
                 const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, chatbot?.elevenlabs_voice_id);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
