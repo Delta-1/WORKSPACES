@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Pencil, Search, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Pencil, Search, Server, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
 import { logAction } from "@/lib/activity-log";
@@ -75,6 +75,8 @@ function demoNodes(): PositionedNode[] {
     text_content: null,
     storage_path: null,
     mime: null,
+    source_path: null,
+    server_agent_id: null,
     pos_x: CENTER_X + (Math.random() - 0.5) * 200,
     pos_y: CENTER_Y + (Math.random() - 0.5) * 200,
     created_at: new Date().toISOString(),
@@ -403,6 +405,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       return;
     }
     setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, name } : n)));
+    // Propaga o rename para o disco do servidor (se for um item do servidor).
+    if (node.source_path && node.server_agent_id) {
+      const sep = node.source_path.includes("\\") ? "\\" : "/";
+      const dir = node.source_path.slice(0, node.source_path.lastIndexOf(sep));
+      await supabase.rpc("enqueue_server_op", { p_agent_id: node.server_agent_id, p_op: "rename", p_path: node.source_path, p_new_path: `${dir}${sep}${name}` });
+    }
     logAction(actor, `Renomeou ${node.type === "folder" ? "a pasta" : "o arquivo"} "${old}" para "${name}"`);
   }
 
@@ -415,6 +423,10 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const ids = collectSubtree(node.id);
     const label = node.type === "folder" ? `a pasta "${node.name}" e todo o seu conteúdo` : `o arquivo "${node.name}"`;
     if (!confirm(`Apagar ${label}?`)) return;
+    // Propaga o apagar para o disco do servidor (se for item do servidor).
+    if (node.source_path && node.server_agent_id) {
+      await supabase.rpc("enqueue_server_op", { p_agent_id: node.server_agent_id, p_op: "delete", p_path: node.source_path });
+    }
     const { error } = await supabase.from("files").delete().in("id", ids);
     if (error) {
       alert("Não foi possível apagar: " + error.message);
@@ -780,7 +792,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
               )}
               <p className="text-sm font-semibold truncate">{selectedNode.name}</p>
             </div>
-            <p className="text-xs text-gray-500 mb-3">{new Date(selectedNode.created_at).toLocaleString("pt-BR")}</p>
+            <p className="text-xs text-gray-500 mb-1">{new Date(selectedNode.created_at).toLocaleString("pt-BR")}</p>
+            {selectedNode.source_path && (
+              <p className="text-[10px] text-gray-500 mb-3 font-mono truncate flex items-center gap-1" title={selectedNode.source_path}>
+                <Server size={10} className="text-sky-400 shrink-0" /> {selectedNode.source_path}
+              </p>
+            )}
 
             {/* Estado de compartilhamento com o robô (só pastas) */}
             {selectedNode.type === "folder" && selectedNode.bot_share_status !== "none" && (

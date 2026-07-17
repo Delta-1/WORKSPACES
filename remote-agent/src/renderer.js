@@ -313,13 +313,30 @@ async function runBrainSync() {
   }
 }
 
-// Espelha a árvore de pastas/arquivos do servidor no grafo do site (ao vivo).
+// Espelha a árvore de pastas/arquivos do servidor no grafo do site (ao vivo) e
+// sobe o conteúdo dos arquivos ao company-files (para abrir/baixar e a IA usar).
 let graphSyncBusy = false;
+const uploadedCache = new Map(); // rel -> mtime já enviado nesta sessão
 async function runServerGraphSync() {
   if (graphSyncBusy || !serverRoot || !serverGraphFolder || !supabase || !cfg?.agentId) return;
   graphSyncBusy = true;
   try {
     const entries = await ipcRenderer.invoke("server-tree", serverRoot);
+    for (const e of entries || []) {
+      if (e.dir) continue;
+      const objectPath = `srv/${cfg.agentId}/${e.rel}`.replace(/[^\w./-]/g, "_");
+      e.storage_path = objectPath;
+      e.mime = mimeFor(e.rel);
+      // Sobe o conteúdo só quando mudou (evita reenviar tudo a cada ciclo).
+      if (uploadedCache.get(e.rel) !== e.mtime) {
+        const b64 = await ipcRenderer.invoke("server-read", e.src);
+        if (b64) {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const { error } = await supabase.storage.from("company-files").upload(objectPath, bytes, { contentType: e.mime, upsert: true });
+          if (!error) uploadedCache.set(e.rel, e.mtime);
+        }
+      }
+    }
     if (entries && entries.length) {
       await supabase.rpc("agent_sync_server_graph", {
         p_agent_id: cfg.agentId,
@@ -332,6 +349,38 @@ async function runServerGraphSync() {
     /* ignore */
   } finally {
     graphSyncBusy = false;
+  }
+}
+
+// Executa as operações do grafo no disco do servidor (apagar/renomear/mover).
+let fsOpsBusy = false;
+async function runServerFsOps() {
+  if (fsOpsBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  fsOpsBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_pending_fs_ops", { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode });
+    for (const o of data || []) {
+      let res = { ok: false };
+      try {
+        if (o.op === "delete") res = await ipcRenderer.invoke("server-delete", o.path);
+        else if (o.op === "rename" || o.op === "move") res = await ipcRenderer.invoke("server-move", { from: o.path, to: o.new_path });
+      } catch (e) {
+        res = { ok: false, error: String(e?.message || e) };
+      }
+      await supabase.rpc("agent_mark_fs_op", {
+        p_agent_id: cfg.agentId,
+        p_access_code: cfg.accessCode,
+        p_id: o.id,
+        p_status: res?.ok ? "done" : "error",
+        p_error: res?.ok ? null : String(res?.error || "falha").slice(0, 200),
+      });
+      // Se mudou algo no disco, re-sincroniza o grafo.
+      if (res?.ok) uploadedCache.clear();
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    fsOpsBusy = false;
   }
 }
 
@@ -355,6 +404,8 @@ async function startAgent() {
   setInterval(runBrainSync, 180000); // espelha o cérebro da IA (a cada 3 min)
   runServerGraphSync();
   setInterval(runServerGraphSync, 45000); // espelha as pastas do servidor no grafo
+  runServerFsOps();
+  setInterval(runServerFsOps, 15000); // aplica apagar/renomear/mover no disco
   join();
 }
 

@@ -148,6 +148,8 @@ export type FileNodeRow = {
   text_content: string | null;
   storage_path: string | null;
   mime: string | null;
+  source_path: string | null;
+  server_agent_id: string | null;
   pos_x: number | null;
   pos_y: number | null;
   created_at: string;

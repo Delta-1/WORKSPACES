@@ -406,15 +406,49 @@ ipcMain.handle("server-tree", (_e, root) => {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const d of entries) {
       const rel = prefix ? `${prefix}/${d.name}` : d.name;
-      if (d.isDirectory()) { out.push({ rel, dir: true }); walk(path.join(dir, d.name), rel, depth + 1); }
-      else if (d.isFile()) { out.push({ rel, dir: false }); }
+      const abs = path.join(dir, d.name);
+      if (d.isDirectory()) { out.push({ rel, dir: true, src: abs }); walk(abs, rel, depth + 1); }
+      else if (d.isFile()) {
+        let size = 0, mtime = 0;
+        try { const st = fs.statSync(abs); size = st.size; mtime = st.mtimeMs; } catch { /* ignore */ }
+        out.push({ rel, dir: false, src: abs, size, mtime });
+      }
     }
   };
   for (const top of ["Cerebro", "Arquivos", "Download"]) {
     const p = path.join(base, top);
-    if (fs.existsSync(p)) { out.push({ rel: top, dir: true }); walk(p, top, 1); }
+    if (fs.existsSync(p)) { out.push({ rel: top, dir: true, src: p }); walk(p, top, 1); }
   }
   return out;
+});
+
+// Lê o conteúdo de um arquivo do servidor (para subir ao company-files).
+ipcMain.handle("server-read", (_e, absPath) => {
+  try {
+    const st = fs.statSync(absPath);
+    if (!st.isFile() || st.size > 30 * 1024 * 1024) return null;
+    return fs.readFileSync(absPath).toString("base64");
+  } catch {
+    return null;
+  }
+});
+// Move/renomeia um item no disco do servidor.
+ipcMain.handle("server-move", (_e, { from, to }) => {
+  try {
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
+ipcMain.handle("server-delete", (_e, target) => {
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 });
 
 // Grava um arquivo recebido (transferência do operador) na pasta Download do servidor.
