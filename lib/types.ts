@@ -170,6 +170,7 @@ export type Contact = {
   jid: string | null;
   name: string | null;
   avatar_url: string | null;
+  copilot_access: boolean | null;
   created_at: string;
 };
 

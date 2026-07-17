@@ -9,7 +9,7 @@ import WhatsappTab from "./WhatsappTab";
 type Group = { id: string; name: string; position: number };
 type ConvRow = Conversation & {
   group_id: string | null;
-  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url"> | null;
+  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access"> | null;
 };
 
 function contactLabel(c?: { name?: string | null; phone?: string | null } | null): string {
@@ -84,7 +84,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     if (!supabase) return;
     const { data } = await supabase
       .from("conversations")
-      .select("*, group_id, contacts(id, name, phone, jid, avatar_url)")
+      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access)")
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
   }, []);
@@ -782,6 +782,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       {showProfile && selConv?.contacts && (
         <ContactProfileModal
           contact={selConv.contacts}
+          canManage={profile?.role === "gestor" || profile?.role === "gerente"}
           onClose={() => setShowProfile(false)}
           onSaved={() => {
             loadConversations();
@@ -972,16 +973,19 @@ function BotAutomationModal({
 
 function ContactProfileModal({
   contact,
+  canManage,
   onClose,
   onSaved,
 }: {
-  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url">;
+  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access">;
+  canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(contact.name ?? "");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copilot, setCopilot] = useState(Boolean(contact.copilot_access));
   const phoneDigits = (contact.phone || "").replace(/\D/g, "");
   const phonePretty = phoneDigits ? "+" + phoneDigits : "—";
 
@@ -991,6 +995,13 @@ function ContactProfileModal({
     await supabase.from("contacts").update({ name: name.trim() || null }).eq("id", contact.id);
     setSaving(false);
     onSaved();
+  }
+
+  async function toggleCopilot() {
+    if (!supabase) return;
+    const next = !copilot;
+    setCopilot(next);
+    await supabase.from("contacts").update({ copilot_access: next }).eq("id", contact.id);
   }
 
   return (
@@ -1035,6 +1046,20 @@ function ContactProfileModal({
             <Phone size={14} className="text-emerald-400 shrink-0" />
             <span className="text-sm">{phonePretty}</span>
           </div>
+          {canManage && (
+            <button
+              onClick={toggleCopilot}
+              className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 border cursor-pointer transition-colors ${
+                copilot ? "border-indigo-500 bg-indigo-950/30" : "border-white/10 bg-white/5 hover:bg-white/10"
+              }`}
+              title="Dá a este contato acesso ao Copiloto IA pelo WhatsApp (com acesso ao workspace e arquivos)"
+            >
+              <span className="flex items-center gap-2 text-sm">
+                <Bot size={14} className={copilot ? "text-indigo-300" : "text-gray-400"} /> Copiloto IA no WhatsApp
+              </span>
+              <span className={`text-[11px] font-semibold ${copilot ? "text-indigo-300" : "text-gray-500"}`}>{copilot ? "LIGADO" : "desligado"}</span>
+            </button>
+          )}
           {phoneDigits && (
             <a
               href={`https://wa.me/${phoneDigits}`}

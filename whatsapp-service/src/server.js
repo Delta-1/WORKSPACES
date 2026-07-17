@@ -681,6 +681,98 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai")
 }
 
 // ---------------------------------------------------------------------------
+// COPILOTO via WhatsApp (só para contatos liberados pelo gestor). Tem acesso
+// aos arquivos da empresa: procura pelo nome e ENTREGA o arquivo/imagem.
+// ---------------------------------------------------------------------------
+const COPILOT_TOOLS = [
+  {
+    name: "search_files",
+    description: "Busca arquivos/pastas da empresa pelo nome. Use quando pedirem um arquivo/imagem/documento.",
+    input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+  {
+    name: "send_file",
+    description: "Entrega um arquivo específico (pelo id de search_files) para a pessoa no WhatsApp.",
+    input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+];
+
+async function copilotSearchFiles(companyId, query) {
+  const q = String(query || "").trim();
+  if (!q || !companyId) return [];
+  const { data } = await supabase
+    .from("files")
+    .select("id,name,type,storage_path,data_url")
+    .eq("company_id", companyId)
+    .ilike("name", `%${q}%`)
+    .limit(15);
+  return (data ?? []).map((f) => ({ id: f.id, name: f.name, type: f.type, hasContent: Boolean(f.storage_path || f.data_url) }));
+}
+
+async function copilotLoadFile(companyId, id) {
+  const { data: f } = await supabase
+    .from("files")
+    .select("id,name,type,storage_path,data_url,mime,company_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!f || f.company_id !== companyId || f.type === "folder") return null;
+  let buffer = null;
+  if (f.storage_path) {
+    const { data: blob } = await supabase.storage.from("company-files").download(f.storage_path);
+    if (blob) buffer = Buffer.from(await blob.arrayBuffer());
+  } else if (f.data_url && /^data:/.test(f.data_url)) {
+    buffer = Buffer.from(f.data_url.split(",")[1] || "", "base64");
+  }
+  if (!buffer) return null;
+  return { name: f.name, mime: f.mime || "application/octet-stream", buffer };
+}
+
+// Retorna { reply, files: [{name,mime,buffer}] }.
+async function runCopilotReply(companyId, customerText, history = []) {
+  const key = fallbackAnthropicKey;
+  if (!key) return { reply: "Copiloto sem chave de IA configurada.", files: [] };
+  const name = await companyName();
+  const system =
+    `Você é o COPILOTO do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
+    `responde dúvidas, ajuda em tarefas e TEM ACESSO aos arquivos da empresa. Quando pedirem um arquivo/imagem, ` +
+    `use search_files para achar pelo nome; se estiver ambíguo, pergunte qual é; quando tiver certeza, use send_file ` +
+    `para entregar. Aprenda com o jeito da pessoa e seja cada vez mais útil.`;
+  const anthropic = new Anthropic({ apiKey: key });
+  const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
+  const messages = [
+    ...hist.map((h) => ({ role: h.role, content: [{ type: "text", text: h.text }] })),
+    { role: "user", content: [{ type: "text", text: customerText }] },
+  ];
+  const files = [];
+  let reply = "";
+  try {
+    for (let i = 0; i < 6; i++) {
+      const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 1024, system, tools: COPILOT_TOOLS, messages });
+      reply = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      const toolUses = res.content.filter((b) => b.type === "tool_use");
+      if (res.stop_reason !== "tool_use" || toolUses.length === 0) break;
+      messages.push({ role: "assistant", content: res.content });
+      const results = [];
+      for (const tu of toolUses) {
+        let out;
+        if (tu.name === "search_files") out = await copilotSearchFiles(companyId, tu.input.query);
+        else if (tu.name === "send_file") {
+          const file = await copilotLoadFile(companyId, tu.input.id);
+          if (file) { files.push(file); out = { ok: true, message: `Enviado: ${file.name}` }; }
+          else out = { ok: false, message: "Arquivo sem conteúdo ou não encontrado." };
+        } else out = { error: "desconhecida" };
+        results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
+      }
+      messages.push({ role: "user", content: results });
+    }
+  } catch (err) {
+    console.error("Copilot reply failed:", err);
+    return { reply: "Tive um problema para processar agora. Tente de novo.", files };
+  }
+  return { reply, files };
+}
+
+// ---------------------------------------------------------------------------
 // Auth state persistido no Supabase (sobrevive a reinícios/deploys)
 // ---------------------------------------------------------------------------
 async function useSupabaseAuthState(numberId) {
@@ -893,10 +985,12 @@ async function startSession(numberId) {
           );
           await logMessage(conversation.id, "in", text, null, media, cid);
 
+          // Contato liberado pelo gestor → COPILOTO (IA forte com acesso ao workspace).
+          const isCopilot = contact?.copilot_access === true;
           // Modo "label" só etiqueta (não responde); demais modos respondem.
           const botOn = number?.auto_reply && chatbot?.enabled && number?.bot_mode !== "label";
-          if (botOn) {
-            // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para o bot "ouvir".
+          if (isCopilot || botOn) {
+            // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
             const botElevenKey = chatbot?.elevenlabs_key || elevenKey;
             const voiceReplyOn = chatbot?.voice_reply !== false; // default ligado
@@ -904,8 +998,8 @@ async function startSession(numberId) {
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
             }
-            // Saudação apenas na abertura da conversa.
-            if (created && chatbot?.greeting) {
+            // Saudação apenas na abertura da conversa (só no bot de atendimento).
+            if (!isCopilot && created && chatbot?.greeting) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
             }
@@ -932,7 +1026,37 @@ async function startSession(numberId) {
             } catch {
               /* ignore */
             }
-            const reply = customerText ? await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai") : null;
+            // Copiloto: IA com ferramentas (busca/entrega arquivos). Bot normal: resposta comum.
+            let copilotFiles = [];
+            let reply = null;
+            if (customerText && isCopilot) {
+              const out = await runCopilotReply(cid, customerText, history);
+              reply = out.reply;
+              copilotFiles = out.files || [];
+            } else if (customerText) {
+              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai");
+            }
+            // Entrega os arquivos que o copiloto decidiu mandar (imagem/documento).
+            for (const f of copilotFiles) {
+              try {
+                const isImg = (f.mime || "").startsWith("image/");
+                const sf = isImg
+                  ? await sock.sendMessage(jid, { image: f.buffer, caption: f.name })
+                  : await sock.sendMessage(jid, { document: f.buffer, fileName: f.name, mimetype: f.mime });
+                const url = await uploadMedia(f.buffer, f.mime, "out");
+                await logMessage(
+                  conversation.id,
+                  "out",
+                  f.name,
+                  null,
+                  url ? { type: isImg ? "image" : "document", url, name: f.name, mime: f.mime } : null,
+                  cid,
+                  sf?.key?.id ?? null
+                );
+              } catch (e) {
+                console.error("copilot send file failed:", e);
+              }
+            }
             if (reply) {
               // Se o cliente falou por áudio, o robô responde por áudio (ElevenLabs).
               let sentAsAudio = false;
