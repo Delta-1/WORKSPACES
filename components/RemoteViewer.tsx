@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
+  ClipboardPaste,
   Download,
   File as FileIcon,
   Folder,
@@ -323,6 +324,18 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function combo(name: string) {
     sendInput({ kind: "combo", name });
   }
+  // Cola o texto do MEU computador (área de transferência) na máquina remota —
+  // digita o conteúdo no campo em foco. Prático p/ mandar links, códigos, etc.
+  async function pasteClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) { alert("Nada copiado na sua área de transferência."); return; }
+      sendInput({ kind: "type", text });
+    } catch {
+      const text = window.prompt("Cole aqui o texto para enviar à máquina remota:");
+      if (text) sendInput({ kind: "type", text });
+    }
+  }
   // Teclado global (desktop): captura as teclas no documento inteiro e envia pra
   // máquina remota. Antes dependia do foco do <div> do vídeo — se o foco escapasse,
   // nada era digitado. Agora funciona sempre que a janela do acesso está aberta,
@@ -407,12 +420,14 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const lastTapRef = useRef(0);
   const armDragRef = useRef(false); // toque duplo detectado, aguardando movimento
   const draggingRef = useRef(false);
+  const originRef = useRef<{ x: number; y: number } | null>(null);
   function padStart(e: React.TouchEvent) {
     const t = e.touches[0];
     const now = Date.now();
     armDragRef.current = now - lastTapRef.current < 350; // pode virar arrasto se mover
     draggingRef.current = false;
     padRef.current = { x: t.clientX, y: t.clientY, moved: false, t: now };
+    originRef.current = { x: t.clientX, y: t.clientY };
   }
   function padMove(e: React.TouchEvent) {
     const p = padRef.current;
@@ -420,8 +435,11 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     const t = e.touches[0];
     const dx = t.clientX - p.x;
     const dy = t.clientY - p.y;
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) p.moved = true;
-    // Começou a mover depois de um toque duplo → inicia o arrasto (segura o botão).
+    // "Mexeu de verdade" = saiu +8px do ponto inicial. Assim um toque duplo com
+    // leve tremida NÃO vira arrasto (era isso que jogava o cursor pro canto).
+    const o = originRef.current;
+    if (o && Math.hypot(t.clientX - o.x, t.clientY - o.y) > 8) p.moved = true;
+    // Só depois de mexer de verdade após um toque duplo é que inicia o arrasto.
     if (armDragRef.current && !draggingRef.current && p.moved) {
       draggingRef.current = true;
       sendInput({ kind: "down", button: 0 });
@@ -716,6 +734,9 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             </button>
             <button onClick={() => combo("taskmanager")} title="Gerenciador de Tarefas" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <ListTree size={14} /> Ger. Tarefas
+            </button>
+            <button onClick={pasteClipboard} title="Colar o texto do meu computador na máquina remota" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
+              <ClipboardPaste size={14} /> Colar
             </button>
           </div>
           <input

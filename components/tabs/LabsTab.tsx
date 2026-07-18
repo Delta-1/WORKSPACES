@@ -33,8 +33,8 @@ const TEMPLATE_INSTRUCTIONS =
   "Quando precisar de uma informação, pergunte de forma objetiva. Confirme dados importantes antes de agir. " +
   "Nunca invente valores; se não souber, diga que vai verificar.";
 
-// Modelos rápidos de agente (preenchem persona/instruções/capacidades).
-const AGENT_TEMPLATES: { id: string; label: string; persona: string; instructions: string; caps: string[] }[] = [
+// Modelos rápidos de agente (preenchem persona/instruções/capacidades/fluxo).
+const AGENT_TEMPLATES: { id: string; label: string; persona: string; instructions: string; caps: string[]; flow?: BotFlow }[] = [
   {
     id: "suporte",
     label: "Suporte técnico",
@@ -45,6 +45,20 @@ const AGENT_TEMPLATES: { id: string; label: string; persona: string; instruction
       "Use o conhecimento aprendido (inclusive do HTML/site que você estudou) como verdade. Se faltar um detalhe essencial, pergunte só o mínimo. " +
       "Se o problema for além do passo a passo, ofereça acessar a máquina remotamente ou transferir para um humano. Seja breve e humano.",
     caps: ["files", "attendance", "remote"],
+    // Fluxo: toda mensagem → se pedir humano, transfere; senão a IA resolve.
+    flow: {
+      nodes: [
+        { id: "start", type: "start", x: 80, y: 60, data: {} },
+        { id: "c1", type: "condition", x: 80, y: 180, data: { keywords: "humano, atendente, pessoa, falar com alguem, falar com alguém, atendimento humano" } },
+        { id: "ai1", type: "ai", x: 320, y: 110, data: {} },
+        { id: "h1", type: "action", x: 320, y: 280, data: { action: "handoff" } },
+      ],
+      edges: [
+        { id: "e1", from: "start", handle: "out", to: "c1" },
+        { id: "e2", from: "c1", handle: "sim", to: "h1" },
+        { id: "e3", from: "c1", handle: "nao", to: "ai1" },
+      ],
+    },
   },
 ];
 
@@ -305,7 +319,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           {AGENT_TEMPLATES.map((t) => (
             <button
               key={t.id}
-              onClick={() => set({ persona: t.persona, instructions: t.instructions, capabilities: t.caps })}
+              onClick={() => set({ persona: t.persona, instructions: t.instructions, capabilities: t.caps, ...(t.flow ? { flow: t.flow } : {}) })}
               className="text-[10px] px-2 py-1 rounded-full bg-indigo-950/40 border border-indigo-500/30 text-indigo-200 hover:bg-indigo-950/60 cursor-pointer"
             >
               {t.label}

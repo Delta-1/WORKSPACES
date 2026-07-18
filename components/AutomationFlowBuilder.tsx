@@ -103,8 +103,8 @@ export default function AutomationFlowBuilder({
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-3xl h-[85vh] bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl h-[85vh] bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
           <div>
             <h3 className="text-sm font-bold">Nova automação (fluxo)</h3>
