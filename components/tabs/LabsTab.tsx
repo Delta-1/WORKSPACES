@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, BrainCircuit, FlaskConical, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { htmlToText } from "@/lib/extract-text";
 import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi } from "@/lib/types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -197,6 +198,8 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
         text = (await ex.json()).text || "";
       } else {
         text = await file.text().catch(() => "");
+        // HTML: aprende só o CONTEÚDO do site (sem as tags/código).
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) text = htmlToText(text);
       }
       if (!text.trim()) {
         setStudyMsg("Não consegui ler texto desse arquivo.");
