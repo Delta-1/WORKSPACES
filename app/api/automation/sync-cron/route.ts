@@ -26,7 +26,8 @@ export async function GET(request: Request) {
   const { data: company } = await supabase
     .from("company_settings")
     .select("google_drive_root_folder_id")
-    .eq("id", true)
+    .not("google_drive_root_folder_id", "is", null)
+    .limit(1)
     .maybeSingle();
   const parent = company?.google_drive_root_folder_id;
   if (!parent) return NextResponse.json({ error: "sem pasta da empresa no Drive" }, { status: 400 });

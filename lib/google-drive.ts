@@ -31,7 +31,8 @@ export async function getDriveAccessToken(): Promise<string | null> {
   const { data } = await svc
     .from("company_settings")
     .select("google_drive_refresh_token")
-    .eq("id", true)
+    .not("google_drive_refresh_token", "is", null)
+    .limit(1)
     .maybeSingle();
   const refreshToken = data?.google_drive_refresh_token;
   if (!refreshToken) return null;

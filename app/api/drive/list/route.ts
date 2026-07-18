@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   const { data: company } = await supabase
     .from("company_settings")
     .select("google_drive_root_folder_id")
-    .eq("id", true)
+    .limit(1)
     .maybeSingle();
 
   const parent = folderId || company?.google_drive_root_folder_id;

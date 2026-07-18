@@ -108,11 +108,13 @@ export default function Home() {
   const isAuthenticated = Boolean(profile) || Boolean(demoUser);
   const displayName = profile?.full_name ?? profile?.email ?? demoUser?.name ?? "Usuário";
 
+  // Recarrega as configurações da EMPRESA do usuário (nome/logo/tema/contato).
+  // Refaz quando a empresa muda (login), pois a RLS precisa da sessão pronta.
   useEffect(() => {
     fetchCompany()
       .then(setCompany)
       .catch(() => {});
-  }, []);
+  }, [profile?.company_id]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
@@ -267,7 +269,7 @@ export default function Home() {
 
   async function handleUpdateCompany(update: Partial<CompanyInfo>) {
     setCompany((prev) => ({ ...prev, ...update })); // feedback imediato
-    const next = await persistCompany(update);
+    const next = await persistCompany(update, profile?.company_id ?? myCompany?.id ?? null);
     setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, iconColor: update.iconColor ?? next.iconColor, logoSize: update.logoSize ?? next.logoSize, themeStyle: update.themeStyle ?? next.themeStyle }));
   }
 

@@ -37,7 +37,9 @@ const CONTACT_DEFAULTS = {
 
 export async function fetchCompany(): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
-    const { data } = await supabase.from("company_settings").select("*").eq("id", true).maybeSingle();
+    // RLS já filtra para a MINHA empresa (company_id = my_company()), então a
+    // linha certa (e só ela) volta. Cada empresa tem seu nome/logo/config.
+    const { data } = await supabase.from("company_settings").select("*").maybeSingle();
     if (data) {
       return {
         name: data.name,
@@ -74,9 +76,9 @@ export async function fetchCompany(): Promise<CompanyInfo> {
   };
 }
 
-export async function updateCompany(update: Partial<CompanyInfo>): Promise<CompanyInfo> {
+export async function updateCompany(update: Partial<CompanyInfo>, companyId?: string | null): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
-    const { data } = await supabase
+    let q = supabase
       .from("company_settings")
       .update({
         ...(update.name !== undefined ? { name: update.name } : {}),
@@ -97,9 +99,12 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.autoCloseMinutes !== undefined ? { auto_close_minutes: update.autoCloseMinutes } : {}),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", true)
-      .select("*")
-      .single();
+      .select("*");
+    // Escopo por empresa (a linha da MINHA empresa). Com RLS, sem companyId
+    // ainda atinge só a minha linha, mas passamos por segurança/clareza.
+    if (companyId) q = q.eq("company_id", companyId);
+    const { data: rows } = await q;
+    const data = Array.isArray(rows) ? rows[0] : rows;
     if (data) {
       return {
         name: data.name,

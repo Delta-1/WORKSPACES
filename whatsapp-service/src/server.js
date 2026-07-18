@@ -63,25 +63,29 @@ function getSession(numberId) {
 // ---------------------------------------------------------------------------
 // Supabase helpers
 // ---------------------------------------------------------------------------
-async function companyName() {
+async function companyName(companyId = null) {
   if (!supabase) return "a empresa";
-  const { data } = await supabase.from("company_settings").select("name").eq("id", true).maybeSingle();
+  let q = supabase.from("company_settings").select("name");
+  if (companyId) q = q.eq("company_id", companyId);
+  const { data } = await q.limit(1).maybeSingle();
   return data?.name ?? "a empresa";
 }
 
 // Dados de contato da empresa (endereço, telefone, site, avaliação) — o robô
 // usa para responder "qual o endereço/telefone", convidar para o site e pedir
 // avaliação. Cache de 1 min.
-let companyInfoCache = { at: 0, info: null };
-async function getCompanyInfo() {
+const companyInfoCache = new Map(); // companyId -> { at, info }
+async function getCompanyInfo(companyId = null) {
   if (!supabase) return null;
-  if (companyInfoCache.info && Date.now() - companyInfoCache.at < 60000) return companyInfoCache.info;
-  const { data } = await supabase
+  const key = companyId || "_";
+  const cached = companyInfoCache.get(key);
+  if (cached && Date.now() - cached.at < 60000) return cached.info;
+  let q = supabase
     .from("company_settings")
-    .select("name, address, address_link, phone, email, website, review_link, auto_close_minutes")
-    .eq("id", true)
-    .maybeSingle();
-  companyInfoCache = { at: Date.now(), info: data ?? null };
+    .select("name, address, address_link, phone, email, website, review_link, auto_close_minutes");
+  if (companyId) q = q.eq("company_id", companyId);
+  const { data } = await q.limit(1).maybeSingle();
+  companyInfoCache.set(key, { at: Date.now(), info: data ?? null });
   return data ?? null;
 }
 
@@ -671,13 +675,13 @@ function modeGuidance(mode) {
   }
 }
 
-async function runChatbotReply(chatbot, customerText, history = [], mode = "ai") {
-  const name = await companyName();
+async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null) {
+  const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
-  const companyBlock = companyContextBlock(await getCompanyInfo());
+  const companyBlock = companyContextBlock(await getCompanyInfo(companyId));
   const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}`;
 
   const provider = chatbot?.provider || "anthropic";
@@ -766,7 +770,7 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
     const g = await sock.sendMessage(jid, { text });
     await logMessage(conversation.id, "out", text, null, null, cid, g?.key?.id ?? null);
   };
-  const info = await getCompanyInfo();
+  const info = await getCompanyInfo(conversation.company_id);
 
   // Ponto de partida: se estávamos esperando num nó de entrada, processa a
   // resposta; senão começa do "start".
@@ -826,7 +830,7 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
       sentAnything = true;
       current = nextFrom(n.id);
     } else if (n.type === "ai") {
-      const reply = await runChatbotReply(chatbot, customerText, history, "ai");
+      const reply = await runChatbotReply(chatbot, customerText, history, "ai", conversation.company_id);
       if (reply) { await send(reply); sentAnything = true; }
       // Se a IA tem continuação no fluxo, segue; senão fica na IA (conversa livre).
       const nx = nextFrom(n.id);
@@ -1110,7 +1114,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   const provider = chatbot?.api_key ? chatbot.provider || "anthropic" : fallbackAnthropicKey ? "anthropic" : null;
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
   if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
-  const name = await companyName();
+  const name = await companyName(companyId);
   const testMode = chatbot?.test_mode !== false;
   const system =
     `Você é o COPILOTO/assessor pessoal do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
@@ -1479,7 +1483,7 @@ async function startSession(numberId) {
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
             if (!isCopilot && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
-              const info = await getCompanyInfo();
+              const info = await getCompanyInfo(cid);
               let msg = "Perfeito, vou encerrar nosso atendimento então. Muito obrigado pelo contato! 😊";
               if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
               const g = await sock.sendMessage(jid, { text: msg });
@@ -1542,7 +1546,7 @@ async function startSession(numberId) {
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];
             } else if (customerText) {
-              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai");
+              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid);
             }
             // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
             for (const s of copilotSends) {
@@ -1943,33 +1947,35 @@ async function generateContactReport(conversation) {
 async function attendanceSweep() {
   if (!supabase) return;
   try {
-    const info = await getCompanyInfo();
-    const minutes = Number(info?.auto_close_minutes || 0);
-    // 1) Encerramento por inatividade do cliente.
-    if (minutes > 0) {
-      const cutoff = new Date(Date.now() - minutes * 60000).toISOString();
-      const { data: stale } = await supabase
+    // 1) Encerramento por inatividade — POR EMPRESA (cada uma tem seu tempo).
+    // Pega conversas abertas paradas há +30min (o menor tempo possível) e checa
+    // o auto_close_minutes da empresa de cada conversa.
+    const minCutoff = new Date(Date.now() - 30 * 60000).toISOString();
+    const { data: stale } = await supabase
+      .from("conversations")
+      .select("*")
+      .in("status", ["espera", "atendendo"])
+      .lt("last_message_at", minCutoff)
+      .limit(50);
+    for (const conv of stale || []) {
+      const info = await getCompanyInfo(conv.company_id);
+      const minutes = Number(info?.auto_close_minutes || 0);
+      if (minutes <= 0) continue;
+      const age = Date.now() - new Date(conv.last_message_at || conv.updated_at || Date.now()).getTime();
+      if (age < minutes * 60000) continue;
+      await supabase
         .from("conversations")
-        .select("*")
-        .in("status", ["espera", "atendendo"])
-        .lt("last_message_at", cutoff)
-        .limit(20);
-      for (const conv of stale || []) {
-        await supabase
-          .from("conversations")
-          .update({ status: "fechado", closed_at: new Date().toISOString() })
-          .eq("id", conv.id);
-        // Mensagem de despedida + pedido de avaliação (se houver link).
-        try {
-          const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conv.contact_id).maybeSingle();
-          const to = contact?.jid || contact?.phone;
-          if (to) {
-            let msg = "Como não tivemos retorno, vou encerrar nosso atendimento por aqui. 😊 Qualquer coisa é só chamar!";
-            if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
-            await sendMessage(conv.number_id, to, msg, null, null).catch(() => {});
-          }
-        } catch { /* ignore */ }
-      }
+        .update({ status: "fechado", closed_at: new Date().toISOString() })
+        .eq("id", conv.id);
+      try {
+        const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conv.contact_id).maybeSingle();
+        const to = contact?.jid || contact?.phone;
+        if (to) {
+          let msg = "Como não tivemos retorno, vou encerrar nosso atendimento por aqui. 😊 Qualquer coisa é só chamar!";
+          if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
+          await sendMessage(conv.number_id, to, msg, null, null).catch(() => {});
+        }
+      } catch { /* ignore */ }
     }
     // 2) Relatório dos atendimentos fechados recentemente (bot/inatividade/manual).
     const since = new Date(Date.now() - 6 * 3600000).toISOString();
