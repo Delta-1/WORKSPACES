@@ -124,7 +124,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
         const m = payload.new as WhatsappMessageRow;
         if (m.conversation_id === selConvRef.current) {
-          setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+          setMessages((prev) => {
+            if (prev.some((x) => x.id === m.id)) return prev;
+            // Substitui a bolha otimista (temp-) correspondente, se houver.
+            const withoutTemp = prev.filter(
+              (t) => !(t.id.startsWith("temp-") && t.direction === m.direction && (t.text || "") === (m.text || ""))
+            );
+            return [...withoutTemp, m];
+          });
           scrollBottom();
         } else if (m.direction === "in") {
           // Mensagem nova de cliente numa conversa que não está aberta → não-lida.
@@ -157,6 +164,37 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     setMessages(data ?? []);
     scrollBottom();
   }
+
+  // Mescla o que veio do servidor com as bolhas otimistas (temp-) ainda não
+  // confirmadas. Usado pela rede de segurança (polling) para NUNCA perder uma
+  // mensagem — sua ou do bot — mesmo se o realtime falhar/atrasar.
+  function mergeServerMessages(rows: WhatsappMessageRow[]) {
+    setMessages((prev) => {
+      const temps = prev.filter(
+        (t) => t.id.startsWith("temp-") && !rows.some((d) => d.direction === t.direction && (d.text || "") === (t.text || ""))
+      );
+      const combined = [...rows, ...temps];
+      combined.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      // Só re-renderiza/rola se algo mudou de fato.
+      const changed = combined.length !== prev.length || combined.some((m, i) => prev[i]?.id !== m.id);
+      if (changed) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
+      return changed ? combined : prev;
+    });
+  }
+
+  // Rede de segurança: enquanto uma conversa está aberta, revalida as mensagens
+  // a cada 2s. Garante que mensagens enviadas (por mim ou pelo bot, incl. áudio)
+  // apareçam rápido mesmo que o evento realtime não chegue.
+  useEffect(() => {
+    if (!supabase || !selConvId) return;
+    const client = supabase;
+    const poll = setInterval(async () => {
+      const { data } = await client.from("whatsapp_messages").select("*").eq("conversation_id", selConvId).order("at");
+      if (data) mergeServerMessages(data);
+    }, 2000);
+    return () => clearInterval(poll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selConvId]);
   // Salva a conversa aberta como arquivo de texto (backup/registro).
   function saveConversation() {
     setChatMenu(false);
@@ -353,13 +391,27 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
   async function sendMedia(media: { type: WhatsappMediaType; url: string; name: string; mime: string }, caption?: string) {
     if (!selConv?.contacts) return;
+    // Bolha otimista da mídia enviada — aparece na hora.
+    const temp: WhatsappMessageRow = {
+      id: `temp-${Date.now()}`,
+      conversation_id: selConv.id,
+      direction: "out",
+      text: caption || null,
+      media_type: media.type,
+      media_url: media.url,
+      media_name: media.name,
+      media_mime: media.mime,
+      sender_id: profile?.id ?? null,
+      at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, temp]);
+    scrollBottom();
     const headers = await authHeaders();
     await fetch("/api/whatsapp/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, media, text: caption || undefined }),
     });
-    openConv(selConv.id);
   }
 
   async function send() {
@@ -383,6 +435,20 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     const to = selConv.contacts.jid || selConv.contacts.phone;
     const numberId = selConv.number_id;
     setInput("");
+    // Bolha otimista: aparece NA HORA (não espera o servidor nem o realtime).
+    const temp: WhatsappMessageRow = {
+      id: `temp-${Date.now()}`,
+      conversation_id: selConv.id,
+      direction: "out",
+      text,
+      media_type: null,
+      media_url: null,
+      media_name: null,
+      media_mime: null,
+      sender_id: profile?.id ?? null,
+      at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, temp]);
     scrollBottom();
     (async () => {
       try {
