@@ -950,6 +950,28 @@ const COPILOT_TOOLS = [
       required: ["from_contact", "to_contact"],
     },
   },
+  {
+    name: "finance_summary",
+    description:
+      "Panorama financeiro da EMPRESA num período. Use quando pedirem 'como está o financeiro', 'quais os gastos', 'quanto gastei esse mês', saldo, etc. month opcional no formato AAAA-MM (padrão: mês atual). Retorna receitas, despesas, saldo e gastos por categoria.",
+    input_schema: { type: "object", properties: { month: { type: "string", description: "AAAA-MM (opcional)" } } },
+  },
+  {
+    name: "add_finance_entry",
+    description:
+      "Lança uma DESPESA ou RECEITA no financeiro da EMPRESA. kind: 'despesa' | 'receita'. amount em reais (número). category e description opcionais. date opcional (AAAA-MM-DD, padrão hoje). Confirme o valor antes de lançar.",
+    input_schema: {
+      type: "object",
+      properties: { kind: { type: "string" }, amount: { type: "number" }, category: { type: "string" }, description: { type: "string" }, date: { type: "string" } },
+      required: ["kind", "amount"],
+    },
+  },
+  {
+    name: "list_folder",
+    description:
+      "Lista, EM TEXTO, o que tem dentro de uma pasta pelo nome (subpastas e arquivos). Use quando perguntarem 'o que tem na pasta X', 'quais arquivos tem em Y', 'quantas pastas tem em Z'. Retorna a lista organizada.",
+    input_schema: { type: "object", properties: { folder: { type: "string", description: "Nome (ou parte) da pasta" } }, required: ["folder"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1002,6 +1024,68 @@ async function copilotAction(companyId, name, input) {
       if (input.status === "fechado") patch.closed_at = new Date().toISOString();
       const { error } = await supabase.from("conversations").update(patch).eq("id", conv.id);
       return error ? { ok: false, message: error.message } : { ok: true, message: `Atendimento → ${input.status}.` };
+    }
+    if (name === "finance_summary") {
+      const month = /^\d{4}-\d{2}$/.test(input.month || "") ? input.month : new Date().toISOString().slice(0, 7);
+      const start = `${month}-01`;
+      const endD = new Date(`${month}-01T00:00:00`);
+      endD.setMonth(endD.getMonth() + 1);
+      const end = endD.toISOString().slice(0, 10);
+      const { data } = await supabase
+        .from("finance_entries")
+        .select("kind,amount,category")
+        .eq("scope", "empresa")
+        .eq("company_id", companyId)
+        .gte("entry_date", start)
+        .lt("entry_date", end);
+      let receitas = 0, despesas = 0;
+      const byCat = {};
+      for (const e of data || []) {
+        const v = Number(e.amount) || 0;
+        if (e.kind === "receita") receitas += v;
+        else { despesas += v; byCat[e.category || "Outros"] = (byCat[e.category || "Outros"] || 0) + v; }
+      }
+      const categorias = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => ({ categoria: c, total: v }));
+      return { mes: month, receitas, despesas, saldo: receitas - despesas, lancamentos: (data || []).length, gastos_por_categoria: categorias };
+    }
+    if (name === "add_finance_entry") {
+      const kind = input.kind === "receita" ? "receita" : "despesa";
+      const amount = Number(input.amount);
+      if (!isFinite(amount) || amount <= 0) return { ok: false, message: "Valor inválido." };
+      const entry_date = /^\d{4}-\d{2}-\d{2}$/.test(input.date || "") ? input.date : new Date().toISOString().slice(0, 10);
+      const { error } = await supabase.from("finance_entries").insert({
+        scope: "empresa",
+        company_id: companyId,
+        kind,
+        amount,
+        category: input.category || null,
+        description: input.description || null,
+        entry_date,
+      });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `${kind === "receita" ? "Receita" : "Despesa"} de R$ ${amount.toFixed(2)} lançada${input.category ? ` (${input.category})` : ""}.` };
+    }
+    if (name === "list_folder") {
+      const q = String(input.folder || "").trim();
+      if (!q) return { ok: false, message: "Diga o nome da pasta." };
+      const { data: folder } = await supabase
+        .from("files")
+        .select("id,name")
+        .eq("company_id", companyId)
+        .eq("type", "folder")
+        .ilike("name", `%${q}%`)
+        .limit(1)
+        .maybeSingle();
+      if (!folder) return { ok: false, message: `Não achei a pasta "${q}".` };
+      const { data: kids } = await supabase
+        .from("files")
+        .select("name,type")
+        .eq("company_id", companyId)
+        .eq("parent_id", folder.id)
+        .order("type")
+        .order("name");
+      const pastas = (kids || []).filter((k) => k.type === "folder").map((k) => k.name);
+      const arquivos = (kids || []).filter((k) => k.type === "file").map((k) => k.name);
+      return { pasta: folder.name, subpastas: pastas, arquivos, total_subpastas: pastas.length, total_arquivos: arquivos.length };
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
@@ -1131,22 +1215,25 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `pergunte em vez de chutar. Guarde na memória o que já foi dito (nomes, datas, valores) e responda CLARO e CONCISO, sem recomeçar. ` +
     `Ao enviar mensagem/arquivo para alguém, CONFIRME o destinatário juntando NOME + TELEFONE (ex.: "confirmando: João, +55 11 9...., certo?") antes de mandar. ` +
     `Se for algo ROTINEIRO que você já fez com o mesmo contato, seja direto e não fique repetindo perguntas de confirmação bobas. ` +
+    `FINANCEIRO: você pode consultar e lançar no financeiro DA EMPRESA. Para 'como está o financeiro', 'quais os gastos', saldo do mês, use finance_summary e dê um PANORAMA claro (receitas, despesas, saldo e principais gastos), com um conselho curto pro dono (ex.: alertar se as despesas passaram das receitas). Para lançar, use add_finance_entry (confirme o valor antes). ` +
+    `Ao listar arquivos/pastas, mande em TEXTO organizado (use list_folder) — uma lista de itens, não frase corrida. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
       : `Aja de forma autônoma, perguntando só o essencial.`) +
-    companyContextBlock(await getCompanyInfo());
+    companyContextBlock(await getCompanyInfo(companyId));
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
   // Ferramentas liberadas pelas CAPACIDADES do agente (Labs). Vazio/nulo = todas.
   const caps = Array.isArray(chatbot?.capabilities) ? chatbot.capabilities : null;
   const CAP_TOOLS = {
-    files: ["search_files", "send_file"],
+    files: ["search_files", "send_file", "list_folder"],
     tasks: ["list_sectors", "list_employees", "create_task", "list_tasks", "move_task"],
     clients: ["lookup_client", "create_client"],
     announcements: ["post_announcement"],
     attendance: ["set_attendance"],
     relay: ["send_whatsapp", "send_file_to_contact", "forward_media"],
+    finance: ["finance_summary", "add_finance_entry"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));

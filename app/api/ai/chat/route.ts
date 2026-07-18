@@ -112,6 +112,21 @@ const TOOLS: Anthropic.Tool[] = [
     description: "Abre/encerra atendimento de um contato pelo nome. status: espera (aguardando) | atendendo | fechado (finalizar).",
     input_schema: { type: "object", properties: { contact: { type: "string" }, status: { type: "string" } }, required: ["contact", "status"] },
   },
+  {
+    name: "finance_summary",
+    description: "Panorama financeiro da EMPRESA. month opcional AAAA-MM (padrão mês atual). Retorna receitas, despesas, saldo e gastos por categoria.",
+    input_schema: { type: "object", properties: { month: { type: "string" } } },
+  },
+  {
+    name: "add_finance_entry",
+    description: "Lança despesa/receita no financeiro da EMPRESA. kind: despesa|receita, amount em reais, category/description/date opcionais.",
+    input_schema: { type: "object", properties: { kind: { type: "string" }, amount: { type: "number" }, category: { type: "string" }, description: { type: "string" }, date: { type: "string" } }, required: ["kind", "amount"] },
+  },
+  {
+    name: "list_folder",
+    description: "Lista em texto o conteúdo de uma pasta pelo nome (subpastas e arquivos).",
+    input_schema: { type: "object", properties: { folder: { type: "string" } }, required: ["folder"] },
+  },
 ];
 
 type Ctx = { userId: string | null; companyId: string | null };
@@ -195,6 +210,41 @@ async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: 
       if (st === "fechado") patch.closed_at = new Date().toISOString();
       const { error } = await client.from("conversations").update(patch).eq("id", conv.id);
       return error ? { ok: false, message: error.message } : { ok: true, message: `Atendimento de ${c.name ?? "contato"} → ${st}.` };
+    }
+    if (name === "finance_summary") {
+      const month = /^\d{4}-\d{2}$/.test(input.month || "") ? input.month : new Date().toISOString().slice(0, 7);
+      const start = `${month}-01`;
+      const endD = new Date(`${month}-01T00:00:00`);
+      endD.setMonth(endD.getMonth() + 1);
+      const end = endD.toISOString().slice(0, 10);
+      const { data } = await client.from("finance_entries").select("kind,amount,category").eq("scope", "empresa").gte("entry_date", start).lt("entry_date", end);
+      let receitas = 0, despesas = 0;
+      const byCat: Record<string, number> = {};
+      for (const e of (data ?? []) as { kind: string; amount: number; category: string | null }[]) {
+        const v = Number(e.amount) || 0;
+        if (e.kind === "receita") receitas += v;
+        else { despesas += v; byCat[e.category || "Outros"] = (byCat[e.category || "Outros"] || 0) + v; }
+      }
+      const categorias = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => ({ categoria: c, total: v }));
+      return { mes: month, receitas, despesas, saldo: receitas - despesas, gastos_por_categoria: categorias };
+    }
+    if (name === "add_finance_entry") {
+      const kind = input.kind === "receita" ? "receita" : "despesa";
+      const amount = Number(input.amount);
+      if (!isFinite(amount) || amount <= 0) return { ok: false, message: "Valor inválido." };
+      const entry_date = /^\d{4}-\d{2}-\d{2}$/.test(input.date || "") ? input.date : new Date().toISOString().slice(0, 10);
+      const { error } = await client.from("finance_entries").insert({ scope: "empresa", company_id: ctx.companyId, kind, amount, category: input.category ?? null, description: input.description ?? null, entry_date });
+      return error ? { ok: false, message: error.message } : { ok: true, message: `${kind} de R$ ${amount.toFixed(2)} lançada.` };
+    }
+    if (name === "list_folder") {
+      const q = String(input.folder || "").trim();
+      if (!q) return { ok: false, message: "Diga o nome da pasta." };
+      const { data: folder } = await client.from("files").select("id,name").eq("type", "folder").ilike("name", `%${q}%`).limit(1).maybeSingle();
+      if (!folder) return { ok: false, message: `Não achei a pasta "${q}".` };
+      const { data: kids } = await client.from("files").select("name,type").eq("parent_id", folder.id).order("type").order("name");
+      const pastas = ((kids ?? []) as { name: string; type: string }[]).filter((k) => k.type === "folder").map((k) => k.name);
+      const arquivos = ((kids ?? []) as { name: string; type: string }[]).filter((k) => k.type === "file").map((k) => k.name);
+      return { pasta: folder.name, subpastas: pastas, arquivos, total_subpastas: pastas.length, total_arquivos: arquivos.length };
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
