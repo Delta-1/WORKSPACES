@@ -1,14 +1,75 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Cpu, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, Cpu, FolderTree, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
 
+const TAX_REGIMES = ["MEI", "Simples Nacional", "Lucro Presumido", "Lucro Real", "Isento / Outro"];
+// Ramificações padrão criadas dentro da pasta de cada cliente (configurável em
+// Configurações › Empresa; aqui fica o padrão quando não há configuração).
+const DEFAULT_CLIENT_SUBFOLDERS = ["Documentos", "Contratos", "Artes", "Aplicativos"];
+
 function isOnline(a: RemoteAgent) {
   if (a.status !== "online" || !a.last_seen) return false;
   return Date.now() - new Date(a.last_seen).getTime() < 60000;
+}
+
+// Reduz uma imagem (logo do cliente) para um quadrado pequeno em dataURL.
+function resizeImage(file: File, max = 256): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onload = () => {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        const ctx = c.getContext("2d");
+        if (!ctx) return reject(new Error("no ctx"));
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = reject;
+      img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Garante a pasta "Clientes" (raiz) da empresa, cria a subpasta do cliente e as
+// ramificações padrão dentro dela. Devolve o id da pasta do cliente.
+async function ensureClientFolders(companyId: string, clientName: string, subfolders: string[]): Promise<string | null> {
+  if (!supabase) return null;
+  // 1) Pasta raiz "Clientes".
+  let rootId: string | null = null;
+  const { data: root } = await supabase
+    .from("files")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("type", "folder")
+    .is("parent_id", null)
+    .eq("name", "Clientes")
+    .maybeSingle();
+  if (root) rootId = root.id;
+  else {
+    const { data } = await supabase.from("files").insert({ name: "Clientes", type: "folder", parent_id: null, company_id: companyId }).select("id").single();
+    rootId = data?.id ?? null;
+  }
+  if (!rootId) return null;
+  // 2) Subpasta do cliente.
+  const { data: cf } = await supabase.from("files").insert({ name: clientName, type: "folder", parent_id: rootId, company_id: companyId }).select("id").single();
+  const clientFolderId = cf?.id ?? null;
+  if (!clientFolderId) return null;
+  // 3) Ramificações padrão.
+  const subs = (subfolders && subfolders.length ? subfolders : DEFAULT_CLIENT_SUBFOLDERS).filter(Boolean);
+  if (subs.length) {
+    await supabase.from("files").insert(subs.map((name) => ({ name, type: "folder", parent_id: clientFolderId, company_id: companyId })));
+  }
+  return clientFolderId;
 }
 
 // Painel de panorama que aparece ao passar o mouse num computador.
@@ -169,11 +230,22 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
           return (
             <div key={c.id} className="liquid-glass rounded-2xl p-4 flex flex-col gap-3">
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold truncate">{c.name}</p>
-                  <p className="text-[11px] text-gray-500 truncate">
-                    {[c.phone, c.document].filter(Boolean).join(" · ") || "Sem contato"}
-                  </p>
+                <div className="flex items-start gap-2.5 min-w-0">
+                  {c.logo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.logo_url} alt="" className="w-10 h-10 rounded-lg object-cover border border-white/10 shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center text-gray-500 shrink-0"><Building2 size={16} /></div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{c.name}</p>
+                    <p className="text-[11px] text-gray-500 truncate">
+                      {[c.phone, c.document].filter(Boolean).join(" · ") || "Sem contato"}
+                    </p>
+                    {c.tax_regime && (
+                      <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">{c.tax_regime}</span>
+                    )}
+                  </div>
                 </div>
                 {canManage && (
                   <button onClick={() => removeClient(c.id)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
@@ -181,6 +253,8 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
                   </button>
                 )}
               </div>
+
+              {canManage && c.folder_id && <ClientUpload client={c} companyId={companyId} />}
 
               <div className="bg-black/20 rounded-lg p-2.5">
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
@@ -249,7 +323,7 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
-      {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} />}
+      {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} />}
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
   );
@@ -259,27 +333,42 @@ function AddClientModal({
   onClose,
   onSaved,
   createdBy,
+  companyId,
 }: {
   onClose: () => void;
   onSaved: () => void;
   createdBy: string | null;
+  companyId: string | null;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [document, setDocument] = useState("");
   const [email, setEmail] = useState("");
+  const [regime, setRegime] = useState("");
+  const [logo, setLogo] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function save() {
     if (!supabase || !name.trim()) return;
     setSaving(true);
+    // Cria a pasta do cliente no grafo (Clientes › <cliente> › ramificações).
+    let folderId: string | null = null;
+    if (companyId) {
+      const { data: cfg } = await supabase.from("company_settings").select("client_subfolders").maybeSingle();
+      const subs = Array.isArray(cfg?.client_subfolders) ? cfg.client_subfolders : DEFAULT_CLIENT_SUBFOLDERS;
+      folderId = await ensureClientFolders(companyId, name.trim(), subs);
+    }
     const { error } = await supabase.from("clients").insert({
       name: name.trim(),
       phone: phone.trim() || null,
       document: document.trim() || null,
       email: email.trim() || null,
+      tax_regime: regime || null,
+      logo_url: logo,
+      folder_id: folderId,
       notes: notes.trim() || null,
+      company_id: companyId,
       created_by: createdBy,
     });
     setSaving(false);
@@ -322,12 +411,38 @@ function AddClientModal({
             className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
           />
         </div>
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="E-mail"
-          className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
-        />
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="E-mail"
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+          />
+          <select
+            value={regime}
+            onChange={(e) => setRegime(e.target.value)}
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer"
+          >
+            <option value="">Regime tributário…</option>
+            {TAX_REGIMES.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+        {/* Logo/imagem da empresa cliente */}
+        <div className="flex items-center gap-3">
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo} alt="" className="w-12 h-12 rounded-lg object-cover border border-white/10" />
+          ) : (
+            <div className="w-12 h-12 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center text-gray-500"><Building2 size={18} /></div>
+          )}
+          <label className="text-xs text-emerald-300 hover:text-white cursor-pointer flex items-center gap-1">
+            <Upload size={13} /> {logo ? "Trocar logo" : "Logo da empresa"}
+            <input type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setLogo(await resizeImage(f).catch(() => null)); }} />
+          </label>
+          {logo && <button onClick={() => setLogo(null)} className="text-[11px] text-gray-400 hover:text-red-400 underline cursor-pointer">remover</button>}
+        </div>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -335,6 +450,7 @@ function AddClientModal({
           rows={2}
           className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none resize-none"
         />
+        <p className="text-[10px] text-gray-500 flex items-center gap-1"><FolderTree size={11} className="text-emerald-400" /> Ao salvar, cria a pasta deste cliente no grafo (Clientes › {name || "cliente"} › ramificações).</p>
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">
             Cancelar
@@ -348,6 +464,77 @@ function AddClientModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Envio de arquivo para a pasta interna do cliente (no grafo). Escolhe a
+// ramificação (Documentos/Artes/Contratos…) = o "tipo" do arquivo. NÃO vai para
+// a máquina do cliente — fica no servidor/grafo da empresa.
+function ClientUpload({ client, companyId }: { client: Client; companyId: string | null }) {
+  const [subs, setSubs] = useState<{ id: string; name: string }[]>([]);
+  const [dest, setDest] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supabase || !client.folder_id) return;
+    supabase
+      .from("files")
+      .select("id,name")
+      .eq("parent_id", client.folder_id)
+      .eq("type", "folder")
+      .order("name")
+      .then(({ data }) => {
+        const list = (data as { id: string; name: string }[]) ?? [];
+        setSubs(list);
+        setDest(list[0]?.id ?? client.folder_id ?? "");
+      });
+  }, [client.folder_id]);
+
+  async function upload(file: File) {
+    if (!supabase || !companyId) return;
+    setBusy(true);
+    setMsg("Enviando…");
+    try {
+      const parent = dest || client.folder_id;
+      const path = `clients/${client.id}/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, "_")}`;
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const { error: up } = await supabase.storage.from("company-files").upload(path, buf, { contentType: file.type || "application/octet-stream", upsert: true });
+      if (up) throw up;
+      const { error: ins } = await supabase.from("files").insert({
+        name: file.name,
+        type: "file",
+        parent_id: parent,
+        company_id: companyId,
+        storage_path: path,
+        mime: file.type || null,
+      });
+      if (ins) throw ins;
+      setMsg("✓ Enviado para a pasta do cliente.");
+    } catch (e) {
+      setMsg("Erro: " + (e instanceof Error ? e.message : "falha ao enviar"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-black/20 rounded-lg p-2.5 space-y-1.5">
+      <p className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-1"><FolderTree size={11} /> Arquivos do cliente</p>
+      <div className="flex items-center gap-1.5">
+        <select value={dest} onChange={(e) => setDest(e.target.value)} className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none cursor-pointer">
+          {client.folder_id && <option value={client.folder_id}>Pasta do cliente</option>}
+          {subs.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <label className={`flex items-center gap-1 text-[11px] px-2 py-1.5 rounded-lg cursor-pointer ${busy ? "bg-white/5 text-gray-500" : "bg-emerald-600 hover:bg-emerald-500 text-white"}`}>
+          <Upload size={12} /> {busy ? "…" : "Enviar"}
+          <input type="file" className="hidden" disabled={busy} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+        </label>
+      </div>
+      {msg && <p className={`text-[10px] ${msg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{msg}</p>}
     </div>
   );
 }

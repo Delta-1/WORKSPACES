@@ -96,6 +96,9 @@ export type Client = {
   document: string | null;
   email: string | null;
   notes: string | null;
+  tax_regime: string | null;
+  logo_url: string | null;
+  folder_id: string | null;
   created_by: string | null;
   created_at: string;
 };
