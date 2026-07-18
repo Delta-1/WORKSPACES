@@ -676,6 +676,104 @@ function enableAutoStart() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AUTO-ATUALIZAÇÃO — o app se atualiza sozinho para a última versão.
+// Lê a tabela app_releases no Supabase (version + link direto por sistema),
+// compara com a versão atual e, se houver nova, baixa e executa o instalador.
+// O gestor atualiza app_releases após cada build (versão + link DIRETO de
+// download do Windows/.exe e do Linux/.AppImage).
+// ---------------------------------------------------------------------------
+const https = require("https");
+const { spawn } = require("child_process");
+
+function cmpVer(a, b) {
+  const pa = String(a || "0").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "0").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+function httpsGet(url, headers = {}, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects < 6) {
+          res.resume();
+          return resolve(httpsGet(res.headers.location, headers, redirects + 1));
+        }
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+      })
+      .on("error", reject);
+  });
+}
+
+function httpsDownload(url, dest, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https
+      .get(url, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects < 6) {
+          res.resume();
+          file.close();
+          return resolve(httpsDownload(res.headers.location, dest, redirects + 1));
+        }
+        if (res.statusCode !== 200) { res.resume(); file.close(); return reject(new Error("HTTP " + res.statusCode)); }
+        res.pipe(file);
+        file.on("finish", () => file.close(() => resolve(dest)));
+      })
+      .on("error", (e) => { try { fs.unlinkSync(dest); } catch {} reject(e); });
+  });
+}
+
+let updating = false;
+async function checkForUpdate(cfg, manual = false) {
+  const { dialog } = require("electron");
+  if (updating) return;
+  try {
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) return;
+    const buf = await httpsGet(`${cfg.supabaseUrl}/rest/v1/app_releases?select=*&limit=1`, {
+      apikey: cfg.supabaseAnonKey,
+      Authorization: `Bearer ${cfg.supabaseAnonKey}`,
+    });
+    const rows = JSON.parse(buf.toString("utf8"));
+    const rel = Array.isArray(rows) ? rows[0] : null;
+    const current = app.getVersion();
+    if (!rel || cmpVer(rel.version, current) <= 0) {
+      if (manual) dialog.showMessageBox({ type: "info", title: "Acesso Remoto", message: `Você já está na versão mais recente (${current}).` });
+      return;
+    }
+    const url = process.platform === "win32" ? rel.url_win : rel.url_linux;
+    if (!url) {
+      if (manual) dialog.showMessageBox({ type: "warning", title: "Atualização", message: "Há uma nova versão, mas sem link para o seu sistema ainda." });
+      return;
+    }
+    if (manual) {
+      const r = dialog.showMessageBoxSync({ type: "question", buttons: ["Atualizar agora", "Depois"], defaultId: 0, title: "Atualização disponível", message: `Nova versão ${rel.version} disponível (você tem ${current}). Atualizar agora?` });
+      if (r !== 0) return;
+    }
+    updating = true;
+    const ext = process.platform === "win32" ? ".exe" : ".AppImage";
+    const dest = path.join(app.getPath("temp"), `workspace-remote-update-${Date.now()}${ext}`);
+    await httpsDownload(url, dest);
+    if (process.platform !== "win32") { try { fs.chmodSync(dest, 0o755); } catch {} }
+    // Executa o instalador/nova versão e fecha o app atual para concluir.
+    const child = spawn(dest, [], { detached: true, stdio: "ignore" });
+    child.unref();
+    app.isQuitting = true;
+    setTimeout(() => app.quit(), 900);
+  } catch (e) {
+    updating = false;
+    console.error("auto-update", e?.message || e);
+    if (manual) { try { require("electron").dialog.showMessageBox({ type: "error", title: "Atualização", message: "Não consegui atualizar agora: " + (e?.message || e) }); } catch {} }
+  }
+}
+
 app.whenReady().then(() => {
   enableAutoStart();
   const bundled = loadBundledConfig();
@@ -701,7 +799,11 @@ app.whenReady().then(() => {
     tray.setToolTip("Workspace — Acesso Remoto (ativo)");
     tray.setContextMenu(
       Menu.buildFromTemplate([
+        { label: `Código: ${code}`, enabled: false },
+        { label: `Versão ${app.getVersion()}`, enabled: false },
+        { type: "separator" },
         { label: "Abrir janela do código", click: () => showWindow() },
+        { label: "Atualizar (buscar nova versão)", click: () => checkForUpdate(payload, true) },
         { type: "separator" },
         {
           label: "Encerrar acesso remoto",
@@ -719,6 +821,10 @@ app.whenReady().then(() => {
   } catch {
     /* tray opcional */
   }
+
+  // Verifica atualização ao abrir e depois a cada 3 horas (silencioso).
+  setTimeout(() => checkForUpdate(payload, false), 8000);
+  setInterval(() => checkForUpdate(payload, false), 3 * 3600 * 1000);
 });
 
 app.on("window-all-closed", (e) => {
