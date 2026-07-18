@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, FolderCheck, FolderSearch, Link2, Monitor, MonitorSmartphone, Server, Trash2, X } from "lucide-react";
+import { Copy, FolderCheck, FolderSearch, Link2, Monitor, MonitorSmartphone, Server, Settings2, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import AgentFolderPicker from "@/components/AgentFolderPicker";
@@ -25,6 +25,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [rootInput, setRootInput] = useState(""); // diretório escolhido para o servidor
   const [sharedList, setSharedList] = useState<string[]>([]); // pastas liberadas (allowlist)
   const [pickTarget, setPickTarget] = useState<"root" | "shared" | null>(null); // seletor visual aberto
+  const [permsFor, setPermsFor] = useState<RemoteAgent | null>(null); // engrenagem: permissões da máquina
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
@@ -194,6 +195,13 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                 {canManage && (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
+                      onClick={() => setPermsFor(a)}
+                      title="Permissões desta máquina (controle, arquivos, print)"
+                      className="text-gray-500 hover:text-emerald-300 cursor-pointer"
+                    >
+                      <Settings2 size={14} />
+                    </button>
+                    <button
                       onClick={() => toggleServer(a)}
                       title={a.is_server ? "É o servidor de arquivos — clique para tirar" : "Definir como servidor de arquivos"}
                       className={`cursor-pointer ${a.is_server ? "text-sky-400" : "text-gray-500 hover:text-sky-300"}`}
@@ -344,6 +352,14 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
 
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
 
+      {permsFor && (
+        <PermsModal
+          agent={permsFor}
+          onClose={() => setPermsFor(null)}
+          onSaved={() => { setPermsFor(null); load(); }}
+        />
+      )}
+
       {pickTarget && pwFor && (
         <AgentFolderPicker
           agentId={pwFor.id}
@@ -356,6 +372,51 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Engrenagem: permissões da máquina do cliente (o que o técnico pode fazer).
+function PermsModal({ agent, onClose, onSaved }: { agent: RemoteAgent; onClose: () => void; onSaved: () => void }) {
+  const [control, setControl] = useState(agent.allow_control !== false);
+  const [files, setFiles] = useState(agent.allow_files !== false);
+  const [screenshot, setScreenshot] = useState(agent.allow_screenshot !== false);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!supabase) return;
+    setSaving(true);
+    await supabase.rpc("set_agent_perms", { p_id: agent.id, p_control: control, p_files: files, p_screenshot: screenshot });
+    setSaving(false);
+    onSaved();
+  }
+
+  const Row = ({ on, set, title, desc }: { on: boolean; set: (v: boolean) => void; title: string; desc: string }) => (
+    <button onClick={() => set(!on)} className={`w-full flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 border cursor-pointer text-left transition-colors ${on ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 bg-black/20 hover:bg-white/5"}`}>
+      <span className="min-w-0">
+        <span className="text-sm font-semibold block">{title}</span>
+        <span className="text-[11px] text-gray-400">{desc}</span>
+      </span>
+      <span className={`text-[11px] font-bold shrink-0 ${on ? "text-emerald-300" : "text-gray-500"}`}>{on ? "LIGADO" : "desligado"}</span>
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold flex items-center gap-2"><Settings2 size={16} className="text-emerald-400" /> Permissões — {agent.name}</h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+        </div>
+        <p className="text-[11px] text-gray-400">Escolha o que é permitido nesta máquina. Vale na próxima sincronização do app (poucos segundos).</p>
+        <Row on={control} set={setControl} title="Controlar (mouse e teclado)" desc="Mexer no computador remotamente." />
+        <Row on={files} set={setFiles} title="Acessar arquivos" desc="Ver e baixar arquivos da máquina." />
+        <Row on={screenshot} set={setScreenshot} title="Tirar print da tela" desc="Permitir o print pelo Copilot/suporte." />
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button onClick={onClose} className="text-xs px-3 py-2 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">Cancelar</button>
+          <button onClick={save} disabled={saving} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">{saving ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
     </div>
   );
 }

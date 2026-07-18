@@ -85,6 +85,9 @@ export type RemoteAgent = {
   server_root: string | null;
   graph_folder_id: string | null;
   shared_paths: string[] | null;
+  allow_control: boolean | null;
+  allow_files: boolean | null;
+  allow_screenshot: boolean | null;
 };
 
 export type AgentSpecs = {

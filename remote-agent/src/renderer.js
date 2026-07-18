@@ -96,6 +96,7 @@ async function reportSpecs() {
 let serverRoot = null;
 let serverGraphFolder = null; // pasta do servidor no grafo (registra os arquivos lá)
 let agentSharedPaths = []; // pastas liberadas (allowlist); vazio = sem restrição
+let agentPerms = { control: true, files: true, screenshot: true }; // permissões
 
 // O destino está numa pasta liberada? (para decidir se mostra no grafo)
 function destShared(destDir) {
@@ -121,6 +122,14 @@ async function refreshServerRole() {
     } catch {
       /* ignore */
     }
+    // Permissões (o que o cliente/técnico liberou). Envia pro processo principal
+    // gatear controle e arquivos; o print é gateado aqui mesmo.
+    agentPerms = {
+      control: row?.allow_control !== false,
+      files: row?.allow_files !== false,
+      screenshot: row?.allow_screenshot !== false,
+    };
+    try { ipcRenderer.send("set-perms", agentPerms); } catch { /* ignore */ }
     if (row?.is_server) {
       serverRoot = await ipcRenderer.invoke("server-init", row.server_root || null);
       serverGraphFolder = row.graph_folder_id || null;
@@ -394,6 +403,10 @@ async function runAgentJobs() {
     const { data } = await supabase.rpc("agent_pending_jobs", { p_access_code: cfg.accessCode });
     for (const j of data || []) {
       if (j.kind === "screenshot") {
+        if (!agentPerms.screenshot) {
+          await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: "print não permitido nesta máquina" });
+          continue;
+        }
         let url = null, err = null;
         try {
           const base64 = await ipcRenderer.invoke("get-thumbnail", { full: true });

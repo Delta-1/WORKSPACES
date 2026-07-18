@@ -138,6 +138,12 @@ ipcMain.handle("get-sources", async () => {
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
 });
 
+// Permissões liberadas para esta máquina (o cliente/técnico controla no site).
+let perms = { control: true, files: true, screenshot: true };
+ipcMain.on("set-perms", (_e, p) => {
+  if (p && typeof p === "object") perms = { control: p.control !== false, files: p.files !== false, screenshot: p.screenshot !== false };
+});
+
 // Qual monitor está sendo controlado (para mapear mouse/teclado no lugar certo).
 let activeDisplayId = null;
 ipcMain.on("set-display", (_e, displayId) => {
@@ -230,6 +236,7 @@ function isAllowed(p) {
   });
 }
 function ensureAllowed(p) {
+  if (!perms.files) throw new Error("Acesso a arquivos desativado nas permissões desta máquina.");
   if (!isAllowed(p)) throw new Error("Acesso bloqueado: esta pasta não está liberada pelo gestor.");
 }
 
@@ -533,6 +540,7 @@ async function ensureNut() {
 }
 ipcMain.on("input", async (_e, ev) => {
   try {
+    if (!perms.control) return; // controle desativado nas permissões da máquina
     const { mouse, keyboard, Point, Button, Key } = await ensureNut();
     // Mapeia para o monitor que está sendo controlado (bounds inclui o offset,
     // então o mouse vai pro monitor certo mesmo com vários monitores).
