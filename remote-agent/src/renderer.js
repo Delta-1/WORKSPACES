@@ -419,6 +419,9 @@ async function runAgentJobs() {
           } else err = "sem imagem";
         } catch (e) { err = String(e?.message || e).slice(0, 200); }
         await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: url, p_error: url ? null : (err || "falha") });
+      } else if (j.kind === "show_orb") {
+        try { ipcRenderer.send("orb-show"); } catch { /* ignore */ }
+        await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: null });
       } else {
         await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: "tipo desconhecido" });
       }

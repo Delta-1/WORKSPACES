@@ -133,6 +133,36 @@ function showWindow() {
   }
 }
 
+// Bolinha flutuante (assistente do cliente) — janela sem moldura, transparente,
+// sempre por cima e arrastável. O cliente clica no microfone e fala o problema.
+let orbWin = null;
+function createOrbWindow(cfg) {
+  if (orbWin && !orbWin.isDestroyed()) { orbWin.show(); return; }
+  orbWin = new BrowserWindow({
+    width: 340, height: 230, frame: false, transparent: true, resizable: false,
+    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, fullscreenable: false, maximizable: false, minimizable: false,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  orbWin.setAlwaysOnTop(true, "screen-saver");
+  try {
+    const wa = screen.getPrimaryDisplay().workArea;
+    orbWin.setBounds({ x: wa.x + wa.width - 350, y: wa.y + wa.height - 240, width: 340, height: 230 });
+  } catch { /* ignore */ }
+  orbWin.loadFile(path.join(__dirname, "orb.html"));
+  orbWin.webContents.on("did-finish-load", () => {
+    if (orbWin && !orbWin.isDestroyed()) orbWin.webContents.send("orb-config", cfg);
+  });
+  orbWin.on("closed", () => { orbWin = null; });
+}
+ipcMain.on("orb-hide", () => { if (orbWin && !orbWin.isDestroyed()) orbWin.hide(); });
+let orbCfgGlobal = null;
+ipcMain.on("orb-show", () => { if (orbCfgGlobal) createOrbWindow(orbCfgGlobal); });
+function toggleOrb(cfg) {
+  if (orbWin && !orbWin.isDestroyed()) {
+    if (orbWin.isVisible()) orbWin.hide(); else orbWin.show();
+  } else createOrbWindow(cfg);
+}
+
 ipcMain.handle("get-sources", async () => {
   const sources = await desktopCapturer.getSources({ types: ["screen"] });
   return sources.map((s) => ({ id: s.id, name: s.name, display_id: s.display_id }));
@@ -812,7 +842,10 @@ app.whenReady().then(() => {
     hostName: os.hostname(),
     agentId: pairing?.agentId || null,
     accessCode: code,
+    appUrl: bundled.appUrl || "",
   };
+  const orbCfg = { appUrl: bundled.appUrl || "", accessCode: code, agentName: bundled.name || os.hostname() };
+  orbCfgGlobal = orbCfg;
   lastPayload = payload; // guarda p/ recriar a janela pelo menu "Abrir"
   // Abre a janela na 1ª vez (pra mostrar o código); depois pode subir oculto.
   const hidden = process.argv.includes("--hidden");
@@ -827,6 +860,7 @@ app.whenReady().then(() => {
         { label: `Versão ${app.getVersion()}`, enabled: false },
         { type: "separator" },
         { label: "Abrir janela do código", click: () => showWindow() },
+        { label: "Assistente (bolinha flutuante)", click: () => toggleOrb(orbCfg) },
         { label: "Atualizar (buscar nova versão)", click: () => checkForUpdate(payload, true) },
         { type: "separator" },
         {

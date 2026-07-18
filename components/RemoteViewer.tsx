@@ -324,6 +324,11 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function combo(name: string) {
     sendInput({ kind: "combo", name });
   }
+  // Mostra a bolinha assistente na tela do cliente (enfileira um job pro agente).
+  async function showClientAssistant() {
+    if (!supabase) return;
+    await supabase.rpc("enqueue_agent_job", { p_agent_id: agent.id, p_kind: "show_orb" });
+  }
   // Cola o texto do MEU computador (área de transferência) na máquina remota —
   // digita o conteúdo no campo em foco. Prático p/ mandar links, códigos, etc.
   async function pasteClipboard() {
@@ -769,6 +774,9 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             </button>
             <button onClick={pasteClipboard} title="Colar o texto do meu computador na máquina remota" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <ClipboardPaste size={14} /> Colar
+            </button>
+            <button onClick={showClientAssistant} title="Mostrar a bolinha assistente na tela do cliente" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
+              <Bot size={14} /> Assistente ao cliente
             </button>
           </div>
           <input

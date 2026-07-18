@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      html, body { background: transparent; overflow: hidden; user-select: none; }
+      #wrap { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+      /* Balão de texto flutuante (não é chat — mostra só o momento). */
+      #bubble {
+        max-width: 300px; background: rgba(11, 15, 22, 0.92); color: #e2e8f0; border: 1px solid rgba(99,102,241,0.4);
+        border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.35; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        -webkit-app-region: no-drag; display: none; white-space: pre-wrap;
+      }
+      #bubble.show { display: block; }
+      #bubble .who { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #818cf8; margin-bottom: 3px; }
+      #row { display: flex; align-items: center; gap: 8px; }
+      /* Campo de texto (quando não tem microfone). */
+      #typebox {
+        display: none; -webkit-app-region: no-drag; width: 220px; background: rgba(11,15,22,0.92); color: #fff;
+        border: 1px solid rgba(255,255,255,0.15); border-radius: 20px; padding: 8px 12px; font-size: 13px; outline: none;
+      }
+      #typebox.show { display: block; }
+      /* A bolinha: o anel é a "alça" de arrastar; o miolo é o botão de escutar. */
+      #ball {
+        width: 62px; height: 62px; border-radius: 50%; position: relative; -webkit-app-region: drag; cursor: grab;
+        background: radial-gradient(circle at 30% 30%, #a5b4fc, #6366f1 45%, #4338ca 85%);
+        box-shadow: 0 0 22px rgba(99,102,241,0.7), 0 8px 24px rgba(0,0,0,0.5);
+        display: flex; align-items: center; justify-content: center;
+      }
+      #ball.listening { animation: pulse 1.2s ease-in-out infinite; }
+      @keyframes pulse { 0%,100% { box-shadow: 0 0 22px rgba(99,102,241,0.7); } 50% { box-shadow: 0 0 34px rgba(99,102,241,1); } }
+      #mic {
+        width: 40px; height: 40px; border-radius: 50%; -webkit-app-region: no-drag; cursor: pointer; border: none;
+        background: rgba(255,255,255,0.15); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px;
+      }
+      #mic:hover { background: rgba(255,255,255,0.28); }
+      #kbd {
+        width: 24px; height: 24px; border-radius: 50%; -webkit-app-region: no-drag; cursor: pointer; border: none;
+        background: rgba(11,15,22,0.9); color: #cbd5e1; position: absolute; bottom: -2px; right: -2px; font-size: 12px;
+        display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.15);
+      }
+      #close {
+        width: 20px; height: 20px; border-radius: 50%; -webkit-app-region: no-drag; cursor: pointer; border: none;
+        background: rgba(11,15,22,0.9); color: #94a3b8; position: absolute; top: -2px; right: -2px; font-size: 11px;
+        display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.15);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="bubble"><div class="who" id="bubbleWho">Assistente</div><div id="bubbleText"></div></div>
+      <div id="row">
+        <input id="typebox" placeholder="Escreva seu problema e Enter…" />
+        <div id="ball">
+          <button id="mic" title="Falar">🎤</button>
+          <button id="kbd" title="Escrever">⌨</button>
+          <button id="close" title="Esconder">×</button>
+        </div>
+      </div>
+    </div>
+    <script src="./orb.js"></script>
+  </body>
+</html>
