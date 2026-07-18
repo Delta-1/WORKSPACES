@@ -10,12 +10,30 @@ export type CompanyInfo = {
   iconColor: string;
   logoSize: number;
   themeStyle: string;
+  address: string | null;
+  addressLink: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  reviewLink: string | null;
+  photoUrl: string | null;
+  autoCloseMinutes: number;
 };
 
 const DEFAULT_THEME = "#10b981";
 const DEFAULT_ICON = "#10b981";
 const DEFAULT_LOGO_SIZE = 36;
 const DEFAULT_STYLE = "aurora";
+const CONTACT_DEFAULTS = {
+  address: null,
+  addressLink: null,
+  phone: null,
+  email: null,
+  website: null,
+  reviewLink: null,
+  photoUrl: null,
+  autoCloseMinutes: 0,
+};
 
 export async function fetchCompany(): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
@@ -30,6 +48,14 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
         themeStyle: data.theme_style ?? DEFAULT_STYLE,
+        address: data.address ?? null,
+        addressLink: data.address_link ?? null,
+        phone: data.phone ?? null,
+        email: data.email ?? null,
+        website: data.website ?? null,
+        reviewLink: data.review_link ?? null,
+        photoUrl: data.photo_url ?? null,
+        autoCloseMinutes: data.auto_close_minutes ?? 0,
       };
     }
   }
@@ -44,6 +70,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
     iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
     themeStyle: DEFAULT_STYLE,
+    ...CONTACT_DEFAULTS,
   };
 }
 
@@ -60,6 +87,14 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.iconColor !== undefined ? { icon_color: update.iconColor } : {}),
         ...(update.logoSize !== undefined ? { logo_size: update.logoSize } : {}),
         ...(update.themeStyle !== undefined ? { theme_style: update.themeStyle } : {}),
+        ...(update.address !== undefined ? { address: update.address } : {}),
+        ...(update.addressLink !== undefined ? { address_link: update.addressLink } : {}),
+        ...(update.phone !== undefined ? { phone: update.phone } : {}),
+        ...(update.email !== undefined ? { email: update.email } : {}),
+        ...(update.website !== undefined ? { website: update.website } : {}),
+        ...(update.reviewLink !== undefined ? { review_link: update.reviewLink } : {}),
+        ...(update.photoUrl !== undefined ? { photo_url: update.photoUrl } : {}),
+        ...(update.autoCloseMinutes !== undefined ? { auto_close_minutes: update.autoCloseMinutes } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", true)
@@ -75,6 +110,14 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
         themeStyle: data.theme_style ?? DEFAULT_STYLE,
+        address: data.address ?? null,
+        addressLink: data.address_link ?? null,
+        phone: data.phone ?? null,
+        email: data.email ?? null,
+        website: data.website ?? null,
+        reviewLink: data.review_link ?? null,
+        photoUrl: data.photo_url ?? null,
+        autoCloseMinutes: data.auto_close_minutes ?? 0,
       };
     }
   }
@@ -93,5 +136,6 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
     iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
     themeStyle: DEFAULT_STYLE,
+    ...CONTACT_DEFAULTS,
   };
 }

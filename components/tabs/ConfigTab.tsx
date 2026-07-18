@@ -45,6 +45,14 @@ export default function ConfigTab({
   iconColor,
   logoSize,
   themeStyle,
+  address,
+  addressLink,
+  phone,
+  email,
+  website,
+  reviewLink,
+  photoUrl,
+  autoCloseMinutes,
   onUpdateCompany,
 }: {
   companyName: string;
@@ -55,8 +63,24 @@ export default function ConfigTab({
   iconColor: string;
   logoSize: number;
   themeStyle: string;
+  address: string | null;
+  addressLink: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  reviewLink: string | null;
+  photoUrl: string | null;
+  autoCloseMinutes: number;
   onUpdateCompany: (update: {
     name?: string;
+    address?: string;
+    addressLink?: string;
+    phone?: string;
+    email?: string;
+    website?: string;
+    reviewLink?: string;
+    photoUrl?: string;
+    autoCloseMinutes?: number;
     logoDataUrl?: string;
     tvLogoCorner?: Corner;
     googleDriveEnabled?: boolean;
@@ -69,6 +93,19 @@ export default function ConfigTab({
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
   const [active, setActive] = useState<SectionId>("empresa");
+  // Rascunhos dos campos de contato (salvam ao sair do campo).
+  const [draftAddress, setDraftAddress] = useState(address ?? "");
+  const [draftAddressLink, setDraftAddressLink] = useState(addressLink ?? "");
+  const [draftPhone, setDraftPhone] = useState(phone ?? "");
+  const [draftEmail, setDraftEmail] = useState(email ?? "");
+  const [draftWebsite, setDraftWebsite] = useState(website ?? "");
+  const [draftReview, setDraftReview] = useState(reviewLink ?? "");
+  useEffect(() => { setDraftAddress(address ?? ""); }, [address]);
+  useEffect(() => { setDraftAddressLink(addressLink ?? ""); }, [addressLink]);
+  useEffect(() => { setDraftPhone(phone ?? ""); }, [phone]);
+  useEffect(() => { setDraftEmail(email ?? ""); }, [email]);
+  useEffect(() => { setDraftWebsite(website ?? ""); }, [website]);
+  useEffect(() => { setDraftReview(reviewLink ?? ""); }, [reviewLink]);
 
   useEffect(() => {
     try {
@@ -86,6 +123,28 @@ export default function ConfigTab({
     } catch {
       /* ignore */
     }
+  }
+
+  function handlePhoto(file: File) {
+    // Reduz a foto do local antes de salvar (evita base64 gigante).
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onload = () => {
+        const max = 900;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        const ctx = c.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          onUpdateCompany({ photoUrl: c.toDataURL("image/jpeg", 0.82) });
+        }
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
   }
 
   function handleLogo(file: File) {
@@ -152,6 +211,54 @@ export default function ConfigTab({
                   onChange={(e) => e.target.files?.[0] && handleLogo(e.target.files[0])}
                   className="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
                 />
+              </div>
+
+              {/* Contato da empresa — o robô usa para responder endereço, telefone,
+                  convidar para o site e pedir avaliação. */}
+              <div className="pt-2 border-t border-white/10 space-y-3">
+                <p className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Contato & endereço (o robô usa isso)</p>
+                <CfgField label="Endereço (escrito)" value={draftAddress} onChange={setDraftAddress} onSave={(v) => onUpdateCompany({ address: v })} placeholder="Rua Exemplo, 123 — Bairro, Cidade/UF" />
+                <CfgField label="Link do endereço (Google Maps)" value={draftAddressLink} onChange={setDraftAddressLink} onSave={(v) => onUpdateCompany({ addressLink: v })} placeholder="https://maps.google.com/..." />
+                <div className="grid grid-cols-2 gap-3">
+                  <CfgField label="Telefone" value={draftPhone} onChange={setDraftPhone} onSave={(v) => onUpdateCompany({ phone: v })} placeholder="(00) 0000-0000" />
+                  <CfgField label="E-mail" value={draftEmail} onChange={setDraftEmail} onSave={(v) => onUpdateCompany({ email: v })} placeholder="contato@empresa.com" />
+                </div>
+                <CfgField label="Site" value={draftWebsite} onChange={setDraftWebsite} onSave={(v) => onUpdateCompany({ website: v })} placeholder="https://www.empresa.com" />
+                <CfgField label="Link de avaliação (Google/etc.)" value={draftReview} onChange={setDraftReview} onSave={(v) => onUpdateCompany({ reviewLink: v })} placeholder="https://g.page/r/.../review" />
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <ImageIcon size={14} /> Foto do escritório / local
+                  </label>
+                  <div className="flex items-center gap-3">
+                    {photoUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={photoUrl} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/10" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => e.target.files?.[0] && handlePhoto(e.target.files[0])}
+                      className="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700 cursor-pointer"
+                    />
+                    {photoUrl && (
+                      <button onClick={() => onUpdateCompany({ photoUrl: "" })} className="text-[11px] text-gray-400 hover:text-red-400 underline cursor-pointer shrink-0">remover</button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Encerrar atendimento por inatividade</label>
+                  <select
+                    value={autoCloseMinutes}
+                    onChange={(e) => onUpdateCompany({ autoCloseMinutes: Number(e.target.value) })}
+                    className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer"
+                  >
+                    <option value={0}>Desligado (só manual)</option>
+                    <option value={30}>Após 30 minutos sem resposta</option>
+                    <option value={60}>Após 1 hora sem resposta</option>
+                    <option value={120}>Após 2 horas sem resposta</option>
+                  </select>
+                  <p className="text-[10px] text-gray-500 mt-1">Quando o cliente some, o robô encerra o atendimento e pede avaliação (se houver link).</p>
+                </div>
               </div>
             </div>
           )}
@@ -258,6 +365,34 @@ export default function ConfigTab({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Campo de texto que salva ao sair do foco (onBlur) — usado no contato da empresa.
+function CfgField({
+  label,
+  value,
+  onChange,
+  onSave,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSave: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => onSave(value.trim())}
+        placeholder={placeholder}
+        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+      />
     </div>
   );
 }

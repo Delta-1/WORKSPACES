@@ -94,6 +94,14 @@ export default function Home() {
     iconColor: "#10b981",
     logoSize: 36,
     themeStyle: "aurora",
+    address: null,
+    addressLink: null,
+    phone: null,
+    email: null,
+    website: null,
+    reviewLink: null,
+    photoUrl: null,
+    autoCloseMinutes: 0,
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -409,6 +417,14 @@ export default function Home() {
             iconColor={company.iconColor}
             logoSize={company.logoSize}
             themeStyle={company.themeStyle}
+            address={company.address}
+            addressLink={company.addressLink}
+            phone={company.phone}
+            email={company.email}
+            website={company.website}
+            reviewLink={company.reviewLink}
+            photoUrl={company.photoUrl}
+            autoCloseMinutes={company.autoCloseMinutes}
             onUpdateCompany={handleUpdateCompany}
           />
         )}

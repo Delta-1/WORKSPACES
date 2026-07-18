@@ -69,6 +69,40 @@ async function companyName() {
   return data?.name ?? "a empresa";
 }
 
+// Dados de contato da empresa (endereço, telefone, site, avaliação) — o robô
+// usa para responder "qual o endereço/telefone", convidar para o site e pedir
+// avaliação. Cache de 1 min.
+let companyInfoCache = { at: 0, info: null };
+async function getCompanyInfo() {
+  if (!supabase) return null;
+  if (companyInfoCache.info && Date.now() - companyInfoCache.at < 60000) return companyInfoCache.info;
+  const { data } = await supabase
+    .from("company_settings")
+    .select("name, address, address_link, phone, email, website, review_link, auto_close_minutes")
+    .eq("id", true)
+    .maybeSingle();
+  companyInfoCache = { at: Date.now(), info: data ?? null };
+  return data ?? null;
+}
+
+// Monta um bloco de contexto com os dados da empresa para o prompt do robô.
+function companyContextBlock(info) {
+  if (!info) return "";
+  const lines = [];
+  if (info.address) lines.push(`- Endereço: ${info.address}`);
+  if (info.address_link) lines.push(`- Link do mapa: ${info.address_link}`);
+  if (info.phone) lines.push(`- Telefone: ${info.phone}`);
+  if (info.email) lines.push(`- E-mail: ${info.email}`);
+  if (info.website) lines.push(`- Site: ${info.website}`);
+  if (info.review_link) lines.push(`- Link de avaliação: ${info.review_link}`);
+  if (!lines.length) return "";
+  return (
+    `\n\nDADOS DA EMPRESA (use quando o cliente pedir ou fizer sentido):\n${lines.join("\n")}\n` +
+    `Quando perguntarem endereço, ofereça o endereço escrito E o link do mapa. Convide para o site quando fizer sentido. ` +
+    `Ao encerrar um atendimento bem-sucedido, agradeça e, se houver link de avaliação, peça gentilmente uma avaliação.`
+  );
+}
+
 async function getNumberConfig(numberId) {
   if (!supabase || !numberId) return { number: null, chatbot: null };
   const { data: number } = await supabase.from("whatsapp_numbers").select("*").eq("id", numberId).maybeSingle();
@@ -643,7 +677,8 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai")
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}`;
+  const companyBlock = companyContextBlock(await getCompanyInfo());
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
@@ -975,7 +1010,8 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `Se for algo ROTINEIRO que você já fez com o mesmo contato, seja direto e não fique repetindo perguntas de confirmação bobas. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
-      : `Aja de forma autônoma, perguntando só o essencial.`);
+      : `Aja de forma autônoma, perguntando só o essencial.`) +
+    companyContextBlock(await getCompanyInfo());
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
@@ -1321,6 +1357,18 @@ async function startSession(numberId) {
             // Quando responder por voz: copiloto segue a preferência; bot normal só
             // responde em áudio se a mensagem recebida foi áudio.
             const wantVoice = (isCopilot ? copilotVoice : wasAudio) && voiceReplyOn && !!botElevenKey;
+            // Cliente pediu explicitamente para encerrar → fecha o atendimento,
+            // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
+            if (!isCopilot && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
+              const info = await getCompanyInfo();
+              let msg = "Perfeito, vou encerrar nosso atendimento então. Muito obrigado pelo contato! 😊";
+              if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
+              const g = await sock.sendMessage(jid, { text: msg });
+              await logMessage(conversation.id, "out", msg, null, null, cid, g?.key?.id ?? null);
+              await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", conversation.id);
+              void generateContactReport({ ...conversation, status: "fechado" });
+              return;
+            }
             // Saudação apenas na abertura da conversa (só no bot de atendimento).
             if (!isCopilot && created && chatbot?.greeting) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
@@ -1702,8 +1750,115 @@ async function watchdog() {
   }
 }
 
+// --------------------------------------------------------------------------
+// Relatório do atendimento por contato + encerramento automático
+// --------------------------------------------------------------------------
+
+// Gera um relatório do atendimento (resumo + nota + sentimento) e salva no log
+// do contato. Funciona tanto para atendimento por bot quanto MANUAL — a IA lê a
+// conversa e avalia como foi. Evita duplicar (um relatório por conversa).
+async function generateContactReport(conversation) {
+  if (!supabase) return;
+  const key = fallbackAnthropicKey;
+  if (!key) return;
+  try {
+    // Já existe relatório desta conversa? Então não refaz.
+    const { data: existing } = await supabase
+      .from("contact_reports")
+      .select("id")
+      .eq("conversation_id", conversation.id)
+      .maybeSingle();
+    if (existing) return;
+    const { data: msgs } = await supabase
+      .from("whatsapp_messages")
+      .select("direction,text,media_type,at")
+      .eq("conversation_id", conversation.id)
+      .order("at", { ascending: true })
+      .limit(120);
+    if (!msgs || msgs.length === 0) return;
+    const transcript = msgs
+      .map((m) => `${m.direction === "in" ? "Cliente" : "Atendimento"}: ${m.text || (m.media_type ? `[${m.media_type}]` : "")}`)
+      .join("\n")
+      .slice(0, 6000);
+    const client = new Anthropic({ apiKey: key });
+    const res = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 500,
+      system:
+        "Você analisa um atendimento de WhatsApp (bot ou humano) e devolve APENAS um JSON válido, sem texto extra, no formato " +
+        '{"summary": "resumo curto de como foi o atendimento e do que o cliente precisava/como se comportou", "rating": 1-5, "sentiment": "positivo|neutro|negativo"}. ' +
+        "O rating avalia a qualidade/cordialidade do atendimento como um todo.",
+      messages: [{ role: "user", content: [{ type: "text", text: `Conversa:\n${transcript}` }] }],
+    });
+    const block = res.content.find((b) => b.type === "text");
+    const raw = block && "text" in block ? block.text : "{}";
+    const json = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    await supabase.from("contact_reports").insert({
+      company_id: conversation.company_id ?? null,
+      contact_id: conversation.contact_id,
+      conversation_id: conversation.id,
+      summary: String(json.summary || "").slice(0, 2000),
+      rating: Number.isFinite(json.rating) ? Math.max(1, Math.min(5, Math.round(json.rating))) : null,
+      sentiment: ["positivo", "neutro", "negativo"].includes(json.sentiment) ? json.sentiment : null,
+      handled_by: conversation.assignee_id ? "humano" : "bot",
+    });
+  } catch (e) {
+    console.error("generateContactReport failed:", e?.message || e);
+  }
+}
+
+// Varre os atendimentos: encerra por inatividade (se ligado) e gera relatório
+// dos que foram fechados (por bot, por inatividade ou MANUALMENTE no app).
+async function attendanceSweep() {
+  if (!supabase) return;
+  try {
+    const info = await getCompanyInfo();
+    const minutes = Number(info?.auto_close_minutes || 0);
+    // 1) Encerramento por inatividade do cliente.
+    if (minutes > 0) {
+      const cutoff = new Date(Date.now() - minutes * 60000).toISOString();
+      const { data: stale } = await supabase
+        .from("conversations")
+        .select("*")
+        .in("status", ["espera", "atendendo"])
+        .lt("last_message_at", cutoff)
+        .limit(20);
+      for (const conv of stale || []) {
+        await supabase
+          .from("conversations")
+          .update({ status: "fechado", closed_at: new Date().toISOString() })
+          .eq("id", conv.id);
+        // Mensagem de despedida + pedido de avaliação (se houver link).
+        try {
+          const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conv.contact_id).maybeSingle();
+          const to = contact?.jid || contact?.phone;
+          if (to) {
+            let msg = "Como não tivemos retorno, vou encerrar nosso atendimento por aqui. 😊 Qualquer coisa é só chamar!";
+            if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
+            await sendMessage(conv.number_id, to, msg, null, null).catch(() => {});
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    // 2) Relatório dos atendimentos fechados recentemente (bot/inatividade/manual).
+    const since = new Date(Date.now() - 6 * 3600000).toISOString();
+    const { data: closed } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("status", "fechado")
+      .gte("closed_at", since)
+      .limit(30);
+    for (const conv of closed || []) {
+      await generateContactReport(conv);
+    }
+  } catch (e) {
+    console.error("attendanceSweep failed:", e?.message || e);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on :${PORT}`);
   void resumeSessions();
   setInterval(watchdog, 60000);
+  setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
 });
