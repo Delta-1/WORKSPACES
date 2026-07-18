@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, FlaskConical, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, FlaskConical, Layers, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -86,7 +86,7 @@ export default function Home() {
   const [quickIds, setQuickIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [company, setCompany] = useState<CompanyInfo>({
-    name: "Configuração Pendente",
+    name: "Workspace",
     logoDataUrl: null,
     tvLogoCorner: "top-left",
     googleDriveEnabled: false,
@@ -369,9 +369,10 @@ export default function Home() {
           ) : (
             <div
               style={{ width: company.logoSize, height: company.logoSize }}
-              className="rounded-lg bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 text-xs font-bold shrink-0"
+              className="rounded-lg bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 shrink-0"
             >
-              {company.name.charAt(0)}
+              {/* Sem logo personalizada → mostra a marca padrão do site (Workspace). */}
+              <Layers size={Math.round(company.logoSize * 0.55)} />
             </div>
           )}
           <div>
