@@ -27,6 +27,7 @@ export default function Orb({
   autoVoice = false,
   onPoint,
   onControl,
+  getScreenshot,
   onClose,
 }: {
   slot?: string;
@@ -34,7 +35,8 @@ export default function Orb({
   contextLabel?: string;
   autoVoice?: boolean;
   onPoint?: () => void;
-  onControl?: (a: { kind: string; text?: string; name?: string }) => Promise<string>;
+  onControl?: (a: { kind: string; text?: string; name?: string; x?: number; y?: number }) => Promise<string>;
+  getScreenshot?: () => { mediaType: string; base64: string } | null;
   onClose: () => void;
 }) {
   const [name, setName] = useState(title);
@@ -64,9 +66,12 @@ export default function Orb({
       `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, copy, paste, save, selectall, home).\n` +
       `• «clique» — clica com o botão esquerdo onde o cursor está.\n` +
       `• «abrir: APP» — abre um programa pelo nome (ex.: notepad, chrome).\n` +
-      `Encadeie vários comandos numa resposta quando fizer sentido. Fale o que vai fazer numa frase curta e emita os comandos. ` +
-      `Se precisar clicar num lugar específico da tela, oriente o técnico e use «tecla»/«digitar» quando possível. ` +
-      `Ao ouvir que vão finalizar, despeça-se em uma frase.`
+      `• «clicar: x,y» — clica num ponto da tela; x e y são frações de 0 a 1 (x=coluna da esquerda→direita, y=linha de cima→baixo) do CENTRO do elemento que você quer clicar.\n` +
+      `• «duploclique: x,y» — duplo clique nesse ponto.\n` +
+      `VOCÊ VÊ A TELA: em cada mensagem vai junto um print atual da máquina remota. OLHE o print, ache o elemento (ex.: ícone do Google Chrome) e clique com «clicar: x,y». ` +
+      `Se o que a pessoa pediu NÃO estiver visível na tela, use «tecla: home» (abre o menu iniciar), depois «digitar: nome» e «tecla: enter» para procurar/abrir. ` +
+      `Para baixar de um link: peça o link, então «abrir: chrome» (ou clique no navegador), clique na barra de endereço, «digitar: LINK» e «tecla: enter». ` +
+      `Encadeie vários comandos numa resposta. Fale curtinho o que vai fazer e emita os comandos. Ao ouvir que vão finalizar, despeça-se em uma frase.`
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
       `arquivos, tarefas, clientes, mural, atendimentos e envio no WhatsApp. Seja BREVE e falado, ENTENDA a intenção, ` +
       `guarde o que já foi dito e responda com CONFIANÇA e clareza. Ao ouvir que a pessoa vai encerrar, despeça-se em uma frase.`;
@@ -122,7 +127,7 @@ export default function Orb({
   async function runControlCommands(reply: string): Promise<string> {
     if (!onControl) return reply;
     const re = /«\s*([^»]+?)\s*»/g;
-    const cmds: { kind: string; text?: string; name?: string }[] = [];
+    const cmds: { kind: string; text?: string; name?: string; x?: number; y?: number }[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(reply)) !== null) {
       const raw = m[1].trim();
@@ -130,7 +135,12 @@ export default function Orb({
       if (low.startsWith("digitar:")) cmds.push({ kind: "type", text: raw.slice(raw.indexOf(":") + 1).trim() });
       else if (low.startsWith("tecla:")) cmds.push({ kind: "key", name: low.slice(low.indexOf(":") + 1).trim() });
       else if (low.startsWith("abrir:")) cmds.push({ kind: "open", text: raw.slice(raw.indexOf(":") + 1).trim() });
-      else if (low === "clique" || low === "clicar") cmds.push({ kind: "click" });
+      else if (low.startsWith("clicar:") || low.startsWith("duploclique:")) {
+        const nums = raw.slice(raw.indexOf(":") + 1).split(",").map((s) => parseFloat(s.trim()));
+        if (nums.length === 2 && nums.every((n) => Number.isFinite(n))) {
+          cmds.push({ kind: low.startsWith("duplo") ? "doubleclickat" : "clickat", x: nums[0] > 1 ? nums[0] / 100 : nums[0], y: nums[1] > 1 ? nums[1] / 100 : nums[1] });
+        }
+      } else if (low === "clique" || low === "clicar") cmds.push({ kind: "click" });
     }
     for (const c of cmds) {
       try { await onControl(c); } catch { /* segue */ }
@@ -146,10 +156,15 @@ export default function Orb({
     setBusy(true);
     try {
       const headers = await authHeaders();
+      // Visão: no acesso remoto, manda junto o print atual da tela para a IA
+      // "enxergar" e decidir onde clicar.
+      const shot = onControl && getScreenshot ? getScreenshot() : null;
+      const turns = next.map((m) => ({ role: m.role, text: m.text }));
+      if (shot && turns.length) (turns[turns.length - 1] as { image?: { mediaType: string; base64: string } }).image = shot;
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ history: next.map((m) => ({ role: m.role, text: m.text })), system, tools: true, agentId }),
+        body: JSON.stringify({ history: turns, system, tools: true, agentId }),
       });
       const data = await res.json();
       let reply = data.reply || "Não entendi, pode repetir?";

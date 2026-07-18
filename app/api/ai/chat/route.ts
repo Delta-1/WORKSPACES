@@ -292,7 +292,7 @@ async function runCopilot(
 }
 
 // Mesmo copiloto, mas com Gemini (function calling) — para quem usa chave Gemini.
-type GeminiPart = { text?: string; functionCall?: { name: string; args: Record<string, string> }; functionResponse?: { name: string; response: unknown } };
+type GeminiPart = { text?: string; inline_data?: { mime_type: string; data: string }; functionCall?: { name: string; args: Record<string, string> }; functionResponse?: { name: string; response: unknown } };
 async function runCopilotGemini(
   apiKey: string,
   client: SupabaseClient,
@@ -301,8 +301,14 @@ async function runCopilotGemini(
   system: string
 ): Promise<{ reply: string; files: SentFile[] }> {
   const contents: { role: string; parts: GeminiPart[] }[] = history
-    .filter((h) => h.text)
-    .map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] }));
+    .filter((h) => h.text || h.image)
+    .map((h) => {
+      const parts: GeminiPart[] = [];
+      // Visão: anexa o print da tela (quando o Orb enrola o acesso remoto).
+      if (h.image) parts.push({ inline_data: { mime_type: h.image.mediaType, data: h.image.base64 } });
+      if (h.text) parts.push({ text: h.text });
+      return { role: h.role === "assistant" ? "model" : "user", parts };
+    });
   const functionDeclarations = TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema }));
   const sent: SentFile[] = [];
   let reply = "";

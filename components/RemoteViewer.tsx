@@ -369,8 +369,23 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   // Orb AUTÔNOMO: executa uma ação real na máquina remota (digitar, teclas,
   // clicar, abrir app). Traduz comandos de alto nível em eventos do canal de
   // controle. Retorna uma confirmação curta pro Orb narrar.
-  async function orbControl(a: { kind: string; text?: string; name?: string }): Promise<string> {
+  async function orbControl(a: { kind: string; text?: string; name?: string; x?: number; y?: number }): Promise<string> {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    if (a.kind === "clickat" && a.x != null && a.y != null) {
+      // Clique num ponto da tela (coordenadas 0..1 que a IA viu no print).
+      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)) });
+      await wait(150);
+      sendInput({ kind: "click", button: 0 });
+      return "cliquei no ponto";
+    }
+    if (a.kind === "doubleclickat" && a.x != null && a.y != null) {
+      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)) });
+      await wait(150);
+      sendInput({ kind: "click", button: 0 });
+      await wait(80);
+      sendInput({ kind: "click", button: 0 });
+      return "dei duplo clique";
+    }
     if (a.kind === "type" && a.text) {
       sendInput({ kind: "type", text: a.text });
       return `digitei "${a.text}"`;
@@ -394,6 +409,23 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       return `abrindo ${a.text}`;
     }
     return "";
+  }
+  // Captura o quadro atual da tela remota (o que a IA "vê") como JPEG base64.
+  function captureScreen(): { mediaType: string; base64: string } | null {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return null;
+    const scale = Math.min(1, 1200 / v.videoWidth);
+    const c = document.createElement("canvas");
+    c.width = Math.round(v.videoWidth * scale);
+    c.height = Math.round(v.videoHeight * scale);
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    try {
+      return { mediaType: "image/jpeg", base64: c.toDataURL("image/jpeg", 0.6).split(",")[1] };
+    } catch {
+      return null; // tela protegida (DRM) — sem captura
+    }
   }
   // Orb "aponta": circula o ponteiro na posição atual para destacar a opção.
   function circlePointer() {
@@ -789,7 +821,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
         </div>
       )}
 
-      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} onClose={() => setOrbOpen(false)} />}
+      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={() => setOrbOpen(false)} />}
     </div>
   );
 }
