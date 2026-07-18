@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
+import RemoteViewer from "@/components/RemoteViewer";
 
 type Group = { id: string; name: string; position: number };
 type ContactReport = {
@@ -17,7 +18,7 @@ type ContactReport = {
 };
 type ConvRow = Conversation & {
   group_id: string | null;
-  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access"> | null;
+  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id"> | null;
 };
 
 function contactLabel(c?: { name?: string | null; phone?: string | null } | null): string {
@@ -63,6 +64,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [chatMenu, setChatMenu] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [reports, setReports] = useState<ContactReport[]>([]);
+  const [accessAgent, setAccessAgent] = useState<RemoteAgent | null>(null);
+
+  // Abre o acesso remoto da máquina vinculada ao contato.
+  async function accessMachine(agentId: string) {
+    if (!supabase) return;
+    const { data } = await supabase.from("remote_agents").select("*").eq("id", agentId).maybeSingle();
+    if (data) { setShowProfile(false); setAccessAgent(data as RemoteAgent); }
+  }
   // Não-lidas por conversa (bolinha vermelha estilo Discord), salvo por navegador.
   const [unread, setUnread] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -102,7 +111,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     if (!supabase) return;
     const { data } = await supabase
       .from("conversations")
-      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access)")
+      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id)")
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
   }, []);
@@ -923,8 +932,11 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
             loadConversations();
             setShowProfile(false);
           }}
+          onAccessMachine={accessMachine}
         />
       )}
+
+      {accessAgent && <RemoteViewer agent={accessAgent} profile={profile} onClose={() => setAccessAgent(null)} />}
 
       {showLog && selConv?.contacts && (
         <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" onClick={() => setShowLog(false)}>
@@ -1155,18 +1167,32 @@ function ContactProfileModal({
   canManage,
   onClose,
   onSaved,
+  onAccessMachine,
 }: {
-  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access">;
+  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id">;
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
+  onAccessMachine?: (agentId: string) => void;
 }) {
   const [name, setName] = useState(contact.name ?? "");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copilot, setCopilot] = useState(Boolean(contact.copilot_access));
+  const [machines, setMachines] = useState<{ id: string; name: string }[]>([]);
+  const [linkedId, setLinkedId] = useState<string>(contact.remote_agent_id ?? "");
   const phoneDigits = (contact.phone || "").replace(/\D/g, "");
   const phonePretty = phoneDigits ? "+" + phoneDigits : "—";
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("remote_agents").select("id,name").order("name").then(({ data }) => setMachines((data as { id: string; name: string }[]) ?? []));
+  }, []);
+
+  async function linkMachine(id: string) {
+    setLinkedId(id);
+    if (supabase) await supabase.from("contacts").update({ remote_agent_id: id || null }).eq("id", contact.id);
+  }
 
   async function save() {
     if (!supabase) return;
@@ -1246,6 +1272,33 @@ function ContactProfileModal({
               </span>
               <span className={`text-[11px] font-semibold ${copilot ? "text-indigo-300" : "text-gray-500"}`}>{copilot ? "LIGADO" : "desligado"}</span>
             </button>
+          )}
+          {/* Vínculo com uma máquina (acesso remoto): este contato é dono de um
+              computador → dá pra acessar a máquina dele direto daqui. */}
+          {canManage && (
+            <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <MonitorIcon size={14} className="text-sky-400 shrink-0" /> Computador do contato
+              </div>
+              <select
+                value={linkedId}
+                onChange={(e) => linkMachine(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none cursor-pointer"
+              >
+                <option value="">Nenhum vinculado</option>
+                {machines.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              {linkedId && onAccessMachine && (
+                <button
+                  onClick={() => onAccessMachine(linkedId)}
+                  className="w-full flex items-center justify-center gap-2 text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 rounded-lg cursor-pointer"
+                >
+                  <MonitorIcon size={13} /> Acessar a máquina desta pessoa
+                </button>
+              )}
+            </div>
           )}
           {phoneDigits && (
             <a

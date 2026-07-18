@@ -33,6 +33,21 @@ const TEMPLATE_INSTRUCTIONS =
   "Quando precisar de uma informação, pergunte de forma objetiva. Confirme dados importantes antes de agir. " +
   "Nunca invente valores; se não souber, diga que vai verificar.";
 
+// Modelos rápidos de agente (preenchem persona/instruções/capacidades).
+const AGENT_TEMPLATES: { id: string; label: string; persona: string; instructions: string; caps: string[] }[] = [
+  {
+    id: "suporte",
+    label: "Suporte técnico",
+    persona: "um técnico de suporte cordial e objetivo, especialista nos sistemas da empresa.",
+    instructions:
+      "IDENTIFIQUE sozinho, pela mensagem do cliente, de qual sistema ele está falando (ex.: LC Sistemas ou Vi Vendas) — NÃO pergunte qual é o sistema, deduza pelo que ele descreve. " +
+      "Entenda o PROBLEMA relatado e passe um passo a passo CLARO e numerado para a pessoa resolver sozinha. " +
+      "Use o conhecimento aprendido (inclusive do HTML/site que você estudou) como verdade. Se faltar um detalhe essencial, pergunte só o mínimo. " +
+      "Se o problema for além do passo a passo, ofereça acessar a máquina remotamente ou transferir para um humano. Seja breve e humano.",
+    caps: ["files", "attendance", "remote"],
+  },
+];
+
 type Agent = Chatbot;
 
 export default function LabsTab({ profile }: { profile: Profile | null }) {
@@ -285,6 +300,18 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           <input value={f.api_key ?? ""} onChange={(e) => set({ api_key: e.target.value })} placeholder="Chave de API" type="password" className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none font-mono" />
         </div>
 
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-gray-500">Modelos:</span>
+          {AGENT_TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => set({ persona: t.persona, instructions: t.instructions, capabilities: t.caps })}
+              className="text-[10px] px-2 py-1 rounded-full bg-indigo-950/40 border border-indigo-500/30 text-indigo-200 hover:bg-indigo-950/60 cursor-pointer"
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <input value={f.persona ?? ""} onChange={(e) => set({ persona: e.target.value })} placeholder="Personalidade / papel (ex.: especialista fiscal, calma e objetiva)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
         <textarea value={f.instructions ?? ""} onChange={(e) => set({ instructions: e.target.value })} rows={2} placeholder="Instruções (como agir, o que priorizar)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none resize-none" />
         <input value={f.greeting ?? ""} onChange={(e) => set({ greeting: e.target.value })} placeholder="Saudação inicial (opcional)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />

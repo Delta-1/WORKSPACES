@@ -173,6 +173,7 @@ export type Contact = {
   name: string | null;
   avatar_url: string | null;
   copilot_access: boolean | null;
+  remote_agent_id: string | null;
   created_at: string;
 };
 
