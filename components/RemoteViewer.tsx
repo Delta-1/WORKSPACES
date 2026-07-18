@@ -323,6 +323,65 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function combo(name: string) {
     sendInput({ kind: "combo", name });
   }
+  // Teclado global (desktop): captura as teclas no documento inteiro e envia pra
+  // máquina remota. Antes dependia do foco do <div> do vídeo — se o foco escapasse,
+  // nada era digitado. Agora funciona sempre que a janela do acesso está aberta,
+  // exceto quando você está digitando num campo do próprio app (input/textarea/chat).
+  useEffect(() => {
+    if (isTouch) return;
+    function typingInField(t: EventTarget | null) {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (typingInField(e.target)) return;
+      e.preventDefault();
+      sendInput({ kind: "key", key: e.key, text: e.key.length === 1 ? e.key : "", down: true });
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (typingInField(e.target)) return;
+      e.preventDefault();
+      sendInput({ kind: "key", key: e.key, down: false });
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTouch]);
+  // Orb AUTÔNOMO: executa uma ação real na máquina remota (digitar, teclas,
+  // clicar, abrir app). Traduz comandos de alto nível em eventos do canal de
+  // controle. Retorna uma confirmação curta pro Orb narrar.
+  async function orbControl(a: { kind: string; text?: string; name?: string }): Promise<string> {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    if (a.kind === "type" && a.text) {
+      sendInput({ kind: "type", text: a.text });
+      return `digitei "${a.text}"`;
+    }
+    if (a.kind === "key" && a.name) {
+      // combos nomeados (enter, tab, copy, paste, save, selectall, home, run…)
+      sendInput({ kind: "combo", name: a.name });
+      return `tecla ${a.name}`;
+    }
+    if (a.kind === "click") {
+      sendInput({ kind: "click", button: 0 });
+      return "cliquei";
+    }
+    if (a.kind === "open" && a.text) {
+      // Abre um app pelo nome: Win+R → digita → Enter (Windows/Linux com menu).
+      sendInput({ kind: "combo", name: "run" });
+      await wait(500);
+      sendInput({ kind: "type", text: a.text });
+      await wait(250);
+      sendInput({ kind: "combo", name: "enter" });
+      return `abrindo ${a.text}`;
+    }
+    return "";
+  }
   // Orb "aponta": circula o ponteiro na posição atual para destacar a opção.
   function circlePointer() {
     const steps = 24;
@@ -709,7 +768,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
         </div>
       )}
 
-      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onClose={() => setOrbOpen(false)} />}
+      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} onClose={() => setOrbOpen(false)} />}
     </div>
   );
 }

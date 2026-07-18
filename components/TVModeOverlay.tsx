@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Attendance, CalendarEvent, Profile, Sector, WorkspaceTask } from "@/lib/types";
+import MiniFileGraph from "@/components/MiniFileGraph";
+import type { Attendance, CalendarEvent, FileNodeRow, Profile, Sector, WorkspaceTask } from "@/lib/types";
 
 const CORNER_CLASS: Record<string, string> = {
   "top-left": "top-6 left-6",
@@ -29,10 +30,15 @@ export default function TVModeOverlay({
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [presence, setPresence] = useState<Attendance[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [files, setFiles] = useState<FileNodeRow[]>([]);
+  const [vh, setVh] = useState(800);
 
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date().toLocaleTimeString("pt-BR")), 1000);
-    return () => clearInterval(timer);
+    setVh(window.innerHeight);
+    const onResize = () => setVh(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => { clearInterval(timer); window.removeEventListener("resize", onResize); };
   }, []);
 
   const load = useCallback(async () => {
@@ -42,18 +48,20 @@ export default function TVModeOverlay({
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date();
     dayEnd.setHours(23, 59, 59, 999);
-    const [s, t, p, a, e] = await Promise.all([
+    const [s, t, p, a, e, f] = await Promise.all([
       supabase.from("sectors").select("*"),
       supabase.from("tasks").select("*"),
       supabase.from("profiles").select("*"),
       supabase.from("attendance").select("*").eq("work_date", today).is("check_out", null),
       supabase.from("events").select("*").gte("starts_at", dayStart.toISOString()).lte("starts_at", dayEnd.toISOString()).order("starts_at"),
+      supabase.from("files").select("*").order("created_at"),
     ]);
     if (s.data) setSectors(s.data);
     if (t.data) setTasks(t.data);
     if (p.data) setProfiles(p.data);
     if (a.data) setPresence(a.data);
     if (e.data) setEvents(e.data as CalendarEvent[]);
+    if (f.data) setFiles(f.data as FileNodeRow[]);
   }, []);
 
   useEffect(() => {
@@ -67,6 +75,7 @@ export default function TVModeOverlay({
       .on("postgres_changes", { event: "*", schema: "public", table: "events" }, () => load())
       .on("postgres_changes", { event: "*", schema: "public", table: "sectors" }, () => load())
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "files" }, () => load())
       .subscribe();
     // Rede de segurança: recarrega a cada 30s (cobre o virar do dia e eventos perdidos).
     const poll = setInterval(load, 30000);
@@ -86,7 +95,14 @@ export default function TVModeOverlay({
   const presentProfiles = presence.map((a) => profileById.get(a.profile_id)).filter(Boolean) as Profile[];
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black text-white flex flex-col p-10">
+    <div className="fixed inset-0 z-[90] bg-black text-white flex flex-col p-10 overflow-hidden">
+      {/* Fundo vivo: mini apresentador do grafo mostrando todos os arquivos
+          "funcionando" (as pastas da empresa flutuando atrás do painel). */}
+      {files.length > 0 && (
+        <div className="absolute inset-0 pointer-events-none opacity-[0.18]">
+          <MiniFileGraph files={files} height={vh} />
+        </div>
+      )}
       <button
         onClick={onClose}
         className="absolute top-6 right-6 text-gray-500 hover:text-white cursor-pointer z-10"
@@ -106,7 +122,7 @@ export default function TVModeOverlay({
         <span className="text-lg font-bold tracking-wide">{companyName}</span>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center gap-10 mt-16">
+      <div className="flex-1 flex flex-col items-center justify-center gap-10 mt-16 relative z-[5]">
         <p className="text-6xl font-mono font-black text-emerald-400">{clock}</p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">

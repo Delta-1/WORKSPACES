@@ -80,6 +80,26 @@ async function getNumberConfig(numberId) {
   return { number, chatbot };
 }
 
+// Agente COPILOTO (adm do sistema) da empresa — slot 'internal', com TODAS as
+// capacidades. É ele quem responde os contatos marcados como "copilot ativado",
+// no lugar do bot de atendimento do número (ex.: "Vitor"). Cache de 1 min.
+const copilotAgentByCompany = new Map();
+async function getCopilotAgent(companyId) {
+  if (!supabase || !companyId) return null;
+  const cached = copilotAgentByCompany.get(companyId);
+  if (cached && Date.now() - cached.at < 60000) return cached.agent;
+  const { data } = await supabase
+    .from("chatbots")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("slot", "internal")
+    .limit(1)
+    .maybeSingle();
+  const agent = data ?? null;
+  copilotAgentByCompany.set(companyId, { agent, at: Date.now() });
+  return agent;
+}
+
 const novoContatoTagByCompany = new Map();
 async function ensureNovoContatoTag(companyId) {
   if (!supabase || !companyId) return null;
@@ -1266,6 +1286,11 @@ async function startSession(numberId) {
 
           // Contato liberado pelo gestor → COPILOTO (assessor com acesso total).
           const isCopilot = contact?.copilot_access === true;
+          // Quando o contato é copiloto, quem responde é o AGENTE COPILOTO da
+          // empresa (adm, slot 'internal', todas as capacidades) — não o bot de
+          // atendimento do número (ex.: "Vitor"). Se não existir, cai no do número.
+          const copilotAgent = isCopilot ? await getCopilotAgent(cid) : null;
+          const agentForReply = copilotAgent || chatbot;
           // Agente do Labs com capacidades → usa ferramentas para TODOS deste número.
           const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
           const useTools = isCopilot || agentHasCaps;
@@ -1274,8 +1299,8 @@ async function startSession(numberId) {
           if (isCopilot || botOn) {
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
-            const botElevenKey = chatbot?.elevenlabs_key || elevenKey;
-            const voiceReplyOn = chatbot?.voice_reply !== false; // default ligado
+            const botElevenKey = agentForReply?.elevenlabs_key || elevenKey;
+            const voiceReplyOn = agentForReply?.voice_reply !== false; // default ligado
             let customerText = text;
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
@@ -1333,7 +1358,7 @@ async function startSession(numberId) {
             let copilotSends = [];
             let reply = null;
             if (customerText && useTools) {
-              const out = await runCopilotReply(cid, chatbot, customerText, history, isCopilot);
+              const out = await runCopilotReply(cid, agentForReply, customerText, history, isCopilot);
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];

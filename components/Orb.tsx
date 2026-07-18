@@ -26,6 +26,7 @@ export default function Orb({
   contextLabel,
   autoVoice = false,
   onPoint,
+  onControl,
   onClose,
 }: {
   slot?: string;
@@ -33,6 +34,7 @@ export default function Orb({
   contextLabel?: string;
   autoVoice?: boolean;
   onPoint?: () => void;
+  onControl?: (a: { kind: string; text?: string; name?: string }) => Promise<string>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(title);
@@ -55,11 +57,16 @@ export default function Orb({
     });
   }, [slot]);
 
-  const system = onPoint
-    ? `Você é o ${name}, assistente de voz estilo JARVIS que ajuda um técnico no acesso remoto à máquina "${contextLabel || ""}". ` +
-      `Seja BREVE e falado. ENTENDA a conversa e guarde o que já foi dito. NÃO tira prints; ORIENTA passo a passo, ` +
-      `dizendo "vou circular o ponteiro" e PEDINDO PERMISSÃO antes de avançar. Tem acesso aos arquivos/ferramentas. ` +
-      `Responda com CONFIANÇA, sem hesitar. Ao ouvir que o técnico vai finalizar, despeça-se em uma frase.`
+  const system = onControl
+    ? `Você é o ${name}, copiloto de voz estilo JARVIS que CONTROLA a máquina remota "${contextLabel || ""}" de forma autônoma. ` +
+      `Seja BREVE e falado. ENTENDA a intenção e AJA na máquina emitindo comandos entre «» na sua resposta (o sistema executa e você narra o que fez):\n` +
+      `• «digitar: TEXTO» — digita o texto no campo em foco.\n` +
+      `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, copy, paste, save, selectall, home).\n` +
+      `• «clique» — clica com o botão esquerdo onde o cursor está.\n` +
+      `• «abrir: APP» — abre um programa pelo nome (ex.: notepad, chrome).\n` +
+      `Encadeie vários comandos numa resposta quando fizer sentido. Fale o que vai fazer numa frase curta e emita os comandos. ` +
+      `Se precisar clicar num lugar específico da tela, oriente o técnico e use «tecla»/«digitar» quando possível. ` +
+      `Ao ouvir que vão finalizar, despeça-se em uma frase.`
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
       `arquivos, tarefas, clientes, mural, atendimentos e envio no WhatsApp. Seja BREVE e falado, ENTENDA a intenção, ` +
       `guarde o que já foi dito e responda com CONFIANÇA e clareza. Ao ouvir que a pessoa vai encerrar, despeça-se em uma frase.`;
@@ -110,6 +117,28 @@ export default function Orb({
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
   }, [msgs]);
 
+  // Extrai os comandos «…» da resposta, executa cada um na máquina remota
+  // (via onControl) e devolve o texto limpo pra falar/exibir.
+  async function runControlCommands(reply: string): Promise<string> {
+    if (!onControl) return reply;
+    const re = /«\s*([^»]+?)\s*»/g;
+    const cmds: { kind: string; text?: string; name?: string }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(reply)) !== null) {
+      const raw = m[1].trim();
+      const low = raw.toLowerCase();
+      if (low.startsWith("digitar:")) cmds.push({ kind: "type", text: raw.slice(raw.indexOf(":") + 1).trim() });
+      else if (low.startsWith("tecla:")) cmds.push({ kind: "key", name: low.slice(low.indexOf(":") + 1).trim() });
+      else if (low.startsWith("abrir:")) cmds.push({ kind: "open", text: raw.slice(raw.indexOf(":") + 1).trim() });
+      else if (low === "clique" || low === "clicar") cmds.push({ kind: "click" });
+    }
+    for (const c of cmds) {
+      try { await onControl(c); } catch { /* segue */ }
+    }
+    // Remove os comandos do texto exibido/falado.
+    return reply.replace(re, "").replace(/\s{2,}/g, " ").trim() || "Feito.";
+  }
+
   async function ask(text: string) {
     if (!text.trim()) return;
     const next: Msg[] = [...msgs, { role: "user", text }];
@@ -123,7 +152,10 @@ export default function Orb({
         body: JSON.stringify({ history: next.map((m) => ({ role: m.role, text: m.text })), system, tools: true, agentId }),
       });
       const data = await res.json();
-      const reply = data.reply || "Não entendi, pode repetir?";
+      let reply = data.reply || "Não entendi, pode repetir?";
+      // Modo autônomo: executa os comandos «…» que a IA emitiu na máquina remota
+      // e remove-os do texto que aparece/é falado.
+      if (onControl) reply = await runControlCommands(reply);
       setMsgs((m) => [...m, { role: "assistant", text: reply }]);
       if (voiceOn) speak(reply);
     } catch {

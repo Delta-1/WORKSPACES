@@ -572,7 +572,26 @@ ipcMain.on("input", async (_e, ev) => {
       } else if (ev.name === "paste") {
         await keyboard.pressKey(Key.LeftControl, Key.V);
         await keyboard.releaseKey(Key.LeftControl, Key.V);
+      } else if (ev.name === "enter") {
+        await keyboard.pressKey(Key.Enter);
+        await keyboard.releaseKey(Key.Enter);
+      } else if (ev.name === "tab") {
+        await keyboard.pressKey(Key.Tab);
+        await keyboard.releaseKey(Key.Tab);
+      } else if (ev.name === "selectall") {
+        await keyboard.pressKey(Key.LeftControl, Key.A);
+        await keyboard.releaseKey(Key.LeftControl, Key.A);
+      } else if (ev.name === "save") {
+        await keyboard.pressKey(Key.LeftControl, Key.S);
+        await keyboard.releaseKey(Key.LeftControl, Key.S);
+      } else if (ev.name === "run") {
+        // Win+R (executar) — usado para abrir apps por nome.
+        await keyboard.pressKey(Key.LeftSuper, Key.R);
+        await keyboard.releaseKey(Key.LeftSuper, Key.R);
       }
+    } else if (ev.kind === "type") {
+      // Digita um texto inteiro de uma vez (usado pelo Orb autônomo).
+      if (ev.text) await keyboard.type(String(ev.text));
     } else if (ev.kind === "down") {
       // Com coordenadas = clique absoluto; sem = segura no ponto atual (arrasto do trackpad).
       if (ev.x != null && ev.y != null) await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
