@@ -737,6 +737,125 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai")
 }
 
 // ---------------------------------------------------------------------------
+// MOTOR DO FLUXOGRAMA — executa o fluxo visual montado no Labs (chatbots.flow).
+// Blocos "automáticos" (message/ai/action) são executados em sequência; blocos
+// de ENTRADA (ask/buttons) enviam algo e ESPERAM a próxima mensagem do cliente;
+// condition desvia por palavras-chave. Se o fluxo não estiver montado ou der
+// pau, devolve false e o bot cai no comportamento normal (IA).
+// ---------------------------------------------------------------------------
+function flowKeywordHit(text, keywords) {
+  const t = (text || "").toLowerCase();
+  return String(keywords || "")
+    .split(",")
+    .map((k) => k.trim().toLowerCase())
+    .filter(Boolean)
+    .some((k) => t.includes(k));
+}
+
+async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, history) {
+  const flow = chatbot?.flow;
+  if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return false;
+  const nodes = new Map(flow.nodes.map((n) => [n.id, n]));
+  const edges = Array.isArray(flow.edges) ? flow.edges : [];
+  const nextFrom = (nodeId, handle = "out") => {
+    const e = edges.find((x) => x.from === nodeId && x.handle === handle);
+    return e ? nodes.get(e.to) : null;
+  };
+  const send = async (text) => {
+    if (!text) return;
+    const g = await sock.sendMessage(jid, { text });
+    await logMessage(conversation.id, "out", text, null, null, cid, g?.key?.id ?? null);
+  };
+  const info = await getCompanyInfo();
+
+  // Ponto de partida: se estávamos esperando num nó de entrada, processa a
+  // resposta; senão começa do "start".
+  let current = null;
+  const waiting = conversation.flow_node ? nodes.get(conversation.flow_node) : null;
+  if (waiting) {
+    if (waiting.type === "buttons") {
+      const opts = waiting.data?.options ?? [];
+      let idx = -1;
+      const num = parseInt((customerText || "").trim(), 10);
+      if (Number.isInteger(num) && num >= 1 && num <= opts.length) idx = num - 1;
+      if (idx < 0) idx = opts.findIndex((o) => (customerText || "").toLowerCase().includes(String(o).toLowerCase()));
+      if (idx < 0) {
+        // Não entendeu a opção → repete as opções.
+        await send(`${waiting.data?.text || "Escolha uma opção:"}\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}`);
+        return true;
+      }
+      current = nextFrom(waiting.id, `opt${idx}`);
+    } else {
+      // ask (ou qualquer nó de espera): segue adiante.
+      current = nextFrom(waiting.id);
+    }
+  } else {
+    const start = flow.nodes.find((n) => n.type === "start") || flow.nodes[0];
+    current = nextFrom(start.id);
+  }
+
+  // Caminha executando os blocos até parar num de entrada / fim / sem saída.
+  let guard = 0;
+  let sentAnything = false;
+  while (current && guard++ < 40) {
+    const n = current;
+    if (n.type === "message") {
+      await send(n.data?.text || "");
+      sentAnything = true;
+      current = nextFrom(n.id);
+    } else if (n.type === "condition") {
+      const hit = flowKeywordHit(customerText, n.data?.keywords);
+      current = nextFrom(n.id, hit ? "sim" : "nao");
+    } else if (n.type === "action") {
+      const a = n.data?.action;
+      if (a === "send_address") await send(info?.address ? `📍 ${info.address}${info.address_link ? `\n${info.address_link}` : ""}` : "Ainda não temos o endereço cadastrado.");
+      else if (a === "send_phone") await send(info?.phone ? `📞 ${info.phone}` : "Ainda não temos telefone cadastrado.");
+      else if (a === "send_website") await send(info?.website ? `🌐 ${info.website}` : "Ainda não temos site cadastrado.");
+      else if (a === "handoff") {
+        await send("Um momento, vou te transferir para um atendente. 🙋");
+        await supabase.from("conversations").update({ status: "atendendo", flow_node: null }).eq("id", conversation.id);
+        return true;
+      } else if (a === "close") {
+        let msg = "Atendimento encerrado. Obrigado pelo contato! 😊";
+        if (info?.review_link) msg += `\n\nAvalie nosso atendimento: ${info.review_link}`;
+        await send(msg);
+        await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null }).eq("id", conversation.id);
+        void generateContactReport({ ...conversation, status: "fechado" });
+        return true;
+      }
+      sentAnything = true;
+      current = nextFrom(n.id);
+    } else if (n.type === "ai") {
+      const reply = await runChatbotReply(chatbot, customerText, history, "ai");
+      if (reply) { await send(reply); sentAnything = true; }
+      // Se a IA tem continuação no fluxo, segue; senão fica na IA (conversa livre).
+      const nx = nextFrom(n.id);
+      await supabase.from("conversations").update({ flow_node: nx ? null : n.id }).eq("id", conversation.id);
+      if (!nx) return true;
+      current = nx;
+    } else if (n.type === "ask" || n.type === "buttons") {
+      // Nó de ENTRADA: envia e espera a próxima mensagem.
+      if (n.type === "buttons") {
+        const opts = n.data?.options ?? [];
+        await send(`${n.data?.text || "Escolha:"}\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}`);
+      } else {
+        await send(n.data?.text || "");
+      }
+      await supabase.from("conversations").update({ flow_node: n.id }).eq("id", conversation.id);
+      return true;
+    } else if (n.type === "end") {
+      await supabase.from("conversations").update({ flow_node: null }).eq("id", conversation.id);
+      return sentAnything;
+    } else {
+      current = nextFrom(n.id);
+    }
+  }
+  // Chegou ao fim do caminho sem nó de entrada: limpa o estado.
+  await supabase.from("conversations").update({ flow_node: null }).eq("id", conversation.id);
+  return sentAnything;
+}
+
+// ---------------------------------------------------------------------------
 // COPILOTO via WhatsApp (só para contatos liberados pelo gestor). Tem acesso
 // aos arquivos da empresa: procura pelo nome e ENTREGA o arquivo/imagem.
 // ---------------------------------------------------------------------------
@@ -1369,8 +1488,10 @@ async function startSession(numberId) {
               void generateContactReport({ ...conversation, status: "fechado" });
               return;
             }
-            // Saudação apenas na abertura da conversa (só no bot de atendimento).
-            if (!isCopilot && created && chatbot?.greeting) {
+            // Saudação apenas na abertura da conversa (só no bot de atendimento;
+            // se houver fluxograma, é ELE que abre a conversa).
+            const hasFlow = !isCopilot && Array.isArray(chatbot?.flow?.nodes) && chatbot.flow.nodes.length > 0;
+            if (!isCopilot && created && chatbot?.greeting && !hasFlow) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
             }
@@ -1400,6 +1521,16 @@ async function startSession(numberId) {
               await sock.sendPresenceUpdate(wantVoice ? "recording" : "composing", jid);
             } catch {
               /* ignore */
+            }
+            // Fluxograma do bot (roteiro montado no Labs): se existir, ELE conduz
+            // a conversa. Só cai na IA normal se o fluxo não tratar/estiver vazio.
+            if (hasFlow && customerText) {
+              try {
+                const handled = await runBotFlow(sock, jid, conversation, chatbot, customerText, cid, history);
+                if (handled) return;
+              } catch (e) {
+                console.error("runBotFlow failed, caindo no bot normal:", e?.message || e);
+              }
             }
             // Copiloto: IA com ferramentas (busca/entrega arquivos, relay). Bot normal: resposta comum.
             let copilotFiles = [];
