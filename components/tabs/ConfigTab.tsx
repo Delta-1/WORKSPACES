@@ -18,6 +18,15 @@ const CORNERS: { id: Corner; label: string }[] = [
 
 const THEME_PRESETS = ["#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#ef4444", "#14b8a6", "#6366f1"];
 
+// Estilos visuais completos do site (aplicados via data-style no <html>).
+const SITE_STYLES: { id: string; name: string; desc: string; swatch: string }[] = [
+  { id: "aurora", name: "Aurora", desc: "Vidro translúcido (padrão)", swatch: "linear-gradient(135deg,#0b1220,#1e293b)" },
+  { id: "midnight", name: "Midnight", desc: "Escuro sólido, minimalista", swatch: "#14141c" },
+  { id: "slate", name: "Slate", desc: "Corporativo cinza-azulado", swatch: "#1e293b" },
+  { id: "sunset", name: "Sunset", desc: "Fundo quente com brilho", swatch: "linear-gradient(135deg,#3b1d3a,#fbbf24)" },
+  { id: "paper", name: "Paper", desc: "Claro e limpo (documento)", swatch: "#ffffff" },
+];
+
 type SectionId = "empresa" | "aparencia" | "servidores" | "ia" | "chatbot" | "notificacoes";
 const SECTIONS: { id: SectionId; label: string; icon: typeof Building2 }[] = [
   { id: "empresa", label: "Empresa", icon: Building2 },
@@ -35,6 +44,7 @@ export default function ConfigTab({
   themeColor,
   iconColor,
   logoSize,
+  themeStyle,
   onUpdateCompany,
 }: {
   companyName: string;
@@ -44,6 +54,7 @@ export default function ConfigTab({
   themeColor: string;
   iconColor: string;
   logoSize: number;
+  themeStyle: string;
   onUpdateCompany: (update: {
     name?: string;
     logoDataUrl?: string;
@@ -52,6 +63,7 @@ export default function ConfigTab({
     themeColor?: string;
     iconColor?: string;
     logoSize?: number;
+    themeStyle?: string;
   }) => void;
 }) {
   const [name, setName] = useState(companyName);
@@ -146,6 +158,25 @@ export default function ConfigTab({
 
           {active === "aparencia" && (
             <div className="liquid-glass rounded-2xl p-5 space-y-4 max-w-lg">
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Estilo do site</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {SITE_STYLES.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onUpdateCompany({ themeStyle: s.id })}
+                      className={`rounded-xl p-2.5 text-left cursor-pointer border transition-colors ${
+                        themeStyle === s.id ? "border-emerald-400 ring-1 ring-emerald-400/40" : "border-white/10 hover:border-white/25"
+                      }`}
+                    >
+                      <span className="block h-8 rounded-lg mb-1.5" style={{ background: s.swatch }} />
+                      <span className="text-xs font-semibold block">{s.name}</span>
+                      <span className="text-[10px] text-gray-500">{s.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1">Muda toda a cara do site: fundo, superfícies e clima. A cor tema continua valendo por cima.</p>
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cor tema do site</label>
                 <div className="flex items-center gap-2 flex-wrap">

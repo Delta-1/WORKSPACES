@@ -9,11 +9,13 @@ export type CompanyInfo = {
   themeColor: string;
   iconColor: string;
   logoSize: number;
+  themeStyle: string;
 };
 
 const DEFAULT_THEME = "#10b981";
 const DEFAULT_ICON = "#10b981";
 const DEFAULT_LOGO_SIZE = 36;
+const DEFAULT_STYLE = "aurora";
 
 export async function fetchCompany(): Promise<CompanyInfo> {
   if (supabaseConfigured && supabase) {
@@ -27,6 +29,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         themeColor: data.theme_color ?? DEFAULT_THEME,
         iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
+        themeStyle: data.theme_style ?? DEFAULT_STYLE,
       };
     }
   }
@@ -40,6 +43,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
     themeColor: DEFAULT_THEME,
     iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
+    themeStyle: DEFAULT_STYLE,
   };
 }
 
@@ -55,6 +59,7 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         ...(update.themeColor !== undefined ? { theme_color: update.themeColor } : {}),
         ...(update.iconColor !== undefined ? { icon_color: update.iconColor } : {}),
         ...(update.logoSize !== undefined ? { logo_size: update.logoSize } : {}),
+        ...(update.themeStyle !== undefined ? { theme_style: update.themeStyle } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", true)
@@ -69,6 +74,7 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
         themeColor: data.theme_color ?? DEFAULT_THEME,
         iconColor: data.icon_color ?? data.theme_color ?? DEFAULT_ICON,
         logoSize: data.logo_size ?? DEFAULT_LOGO_SIZE,
+        themeStyle: data.theme_style ?? DEFAULT_STYLE,
       };
     }
   }
@@ -86,5 +92,6 @@ export async function updateCompany(update: Partial<CompanyInfo>): Promise<Compa
     themeColor: DEFAULT_THEME,
     iconColor: DEFAULT_ICON,
     logoSize: DEFAULT_LOGO_SIZE,
+    themeStyle: DEFAULT_STYLE,
   };
 }

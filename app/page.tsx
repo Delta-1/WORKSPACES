@@ -93,6 +93,7 @@ export default function Home() {
     themeColor: "#10b981",
     iconColor: "#10b981",
     logoSize: 36,
+    themeStyle: "aurora",
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -145,6 +146,11 @@ export default function Home() {
     root.style.setProperty("--icon", icon);
     root.classList.toggle("custom-icons", icon.toLowerCase() !== "#10b981");
   }, [company.iconColor, company.themeColor]);
+
+  // Estilo do site (tema visual completo): muda fundo, vidro, cantos e vibe.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-style", company.themeStyle || "aurora");
+  }, [company.themeStyle]);
 
   async function loadCompany(companyId: string | null) {
     if (!supabase || !companyId) {
@@ -254,7 +260,7 @@ export default function Home() {
   async function handleUpdateCompany(update: Partial<CompanyInfo>) {
     setCompany((prev) => ({ ...prev, ...update })); // feedback imediato
     const next = await persistCompany(update);
-    setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, iconColor: update.iconColor ?? next.iconColor, logoSize: update.logoSize ?? next.logoSize }));
+    setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, iconColor: update.iconColor ?? next.iconColor, logoSize: update.logoSize ?? next.logoSize, themeStyle: update.themeStyle ?? next.themeStyle }));
   }
 
   const visibleApps = APPS.filter((a) => a.roles.includes(role));
@@ -367,8 +373,13 @@ export default function Home() {
           name={displayName}
           role={ROLE_LABEL[role]}
           theme={theme}
+          profileId={profile?.id}
+          avatarUrl={profile?.avatar_url}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
+          onProfileUpdated={(patch) =>
+            setProfile((p) => (p ? { ...p, full_name: patch.full_name ?? p.full_name, avatar_url: patch.avatar_url ?? p.avatar_url } : p))
+          }
         />
       </header>
 
@@ -397,6 +408,7 @@ export default function Home() {
             themeColor={company.themeColor}
             iconColor={company.iconColor}
             logoSize={company.logoSize}
+            themeStyle={company.themeStyle}
             onUpdateCompany={handleUpdateCompany}
           />
         )}
