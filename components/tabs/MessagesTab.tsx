@@ -1,12 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 
 type Group = { id: string; name: string; position: number };
+type ContactReport = {
+  id: string;
+  summary: string | null;
+  rating: number | null;
+  sentiment: string | null;
+  handled_by: string | null;
+  created_at: string;
+};
 type ConvRow = Conversation & {
   group_id: string | null;
   contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access"> | null;
@@ -53,6 +61,8 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showNewChat, setShowNewChat] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [reports, setReports] = useState<ContactReport[]>([]);
   // Não-lidas por conversa (bolinha vermelha estilo Discord), salvo por navegador.
   const [unread, setUnread] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -196,6 +206,19 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selConvId]);
   // Salva a conversa aberta como arquivo de texto (backup/registro).
+  // Log do contato: relatórios que o robô gerou dos atendimentos (bot e manual).
+  async function openContactLog() {
+    setChatMenu(false);
+    if (!supabase || !selConv?.contacts) return;
+    setShowLog(true);
+    const { data } = await supabase
+      .from("contact_reports")
+      .select("id, summary, rating, sentiment, handled_by, created_at")
+      .eq("contact_id", selConv.contacts.id)
+      .order("created_at", { ascending: false });
+    setReports((data as ContactReport[]) ?? []);
+  }
+
   function saveConversation() {
     setChatMenu(false);
     if (!selConv) return;
@@ -780,6 +803,9 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setChatMenu(false)} />
                         <div className="absolute right-0 top-9 z-50 w-44 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+                          <button onClick={openContactLog} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            <FileText size={13} className="text-sky-400" /> Histórico do contato
+                          </button>
                           <button onClick={saveConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Download size={13} className="text-emerald-400" /> Salvar conversa
                           </button>
@@ -898,6 +924,50 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
             setShowProfile(false);
           }}
         />
+      )}
+
+      {showLog && selConv?.contacts && (
+        <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" onClick={() => setShowLog(false)}>
+          <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <FileText size={16} className="text-sky-400" /> Histórico de {contactLabel(selConv.contacts)}
+              </h3>
+              <button onClick={() => setShowLog(false)} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+            </div>
+            <p className="text-[11px] text-gray-500 mb-3">Relatórios que a IA gerou de cada atendimento (por bot ou manual).</p>
+            <div className="flex-1 overflow-y-auto custom-scroll space-y-2">
+              {reports.length === 0 && <p className="text-xs text-gray-500 italic text-center py-8">Ainda não há relatórios para este contato. Aparecem quando um atendimento é encerrado.</p>}
+              {reports.map((r) => (
+                <div key={r.id} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] text-gray-500">{new Date(r.created_at).toLocaleString("pt-BR")}</span>
+                    <div className="flex items-center gap-2">
+                      {r.handled_by && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${r.handled_by === "bot" ? "bg-indigo-950/60 text-indigo-300" : "bg-emerald-950/60 text-emerald-300"}`}>
+                          {r.handled_by === "bot" ? "Bot" : "Humano"}
+                        </span>
+                      )}
+                      {typeof r.rating === "number" && (
+                        <span className="flex items-center gap-0.5 text-amber-400 text-[11px]">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Star key={i} size={11} className={i < (r.rating ?? 0) ? "fill-amber-400" : "text-gray-600"} />
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {r.sentiment && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full mr-2 ${r.sentiment === "positivo" ? "bg-emerald-950/60 text-emerald-300" : r.sentiment === "negativo" ? "bg-red-950/60 text-red-300" : "bg-gray-800 text-gray-300"}`}>
+                      {r.sentiment}
+                    </span>
+                  )}
+                  <p className="text-xs text-gray-200 mt-1 whitespace-pre-wrap">{r.summary}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
