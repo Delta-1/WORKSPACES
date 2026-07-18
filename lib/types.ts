@@ -9,6 +9,20 @@ export type Profile = {
   sector_id: string | null;
   company_id: string | null;
   whatsapp_number: string | null;
+  finance_access: boolean | null;
+  created_at: string;
+};
+
+export type FinanceEntry = {
+  id: string;
+  company_id: string | null;
+  user_id: string | null;
+  scope: "empresa" | "casa";
+  kind: "despesa" | "receita";
+  category: string | null;
+  description: string | null;
+  amount: number;
+  entry_date: string;
   created_at: string;
 };
 

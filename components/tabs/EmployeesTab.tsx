@@ -61,19 +61,19 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
     return (p.full_name ?? "").toLowerCase().includes(q) || p.email.toLowerCase().includes(q);
   });
 
-  async function saveEdit(role: Role, sectorId: string | null) {
+  async function saveEdit(role: Role, sectorId: string | null, financeAccess: boolean) {
     if (!supabase || !editing) return;
     setSaving(true);
     const { error } = await supabase
       .from("profiles")
-      .update({ role, sector_id: sectorId })
+      .update({ role, sector_id: sectorId, finance_access: financeAccess })
       .eq("id", editing.id);
     setSaving(false);
     if (error) {
       alert("Não foi possível salvar: " + error.message);
       return;
     }
-    setPeople((prev) => prev.map((p) => (p.id === editing.id ? { ...p, role, sector_id: sectorId } : p)));
+    setPeople((prev) => prev.map((p) => (p.id === editing.id ? { ...p, role, sector_id: sectorId, finance_access: financeAccess } : p)));
     setEditing(null);
   }
 
@@ -178,10 +178,11 @@ function EditModal({
   sectors: Sector[];
   saving: boolean;
   onClose: () => void;
-  onSave: (role: Role, sectorId: string | null) => void;
+  onSave: (role: Role, sectorId: string | null, financeAccess: boolean) => void;
 }) {
   const [role, setRole] = useState<Role>((person.role ?? "funcionario") as Role);
   const [sectorId, setSectorId] = useState<string | null>(person.sector_id);
+  const [financeAccess, setFinanceAccess] = useState<boolean>(Boolean(person.finance_access));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
@@ -239,6 +240,15 @@ function EditModal({
           </select>
         </div>
 
+        {/* Acesso ao financeiro da empresa (cargo de financeiro). */}
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2">
+          <input type="checkbox" checked={financeAccess} onChange={(e) => setFinanceAccess(e.target.checked)} className="accent-emerald-500 mt-0.5" />
+          <span>
+            <b className="text-emerald-300">Acesso ao Financeiro da empresa</b>
+            <br /><span className="text-gray-500">Pode ver e lançar as despesas/receitas da empresa. (O controle da própria casa cada um já tem, privado.)</span>
+          </span>
+        </label>
+
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={onClose}
@@ -247,7 +257,7 @@ function EditModal({
             Cancelar
           </button>
           <button
-            onClick={() => onSave(role, sectorId)}
+            onClick={() => onSave(role, sectorId, financeAccess)}
             disabled={saving}
             className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
           >
