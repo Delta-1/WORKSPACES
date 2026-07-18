@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Box, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
 import { logAction } from "@/lib/activity-log";
@@ -110,8 +110,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // "Ver tudo aberto": mostra todas as pastas/arquivos de uma vez (padrão: recolhido).
   const [expandAll, setExpandAll] = useState(false);
-  // Visão 3D (projeção em perspectiva) vs. 2D atual.
-  const [view3d, setView3d] = useState(false);
   const [editMode, setEditMode] = useState(false);
   // Canvas infinito estilo Miro: pan (arrastar fundo) + zoom (roda do mouse).
   const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
@@ -168,22 +166,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     }
     return vis;
   }, [nodes, expanded, expandAll]);
-
-  // Profundidade de cada nó (raiz=0) — usada para a projeção 3D.
-  const depthById = useMemo(() => {
-    const byIdLocal = new Map(nodes.map((n) => [n.id, n]));
-    const d = new Map<string, number>();
-    const depthOf = (id: string): number => {
-      if (d.has(id)) return d.get(id)!;
-      const n = byIdLocal.get(id);
-      if (!n || !n.parent_id) { d.set(id, 0); return 0; }
-      const v = depthOf(n.parent_id) + 1;
-      d.set(id, v);
-      return v;
-    };
-    nodes.forEach((n) => depthOf(n.id));
-    return d;
-  }, [nodes]);
 
   useEffect(() => {
     expandedRef.current = expanded;
@@ -244,9 +226,17 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const cy = h / 2;
     const fx = new Map<string, number>();
     const fy = new Map<string, number>();
+    // Gravidade hierárquica: só as pastas RAIZ são puxadas ao centro (o "sol").
+    // Todo o resto é segurado pela mola do próprio pai — cada pasta cuida da
+    // gravidade dos seus filhos, e eles orbitam ela (não o centro da tela).
     for (const n of list) {
-      fx.set(n.id, (cx - n.pos_x) * GRAVITY);
-      fy.set(n.id, (cy - n.pos_y) * GRAVITY);
+      if (!n.parent_id) {
+        fx.set(n.id, (cx - n.pos_x) * GRAVITY);
+        fy.set(n.id, (cy - n.pos_y) * GRAVITY);
+      } else {
+        fx.set(n.id, 0);
+        fy.set(n.id, 0);
+      }
     }
     // Repulsão entre todos os pares (campo tipo elétrico/gravitacional)
     for (let i = 0; i < list.length; i++) {
@@ -760,30 +750,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     ? new Set(nodes.filter((n) => n.name.toLowerCase().includes(query.toLowerCase())).map((n) => n.id))
     : null;
 
-  // Ponto de fuga da projeção 3D = centro dos nós visíveis.
-  const vanish = useMemo(() => {
-    let sx = 0, sy = 0, c = 0;
-    for (const n of nodes) {
-      if (!visibleIds.has(n.id)) continue;
-      sx += n.pos_x; sy += n.pos_y; c++;
-    }
-    return c ? { x: sx / c, y: sy / c } : { x: 0, y: 0 };
-  }, [nodes, visibleIds]);
-
-  // Projeta um nó: em 2D devolve a própria posição; em 3D aplica perspectiva
-  // (mais fundo = menor e recuado), dando profundidade de "universo" 3D.
-  const proj = useCallback(
-    (x: number, y: number, id: string): { x: number; y: number; s: number } => {
-      if (!view3d) return { x, y, s: 1 };
-      const depth = depthById.get(id) ?? 0;
-      const FOCAL = 900;
-      const z = depth * 320;
-      const k = FOCAL / (FOCAL + z);
-      return { x: vanish.x + (x - vanish.x) * k, y: vanish.y + (y - vanish.y) * k - z * 0.22, s: k };
-    },
-    [view3d, depthById, vanish]
-  );
-
   return (
     <div className="h-full flex flex-col gap-3 overflow-hidden">
       <div className="flex items-center justify-between gap-3">
@@ -808,15 +774,6 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             }`}
           >
             <Maximize2 size={14} /> {expandAll ? "Tudo aberto" : "Ver tudo"}
-          </button>
-          <button
-            onClick={() => { setView3d((v) => !v); kick(0.4); }}
-            title="Alternar entre visão 2D e 3D"
-            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg cursor-pointer ${
-              view3d ? "bg-indigo-500/20 text-indigo-300" : "liquid-glass text-gray-300"
-            }`}
-          >
-            <Box size={14} /> {view3d ? "3D" : "2D"}
           </button>
           {editMode && canManage && (
             <button
@@ -866,15 +823,13 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                 if (!visibleIds.has(n.id)) return null;
                 const parent = byId.get(n.parent_id);
                 if (!parent || !visibleIds.has(parent.id)) return null;
-                const a = proj(parent.pos_x, parent.pos_y, parent.id);
-                const b = proj(n.pos_x, n.pos_y, n.id);
                 return (
                   <line
                     key={`edge-${n.id}`}
-                    x1={a.x}
-                    y1={a.y}
-                    x2={b.x}
-                    y2={b.y}
+                    x1={parent.pos_x}
+                    y1={parent.pos_y}
+                    x2={n.pos_x}
+                    y2={n.pos_y}
                     stroke="rgba(16,185,129,0.25)"
                     strokeWidth={1.5}
                   />
@@ -885,15 +840,13 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                 const a = byId.get(l.source_id);
                 const b = byId.get(l.target_id);
                 if (!a || !b || !visibleIds.has(a.id) || !visibleIds.has(b.id)) return null;
-                const pa = proj(a.pos_x, a.pos_y, a.id);
-                const pb = proj(b.pos_x, b.pos_y, b.id);
                 return (
                   <line
                     key={`link-${l.id}`}
-                    x1={pa.x}
-                    y1={pa.y}
-                    x2={pb.x}
-                    y2={pb.y}
+                    x1={a.pos_x}
+                    y1={a.pos_y}
+                    x2={b.pos_x}
+                    y2={b.pos_y}
                     stroke="rgba(129,140,248,0.7)"
                     strokeWidth={2}
                     strokeDasharray="6 4"
@@ -904,26 +857,24 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             {nodes.map((n) => {
               if (!visibleIds.has(n.id)) return null;
               const dim = matches && !matches.has(n.id);
-              const p = proj(n.pos_x, n.pos_y, n.id);
-              const radius = (n.type === "folder" ? 24 : 14) * p.s;
+              const radius = n.type === "folder" ? 24 : 14;
               const kids = childCount.get(n.id) ?? 0;
               const isExpanded = expanded.has(n.id) || expandAll;
               return (
                 <div
                   key={n.id}
                   onPointerDown={(e) => onPointerDownNode(e, n.id)}
-                  style={{ left: p.x - radius, top: p.y - radius, width: radius * 2, height: radius * 2, zIndex: Math.round(1000 * p.s) }}
+                  style={{ left: n.pos_x - radius, top: n.pos_y - radius, width: radius * 2, height: radius * 2 }}
                   className="absolute cursor-grab active:cursor-grabbing select-none touch-none"
                   title={n.type === "folder" ? (isExpanded ? "Clique para recolher" : "Clique para expandir") : n.name}
                 >
                   <div
                     className="rounded-full flex items-center justify-center w-full h-full"
                     style={{
-                      opacity: dim ? 0.25 : view3d ? 0.55 + 0.45 * p.s : 1,
+                      opacity: dim ? 0.25 : 1,
                       background: n.type === "folder" ? (isExpanded ? "#065f46" : "#064e3b") : "#111827",
                       border: `1.5px solid ${selected === n.id ? "#10b981" : n.type === "folder" ? "#10b981" : "#374151"}`,
                       borderWidth: selected === n.id ? 3 : 1.5,
-                      boxShadow: view3d ? `0 ${8 * p.s}px ${16 * p.s}px rgba(0,0,0,0.5)` : undefined,
                     }}
                   >
                     {n.type === "folder" ? (
@@ -940,7 +891,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   )}
                   <span
                     className="absolute top-full left-1/2 -translate-x-1/2 mt-1 text-[11px] text-gray-300 whitespace-nowrap select-none"
-                    style={{ opacity: dim ? 0.25 : 1, fontSize: `${11 * Math.max(0.7, p.s)}px` }}
+                    style={{ opacity: dim ? 0.25 : 1 }}
                   >
                     {n.name.length > 18 ? `${n.name.slice(0, 16)}…` : n.name}
                   </span>
