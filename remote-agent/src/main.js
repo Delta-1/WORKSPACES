@@ -737,15 +737,27 @@ async function checkForUpdate(cfg, manual = false) {
   if (updating) return;
   try {
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) return;
-    const buf = await httpsGet(`${cfg.supabaseUrl}/rest/v1/app_releases?select=*&limit=1`, {
+    const buf = await httpsGet(`${cfg.supabaseUrl}/rest/v1/app_releases?select=updated_at,version,url_win,url_linux&limit=1`, {
       apikey: cfg.supabaseAnonKey,
       Authorization: `Bearer ${cfg.supabaseAnonKey}`,
     });
     const rows = JSON.parse(buf.toString("utf8"));
     const rel = Array.isArray(rows) ? rows[0] : null;
-    const current = app.getVersion();
-    if (!rel || cmpVer(rel.version, current) <= 0) {
-      if (manual) dialog.showMessageBox({ type: "info", title: "Acesso Remoto", message: `Você já está na versão mais recente (${current}).` });
+    // SEM número de versão manual: compara a DATA/HORA da última publicação
+    // (updated_at) com a que esta máquina já aplicou (guardada localmente).
+    const stampFile = path.join(app.getPath("userData"), "applied-release.txt");
+    let applied = null;
+    try { applied = fs.readFileSync(stampFile, "utf8").trim(); } catch {}
+    const releaseStamp = rel ? String(rel.updated_at || "") : "";
+    // Primeira execução (recém-instalado): marca a publicação atual como base e
+    // NÃO atualiza — afinal a pessoa acabou de baixar a versão mais nova.
+    if (applied === null) {
+      try { fs.writeFileSync(stampFile, releaseStamp); } catch {}
+      if (manual) dialog.showMessageBox({ type: "info", title: "Acesso Remoto", message: "Você já está na versão mais recente." });
+      return;
+    }
+    if (!rel || !releaseStamp || releaseStamp <= applied) {
+      if (manual) dialog.showMessageBox({ type: "info", title: "Acesso Remoto", message: "Você já está na versão mais recente." });
       return;
     }
     const url = process.platform === "win32" ? rel.url_win : rel.url_linux;
@@ -754,9 +766,11 @@ async function checkForUpdate(cfg, manual = false) {
       return;
     }
     if (manual) {
-      const r = dialog.showMessageBoxSync({ type: "question", buttons: ["Atualizar agora", "Depois"], defaultId: 0, title: "Atualização disponível", message: `Nova versão ${rel.version} disponível (você tem ${current}). Atualizar agora?` });
+      const r = dialog.showMessageBoxSync({ type: "question", buttons: ["Atualizar agora", "Depois"], defaultId: 0, title: "Atualização disponível", message: "Há uma nova versão do Acesso Remoto. Atualizar agora?" });
       if (r !== 0) return;
     }
+    // Marca ANTES de instalar, para não repetir a atualização depois do reinício.
+    try { fs.writeFileSync(stampFile, releaseStamp); } catch {}
     updating = true;
     const ext = process.platform === "win32" ? ".exe" : ".AppImage";
     const dest = path.join(app.getPath("temp"), `workspace-remote-update-${Date.now()}${ext}`);

@@ -543,12 +543,14 @@ function ReleasePublisher() {
 
   async function publish() {
     if (!supabase) return;
-    if (!version.trim()) { setMsg("Informe a versão (ex.: 1.1.0)."); return; }
     setBusy("publish");
-    const { error } = await supabase.from("app_releases").update({ version: version.trim(), url_win: winUrl, url_linux: linuxUrl, updated_at: new Date().toISOString() }).eq("id", true);
+    // Versão automática pela data/hora — você não precisa digitar nada.
+    const auto = version.trim() || new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    const { error } = await supabase.from("app_releases").update({ version: auto, url_win: winUrl, url_linux: linuxUrl, updated_at: new Date().toISOString() }).eq("id", true);
     setBusy(null);
     if (error) { setMsg("Erro ao publicar: " + error.message); return; }
-    setCurrent({ version: version.trim(), url_win: winUrl, url_linux: linuxUrl });
+    setCurrent({ version: auto, url_win: winUrl, url_linux: linuxUrl });
+    setVersion("");
     setMsg("✓ Atualização publicada! As máquinas vão se atualizar sozinhas.");
   }
 
@@ -578,11 +580,12 @@ function ReleasePublisher() {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Nova versão (ex.: 1.1.0)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Nome da versão (opcional — automático pela data)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
         <button onClick={publish} disabled={busy !== null || (!winUrl && !linuxUrl)} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
           {busy === "publish" ? "Publicando…" : "Publicar"}
         </button>
       </div>
+      <p className="text-[10px] text-gray-500">Você <b>não precisa</b> definir número de versão. Cada "Publicar" marca a data/hora e as máquinas se atualizam a partir dela.</p>
       {msg && <p className={`text-[11px] ${msg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{msg}</p>}
     </div>
   );
