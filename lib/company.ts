@@ -18,6 +18,7 @@ export type CompanyInfo = {
   reviewLink: string | null;
   photoUrl: string | null;
   autoCloseMinutes: number;
+  description: string | null;
 };
 
 const DEFAULT_THEME = "#10b981";
@@ -33,6 +34,7 @@ const CONTACT_DEFAULTS = {
   reviewLink: null,
   photoUrl: null,
   autoCloseMinutes: 0,
+  description: null,
 };
 
 export async function fetchCompany(): Promise<CompanyInfo> {
@@ -58,6 +60,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         reviewLink: data.review_link ?? null,
         photoUrl: data.photo_url ?? null,
         autoCloseMinutes: data.auto_close_minutes ?? 0,
+        description: data.description ?? null,
       };
     }
   }
@@ -97,6 +100,7 @@ export async function updateCompany(update: Partial<CompanyInfo>, companyId?: st
         ...(update.reviewLink !== undefined ? { review_link: update.reviewLink } : {}),
         ...(update.photoUrl !== undefined ? { photo_url: update.photoUrl } : {}),
         ...(update.autoCloseMinutes !== undefined ? { auto_close_minutes: update.autoCloseMinutes } : {}),
+        ...(update.description !== undefined ? { description: update.description } : {}),
         updated_at: new Date().toISOString(),
       })
       .select("*");
@@ -123,6 +127,7 @@ export async function updateCompany(update: Partial<CompanyInfo>, companyId?: st
         reviewLink: data.review_link ?? null,
         photoUrl: data.photo_url ?? null,
         autoCloseMinutes: data.auto_close_minutes ?? 0,
+        description: data.description ?? null,
       };
     }
   }

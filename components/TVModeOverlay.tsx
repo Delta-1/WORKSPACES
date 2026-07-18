@@ -112,13 +112,8 @@ export default function TVModeOverlay({
       </button>
 
       <div className={`absolute ${CORNER_CLASS[corner] ?? CORNER_CLASS["top-left"]} flex items-center gap-3`}>
-        {logoDataUrl ? (
-          <img src={logoDataUrl} className="w-12 h-12 rounded-xl object-cover" alt="Logo" />
-        ) : (
-          <div className="w-12 h-12 rounded-xl bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 font-bold">
-            {companyName.charAt(0)}
-          </div>
-        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logoDataUrl || "/icon.png"} className="w-12 h-12 rounded-xl object-cover" alt="Logo" />
         <span className="text-lg font-bold tracking-wide">{companyName}</span>
       </div>
 

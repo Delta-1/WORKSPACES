@@ -15,7 +15,7 @@ type Db = {
 };
 
 const DEFAULT_DB: Db = {
-  company: { name: "Configuração Pendente", logoDataUrl: null },
+  company: { name: "Workspace", logoDataUrl: null },
   whatsappMessages: [],
 };
 

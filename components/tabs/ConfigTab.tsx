@@ -53,6 +53,7 @@ export default function ConfigTab({
   reviewLink,
   photoUrl,
   autoCloseMinutes,
+  description,
   onUpdateCompany,
 }: {
   companyName: string;
@@ -71,8 +72,10 @@ export default function ConfigTab({
   reviewLink: string | null;
   photoUrl: string | null;
   autoCloseMinutes: number;
+  description: string | null;
   onUpdateCompany: (update: {
     name?: string;
+    description?: string;
     address?: string;
     addressLink?: string;
     phone?: string;
@@ -100,6 +103,8 @@ export default function ConfigTab({
   const [draftEmail, setDraftEmail] = useState(email ?? "");
   const [draftWebsite, setDraftWebsite] = useState(website ?? "");
   const [draftReview, setDraftReview] = useState(reviewLink ?? "");
+  const [draftDescription, setDraftDescription] = useState(description ?? "");
+  useEffect(() => { setDraftDescription(description ?? ""); }, [description]);
   useEffect(() => { setDraftAddress(address ?? ""); }, [address]);
   useEffect(() => { setDraftAddressLink(addressLink ?? ""); }, [addressLink]);
   useEffect(() => { setDraftPhone(phone ?? ""); }, [phone]);
@@ -188,6 +193,17 @@ export default function ConfigTab({
                   onBlur={() => onUpdateCompany({ name })}
                   className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Descrição (aparece embaixo do nome)</label>
+                <input
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                  onBlur={() => onUpdateCompany({ description: draftDescription.trim() })}
+                  placeholder="Ex.: Soluções em tecnologia · Suporte 24h"
+                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Uma frase curta que aparece embaixo do nome da empresa no topo. Cada empresa tem a sua.</p>
               </div>
               {companyCode && (
                 <div>

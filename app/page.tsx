@@ -102,6 +102,7 @@ export default function Home() {
     reviewLink: null,
     photoUrl: null,
     autoCloseMinutes: 0,
+    description: null,
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -378,7 +379,7 @@ export default function Home() {
           )}
           <div>
             <h2 className="font-bold leading-tight">{company.name}</h2>
-            <p className="text-xs text-gray-500">Workspace Multi-Empresa</p>
+            <p className="text-xs text-gray-500">{company.description || "Workspace Multi-Empresa"}</p>
           </div>
         </div>
         <ProfileMenu
@@ -429,6 +430,7 @@ export default function Home() {
             reviewLink={company.reviewLink}
             photoUrl={company.photoUrl}
             autoCloseMinutes={company.autoCloseMinutes}
+            description={company.description}
             onUpdateCompany={handleUpdateCompany}
           />
         )}
