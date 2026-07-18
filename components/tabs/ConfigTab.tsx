@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Image as ImageIcon, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { Bell, Bot, Building2, FolderTree, Image as ImageIcon, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
 import ChatbotSection from "./ChatbotSection";
@@ -205,6 +206,7 @@ export default function ConfigTab({
                 />
                 <p className="text-[10px] text-gray-500 mt-1">Uma frase curta que aparece embaixo do nome da empresa no topo. Cada empresa tem a sua.</p>
               </div>
+              <ClientSubfoldersField />
               {companyCode && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Código empresarial (para os funcionários entrarem)</label>
@@ -409,6 +411,43 @@ function CfgField({
         placeholder={placeholder}
         className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
       />
+    </div>
+  );
+}
+
+// Ramificações padrão das pastas de clientes (cada cliente novo nasce com elas).
+function ClientSubfoldersField() {
+  const [val, setVal] = useState("");
+  const [cid, setCid] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("company_settings").select("company_id, client_subfolders").maybeSingle().then(({ data }) => {
+      const arr = Array.isArray(data?.client_subfolders) ? data.client_subfolders : ["Documentos", "Contratos", "Artes", "Aplicativos"];
+      setVal(arr.join(", "));
+      setCid((data?.company_id as string) ?? null);
+      setLoaded(true);
+    });
+  }, []);
+  async function save() {
+    if (!supabase || !cid) return;
+    const arr = val.split(",").map((s) => s.trim()).filter(Boolean);
+    await supabase.from("company_settings").update({ client_subfolders: arr }).eq("company_id", cid);
+  }
+  if (!loaded) return null;
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+        <FolderTree size={13} className="text-emerald-400" /> Ramificações padrão dos clientes
+      </label>
+      <input
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={save}
+        placeholder="Documentos, Contratos, Artes, Aplicativos"
+        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+      />
+      <p className="text-[10px] text-gray-500 mt-1">Separadas por vírgula. Cada cliente novo já nasce com essas pastinhas dentro da pasta dele no grafo.</p>
     </div>
   );
 }
