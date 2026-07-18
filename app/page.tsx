@@ -105,6 +105,7 @@ export default function Home() {
     photoUrl: null,
     autoCloseMinutes: 0,
     description: null,
+    remoteAgentUrl: null,
   });
 
   const role: Role = profile?.role ?? "gestor";
@@ -434,6 +435,7 @@ export default function Home() {
             photoUrl={company.photoUrl}
             autoCloseMinutes={company.autoCloseMinutes}
             description={company.description}
+            remoteAgentUrl={company.remoteAgentUrl}
             onUpdateCompany={handleUpdateCompany}
           />
         )}

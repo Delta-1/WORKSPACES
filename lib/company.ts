@@ -19,6 +19,7 @@ export type CompanyInfo = {
   photoUrl: string | null;
   autoCloseMinutes: number;
   description: string | null;
+  remoteAgentUrl: string | null;
 };
 
 const DEFAULT_THEME = "#10b981";
@@ -35,6 +36,7 @@ const CONTACT_DEFAULTS = {
   photoUrl: null,
   autoCloseMinutes: 0,
   description: null,
+  remoteAgentUrl: null,
 };
 
 export async function fetchCompany(): Promise<CompanyInfo> {
@@ -61,6 +63,7 @@ export async function fetchCompany(): Promise<CompanyInfo> {
         photoUrl: data.photo_url ?? null,
         autoCloseMinutes: data.auto_close_minutes ?? 0,
         description: data.description ?? null,
+        remoteAgentUrl: data.remote_agent_download_url ?? null,
       };
     }
   }
@@ -101,6 +104,7 @@ export async function updateCompany(update: Partial<CompanyInfo>, companyId?: st
         ...(update.photoUrl !== undefined ? { photo_url: update.photoUrl } : {}),
         ...(update.autoCloseMinutes !== undefined ? { auto_close_minutes: update.autoCloseMinutes } : {}),
         ...(update.description !== undefined ? { description: update.description } : {}),
+        ...(update.remoteAgentUrl !== undefined ? { remote_agent_download_url: update.remoteAgentUrl } : {}),
         updated_at: new Date().toISOString(),
       })
       .select("*");
@@ -128,6 +132,7 @@ export async function updateCompany(update: Partial<CompanyInfo>, companyId?: st
         photoUrl: data.photo_url ?? null,
         autoCloseMinutes: data.auto_close_minutes ?? 0,
         description: data.description ?? null,
+        remoteAgentUrl: data.remote_agent_download_url ?? null,
       };
     }
   }

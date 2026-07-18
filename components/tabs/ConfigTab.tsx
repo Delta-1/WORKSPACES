@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, FolderTree, Image as ImageIcon, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { Bell, Bot, Building2, Download, FolderTree, Image as ImageIcon, MonitorDown, Palette, Server, Sliders, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
@@ -28,10 +28,11 @@ const SITE_STYLES: { id: string; name: string; desc: string; swatch: string }[] 
   { id: "paper", name: "Paper", desc: "Claro e limpo (documento)", swatch: "#ffffff" },
 ];
 
-type SectionId = "empresa" | "aparencia" | "servidores" | "ia" | "chatbot" | "notificacoes";
+type SectionId = "empresa" | "aparencia" | "instalacao" | "servidores" | "ia" | "chatbot" | "notificacoes";
 const SECTIONS: { id: SectionId; label: string; icon: typeof Building2 }[] = [
   { id: "empresa", label: "Empresa", icon: Building2 },
   { id: "aparencia", label: "Aparência", icon: Palette },
+  { id: "instalacao", label: "Instalação Acesso Remoto", icon: MonitorDown },
   { id: "servidores", label: "Servidores", icon: Server },
   { id: "ia", label: "Inteligência Artificial", icon: Sparkles },
   { id: "chatbot", label: "Chatbot", icon: Bot },
@@ -55,6 +56,7 @@ export default function ConfigTab({
   photoUrl,
   autoCloseMinutes,
   description,
+  remoteAgentUrl,
   onUpdateCompany,
 }: {
   companyName: string;
@@ -74,9 +76,11 @@ export default function ConfigTab({
   photoUrl: string | null;
   autoCloseMinutes: number;
   description: string | null;
+  remoteAgentUrl: string | null;
   onUpdateCompany: (update: {
     name?: string;
     description?: string;
+    remoteAgentUrl?: string;
     address?: string;
     addressLink?: string;
     phone?: string;
@@ -105,6 +109,8 @@ export default function ConfigTab({
   const [draftWebsite, setDraftWebsite] = useState(website ?? "");
   const [draftReview, setDraftReview] = useState(reviewLink ?? "");
   const [draftDescription, setDraftDescription] = useState(description ?? "");
+  const [draftRemoteUrl, setDraftRemoteUrl] = useState(remoteAgentUrl ?? "");
+  useEffect(() => { setDraftRemoteUrl(remoteAgentUrl ?? ""); }, [remoteAgentUrl]);
   useEffect(() => { setDraftDescription(description ?? ""); }, [description]);
   useEffect(() => { setDraftAddress(address ?? ""); }, [address]);
   useEffect(() => { setDraftAddressLink(addressLink ?? ""); }, [addressLink]);
@@ -362,6 +368,45 @@ export default function ConfigTab({
                     <option key={c.id} value={c.id}>{c.label}</option>
                   ))}
                 </select>
+              </div>
+            </div>
+          )}
+
+          {active === "instalacao" && (
+            <div className="liquid-glass rounded-2xl p-5 space-y-4 max-w-lg">
+              <div>
+                <h4 className="text-sm font-bold flex items-center gap-2"><MonitorDown size={16} className="text-emerald-400" /> Instalar o Acesso Remoto</h4>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Baixe e instale o aplicativo na máquina que você quer controlar (ou usar como servidor). Ao abrir, ele gera um <b>código</b> para você conectar aqui pelo Acesso Remoto. Funciona no Windows e no Linux.
+                </p>
+              </div>
+
+              {/* Botão de download — sempre aponta para a ÚLTIMA versão no Drive. */}
+              {draftRemoteUrl.trim() ? (
+                <a
+                  href={draftRemoteUrl.trim()}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-3 rounded-xl cursor-pointer"
+                >
+                  <Download size={16} /> Baixar o aplicativo (última versão)
+                </a>
+              ) : (
+                <div className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-500/30 rounded-lg px-3 py-2">
+                  Nenhum link cadastrado ainda. Cole abaixo o link do Drive onde fica sempre a última versão do app.
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Link do aplicativo no Drive (última versão)</label>
+                <input
+                  value={draftRemoteUrl}
+                  onChange={(e) => setDraftRemoteUrl(e.target.value)}
+                  onBlur={() => onUpdateCompany({ remoteAgentUrl: draftRemoteUrl.trim() })}
+                  placeholder="https://drive.google.com/…"
+                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Aponte para a pasta/arquivo do Drive que você sempre atualiza com a nova versão (Windows/Linux). Todo mundo baixa daqui a versão mais recente.</p>
               </div>
             </div>
           )}

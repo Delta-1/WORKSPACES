@@ -66,10 +66,13 @@ export default function Orb({
       `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, copy, paste, save, selectall, home).\n` +
       `• «clique» — clica com o botão esquerdo onde o cursor está.\n` +
       `• «abrir: APP» — abre um programa pelo nome (ex.: notepad, chrome).\n` +
-      `• «clicar: x,y» — clica num ponto da tela; x e y são frações de 0 a 1 (x=coluna da esquerda→direita, y=linha de cima→baixo) do CENTRO do elemento que você quer clicar.\n` +
-      `• «duploclique: x,y» — duplo clique nesse ponto.\n` +
-      `VOCÊ VÊ A TELA: em cada mensagem vai junto um print atual da máquina remota. OLHE o print, ache o elemento (ex.: ícone do Google Chrome) e clique com «clicar: x,y». ` +
-      `Se o que a pessoa pediu NÃO estiver visível na tela, use «tecla: home» (abre o menu iniciar), depois «digitar: nome» e «tecla: enter» para procurar/abrir. ` +
+      `• «clicar: x,y» — UM clique num ponto; x e y são frações de 0 a 1 (x=esquerda→direita, y=cima→baixo) do CENTRO do elemento.\n` +
+      `• «duploclique: x,y» — DOIS cliques rápidos nesse ponto.\n` +
+      `VOCÊ VÊ A TELA: em cada mensagem vai junto um print atual da máquina remota. OLHE o print e aja.\n` +
+      `REGRA IMPORTANTE PARA ABRIR PROGRAMAS: um ícone na ÁREA DE TRABALHO abre com «duploclique» (um clique só seleciona, NÃO abre!). ` +
+      `Ex.: "abre o Google Chrome" → ache o ícone do Chrome no print e use «duploclique: x,y». ` +
+      `Ícone na BARRA DE TAREFAS ou item do MENU INICIAR abre com um «clicar». ` +
+      `Se o programa NÃO estiver visível na tela, use «tecla: home» (abre o menu iniciar), depois «digitar: nome» e «tecla: enter». ` +
       `Para baixar de um link: peça o link, então «abrir: chrome» (ou clique no navegador), clique na barra de endereço, «digitar: LINK» e «tecla: enter». ` +
       `Encadeie vários comandos numa resposta. Fale curtinho o que vai fazer e emita os comandos. Ao ouvir que vão finalizar, despeça-se em uma frase.`
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
