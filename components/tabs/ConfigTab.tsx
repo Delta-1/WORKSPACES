@@ -406,8 +406,10 @@ export default function ConfigTab({
                   placeholder="https://drive.google.com/…"
                   className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
                 />
-                <p className="text-[10px] text-gray-500 mt-1">Aponte para a pasta/arquivo do Drive que você sempre atualiza com a nova versão (Windows/Linux). Todo mundo baixa daqui a versão mais recente.</p>
+                <p className="text-[10px] text-gray-500 mt-1">Link para a 1ª instalação (download manual). Para a <b>atualização automática</b>, use o publicador abaixo.</p>
               </div>
+
+              <ReleasePublisher />
             </div>
           )}
 
@@ -493,6 +495,95 @@ function ClientSubfoldersField() {
         className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
       />
       <p className="text-[10px] text-gray-500 mt-1">Separadas por vírgula. Cada cliente novo já nasce com essas pastinhas dentro da pasta dele no grafo.</p>
+    </div>
+  );
+}
+
+// Publicador de versões do app de Acesso Remoto: o gestor sobe o .exe/.AppImage,
+// o site gera o link direto (Supabase Storage) e publica em app_releases — aí
+// todas as máquinas se atualizam sozinhas. Sem link manual, sem SQL.
+function ReleasePublisher() {
+  const [version, setVersion] = useState("");
+  const [current, setCurrent] = useState<{ version: string; url_win: string | null; url_linux: string | null } | null>(null);
+  const [winUrl, setWinUrl] = useState<string | null>(null);
+  const [linuxUrl, setLinuxUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("app_releases").select("version,url_win,url_linux").limit(1).maybeSingle().then(({ data }) => {
+      if (data) {
+        setCurrent(data as { version: string; url_win: string | null; url_linux: string | null });
+        setWinUrl(data.url_win ?? null);
+        setLinuxUrl(data.url_linux ?? null);
+      }
+    });
+  }, []);
+
+  async function upload(kind: "win" | "linux", file: File) {
+    if (!supabase) return;
+    setBusy(kind);
+    setMsg(null);
+    try {
+      const ext = kind === "win" ? "exe" : "AppImage";
+      const path = `${kind}/workspace-remote-${Date.now()}.${ext}`;
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const { error } = await supabase.storage.from("downloads").upload(path, buf, { contentType: "application/octet-stream", upsert: true });
+      if (error) throw error;
+      const url = supabase.storage.from("downloads").getPublicUrl(path).data.publicUrl;
+      if (kind === "win") setWinUrl(url); else setLinuxUrl(url);
+      setMsg(`✓ ${kind === "win" ? "Windows" : "Linux"} enviado.`);
+    } catch (e) {
+      setMsg("Erro: " + (e instanceof Error ? e.message : "falha no envio"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function publish() {
+    if (!supabase) return;
+    if (!version.trim()) { setMsg("Informe a versão (ex.: 1.1.0)."); return; }
+    setBusy("publish");
+    const { error } = await supabase.from("app_releases").update({ version: version.trim(), url_win: winUrl, url_linux: linuxUrl, updated_at: new Date().toISOString() }).eq("id", true);
+    setBusy(null);
+    if (error) { setMsg("Erro ao publicar: " + error.message); return; }
+    setCurrent({ version: version.trim(), url_win: winUrl, url_linux: linuxUrl });
+    setMsg("✓ Atualização publicada! As máquinas vão se atualizar sozinhas.");
+  }
+
+  return (
+    <div className="pt-3 border-t border-white/10 space-y-3">
+      <p className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Publicar atualização automática</p>
+      <p className="text-[11px] text-gray-400">
+        Suba aqui o instalador gerado no seu build (GitHub Actions). O site guarda e gera o link direto; ao publicar, todas as máquinas atualizam sozinhas.
+        {current && <> Versão publicada hoje: <b className="text-white">{current.version}</b>.</>}
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-black/20 rounded-lg p-2.5">
+          <p className="text-[11px] font-semibold mb-1.5">Windows (.exe)</p>
+          <label className={`text-[11px] px-2 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1 ${busy === "win" ? "bg-white/5 text-gray-500" : "bg-white/10 hover:bg-white/20"}`}>
+            <ImageIcon size={12} /> {busy === "win" ? "Enviando…" : winUrl ? "Trocar" : "Enviar .exe"}
+            <input type="file" accept=".exe" className="hidden" disabled={busy !== null} onChange={(e) => e.target.files?.[0] && upload("win", e.target.files[0])} />
+          </label>
+          {winUrl && <p className="text-[9px] text-emerald-400 mt-1 truncate">✓ pronto</p>}
+        </div>
+        <div className="bg-black/20 rounded-lg p-2.5">
+          <p className="text-[11px] font-semibold mb-1.5">Linux (.AppImage)</p>
+          <label className={`text-[11px] px-2 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1 ${busy === "linux" ? "bg-white/5 text-gray-500" : "bg-white/10 hover:bg-white/20"}`}>
+            <ImageIcon size={12} /> {busy === "linux" ? "Enviando…" : linuxUrl ? "Trocar" : "Enviar .AppImage"}
+            <input type="file" accept=".AppImage,application/octet-stream" className="hidden" disabled={busy !== null} onChange={(e) => e.target.files?.[0] && upload("linux", e.target.files[0])} />
+          </label>
+          {linuxUrl && <p className="text-[9px] text-emerald-400 mt-1 truncate">✓ pronto</p>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Nova versão (ex.: 1.1.0)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        <button onClick={publish} disabled={busy !== null || (!winUrl && !linuxUrl)} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
+          {busy === "publish" ? "Publicando…" : "Publicar"}
+        </button>
+      </div>
+      {msg && <p className={`text-[11px] ${msg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{msg}</p>}
     </div>
   );
 }
