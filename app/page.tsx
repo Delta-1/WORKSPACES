@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, FlaskConical, Layers, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, FlaskConical, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -367,13 +367,14 @@ export default function Home() {
               alt="Logo"
             />
           ) : (
-            <div
+            // Sem logo personalizada → mostra a logo padrão do site (Workspace).
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src="/icon.png"
               style={{ width: company.logoSize, height: company.logoSize }}
-              className="rounded-lg bg-emerald-950 border border-emerald-600 flex items-center justify-center text-emerald-400 shrink-0"
-            >
-              {/* Sem logo personalizada → mostra a marca padrão do site (Workspace). */}
-              <Layers size={Math.round(company.logoSize * 0.55)} />
-            </div>
+              className="rounded-lg object-cover shrink-0"
+              alt="Workspace"
+            />
           )}
           <div>
             <h2 className="font-bold leading-tight">{company.name}</h2>

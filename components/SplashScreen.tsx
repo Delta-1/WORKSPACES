@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Layers } from "lucide-react";
 
 export default function SplashScreen({
   companyName,
@@ -30,13 +29,9 @@ export default function SplashScreen({
       <div className="splash-door-left absolute inset-y-0 left-0 w-1/2 bg-[#060a12] border-r border-white/5" />
       <div className="splash-door-right absolute inset-y-0 right-0 w-1/2 bg-[#060a12] border-l border-white/5" />
       <div className="splash-logo absolute inset-0 flex flex-col items-center justify-center gap-4">
-        {logoDataUrl ? (
-          <img src={logoDataUrl} alt="Logo" className="w-20 h-20 rounded-2xl object-cover" />
-        ) : (
-          <div className="w-20 h-20 rounded-2xl bg-emerald-950 border border-emerald-500 flex items-center justify-center text-emerald-400">
-            <Layers size={36} />
-          </div>
-        )}
+        {/* Logo da empresa; sem personalização, a logo padrão do site. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logoDataUrl || "/icon.png"} alt="Logo" className="w-20 h-20 rounded-2xl object-cover" />
         <h1 className="text-2xl font-bold tracking-[0.2em] text-white uppercase">
           {companyName}
         </h1>
