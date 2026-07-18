@@ -972,6 +972,12 @@ const COPILOT_TOOLS = [
       "Lista, EM TEXTO, o que tem dentro de uma pasta pelo nome (subpastas e arquivos). Use quando perguntarem 'o que tem na pasta X', 'quais arquivos tem em Y', 'quantas pastas tem em Z'. Retorna a lista organizada.",
     input_schema: { type: "object", properties: { folder: { type: "string", description: "Nome (ou parte) da pasta" } }, required: ["folder"] },
   },
+  {
+    name: "screenshot_client",
+    description:
+      "Tira um PRINT da tela do computador de um CLIENTE e anexa aqui no chat. Use quando o cliente reportar um erro e quiser mostrar a tela dele. SEMPRE identifique o cliente; se o cliente tiver mais de um computador, PERGUNTE qual (a ferramenta devolve as opções). Passe 'computer' com o nome da máquina quando souber.",
+    input_schema: { type: "object", properties: { client: { type: "string" }, computer: { type: "string" } }, required: ["client"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1159,6 +1165,40 @@ async function copilotDispatch(companyId, name, input, files, sends) {
     sends.push({ to, file: { name: m.media_name || `${m.media_type || "midia"}`, mime: m.media_mime || "application/octet-stream", buffer } });
     return { ok: true, message: `Mídia (${m.media_type}) de ${from.contact.name || "contato"} enfileirada para ${dest.contact.name || dest.contact.phone}.` };
   }
+  if (name === "screenshot_client") {
+    // Acha o cliente e o computador dele, pede um print pro agente e anexa aqui.
+    const q = String(input.client || "").trim();
+    if (!q) return { ok: false, message: "Diga qual é o cliente." };
+    const { data: cli } = await supabase.from("clients").select("id,name").eq("company_id", companyId).ilike("name", `%${q}%`).limit(1).maybeSingle();
+    if (!cli) return { ok: false, message: `Não achei o cliente "${q}".` };
+    const { data: machines } = await supabase.from("remote_agents").select("id,name,status,last_seen").eq("company_id", companyId).eq("client_id", cli.id);
+    if (!machines || machines.length === 0) return { ok: false, message: `O cliente ${cli.name} não tem computador vinculado.` };
+    let agent = machines[0];
+    if (machines.length > 1) {
+      if (!input.computer) return { ok: false, needs_choice: true, message: `${cli.name} tem vários computadores. Qual?`, options: machines.map((m) => ({ name: m.name })) };
+      agent = machines.find((m) => (m.name || "").toLowerCase().includes(String(input.computer).toLowerCase())) || agent;
+    }
+    // Enfileira o print e aguarda o agente devolver a URL (até ~22s).
+    const { data: job } = await supabase.from("agent_jobs").insert({ agent_id: agent.id, company_id: companyId, kind: "screenshot" }).select("id").single();
+    if (!job) return { ok: false, message: "Não consegui pedir o print agora." };
+    let url = null;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const { data: j } = await supabase.from("agent_jobs").select("status,result_url").eq("id", job.id).maybeSingle();
+      if (j?.status === "done" && j.result_url) { url = j.result_url; break; }
+      if (j?.status === "error") break;
+    }
+    if (!url) return { ok: false, message: `Não recebi o print de ${agent.name} (a máquina pode estar desligada ou o app desatualizado).` };
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const buffer = Buffer.from(await resp.arrayBuffer());
+        files.push({ name: `print-${cli.name}.jpg`, mime: "image/jpeg", buffer });
+        return { ok: true, message: `Print da tela de ${cli.name} (${agent.name}) anexado.` };
+      }
+    } catch { /* ignore */ }
+    return { ok: false, message: "O print foi tirado mas não consegui anexar." };
+  }
   return await copilotAction(companyId, name, input);
 }
 
@@ -1217,6 +1257,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `Se for algo ROTINEIRO que você já fez com o mesmo contato, seja direto e não fique repetindo perguntas de confirmação bobas. ` +
     `FINANCEIRO: você pode consultar e lançar no financeiro DA EMPRESA. Para 'como está o financeiro', 'quais os gastos', saldo do mês, use finance_summary e dê um PANORAMA claro (receitas, despesas, saldo e principais gastos), com um conselho curto pro dono (ex.: alertar se as despesas passaram das receitas). Para lançar, use add_finance_entry (confirme o valor antes). ` +
     `Ao listar arquivos/pastas, mande em TEXTO organizado (use list_folder) — uma lista de itens, não frase corrida. ` +
+    `SUPORTE REMOTO: se pedirem para ver a tela de um cliente (ex.: 'tira um print da máquina do fulano'), use screenshot_client. SEMPRE saiba QUAL CLIENTE e, se ele tiver mais de um computador, PERGUNTE qual antes. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
       : `Aja de forma autônoma, perguntando só o essencial.`) +
@@ -1234,6 +1275,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     attendance: ["set_attendance"],
     relay: ["send_whatsapp", "send_file_to_contact", "forward_media"],
     finance: ["finance_summary", "add_finance_entry"],
+    remote: ["screenshot_client"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));

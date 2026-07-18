@@ -148,16 +148,18 @@ function activeDisplay() {
   return all.find((d) => String(d.id) === activeDisplayId) || screen.getPrimaryDisplay();
 }
 
-// Miniatura da tela (para a prévia ao vivo na listagem de computadores).
-ipcMain.handle("get-thumbnail", async () => {
+// Miniatura da tela (prévia ao vivo). Com { full: true } captura em resolução
+// maior — usado quando o suporte pede um PRINT nítido da tela.
+ipcMain.handle("get-thumbnail", async (_e, opts) => {
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ["screen"],
-      thumbnailSize: { width: 320, height: 180 },
-    });
+    const full = opts && opts.full;
+    const size = full
+      ? (() => { const b = screen.getPrimaryDisplay().size; return { width: Math.min(1920, b.width), height: Math.min(1080, b.height) }; })()
+      : { width: 320, height: 180 };
+    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: size });
     const thumb = sources[0]?.thumbnail;
     if (!thumb || thumb.isEmpty()) return null;
-    return thumb.toJPEG(60).toString("base64");
+    return thumb.toJPEG(full ? 80 : 60).toString("base64");
   } catch {
     return null;
   }

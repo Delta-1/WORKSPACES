@@ -384,9 +384,40 @@ async function runServerFsOps() {
   }
 }
 
+// Trabalhos sob demanda vindos do site/copiloto (ex.: tirar um print da tela e
+// devolver a URL). O suporte pede "print da máquina do fulano" e chega aqui.
+let jobsBusy = false;
+async function runAgentJobs() {
+  if (jobsBusy || !supabase || !cfg?.accessCode) return;
+  jobsBusy = true;
+  try {
+    const { data } = await supabase.rpc("agent_pending_jobs", { p_access_code: cfg.accessCode });
+    for (const j of data || []) {
+      if (j.kind === "screenshot") {
+        let url = null, err = null;
+        try {
+          const base64 = await ipcRenderer.invoke("get-thumbnail", { full: true });
+          if (base64) {
+            const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            const path = `shots/${cfg.agentId}-${Date.now()}.jpg`;
+            const { error } = await supabase.storage.from("agent-thumbs").upload(path, bytes, { contentType: "image/jpeg", upsert: true });
+            if (error) err = error.message;
+            else url = supabase.storage.from("agent-thumbs").getPublicUrl(path).data.publicUrl;
+          } else err = "sem imagem";
+        } catch (e) { err = String(e?.message || e).slice(0, 200); }
+        await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: url, p_error: url ? null : (err || "falha") });
+      } else {
+        await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: "tipo desconhecido" });
+      }
+    }
+  } catch { /* ignore */ } finally { jobsBusy = false; }
+}
+
 async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
+  runAgentJobs();
+  setInterval(runAgentJobs, 8000); // trabalhos sob demanda (print da tela, etc.)
   reportSpecs();
   setInterval(reportSpecs, 300000); // atualiza o panorama a cada 5 min
   refreshServerRole();
