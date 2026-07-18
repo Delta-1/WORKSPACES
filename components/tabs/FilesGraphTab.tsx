@@ -14,14 +14,15 @@ const CENTER_X = 450;
 const CENTER_Y = 300;
 
 // Parâmetros da simulação de forças (estilo grafo do Obsidian)
-const CHARGE = 11000; // repulsão entre nós
+const CHARGE = 9000; // repulsão entre nós
 const LINK_LEN = 95; // comprimento de repouso das ligações
-const LINK_K = 0.045; // rigidez das ligações (mola)
-const GRAVITY = 0.03; // atração suave para o centro
-const FRICTION = 0.75; // amortecimento (quanto menor, mais "parado")
-const V_CLAMP = 40; // limite de velocidade
-const ALPHA_DECAY = 0.985;
-const ALPHA_MIN = 0.02;
+const LINK_K = 0.05; // rigidez das ligações (mola)
+const GRAVITY = 0.035; // atração suave para o centro
+const FRICTION = 0.7; // amortecimento (quanto menor, mais "parado")
+const V_CLAMP = 18; // limite de velocidade (menor = mais calmo, sem tremer)
+const ALPHA_DECAY = 0.94; // esfria mais rápido → estabiliza logo
+const ALPHA_MIN = 0.06; // para de mexer mais cedo (nada de tremer eterno)
+const F_CLAMP = 120; // teto da força por nó (evita "explosões"/tremores)
 
 function computeMissingPositions(nodes: FileNodeRow[]): FileNodeRow[] {
   const byParent = new Map<string | null, FileNodeRow[]>();
@@ -214,14 +215,20 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     return () => ro.disconnect();
   }, []);
 
+  // Salvar posições dispara eventos realtime na tabela "files". Sem isso, o
+  // grafo recarregava e re-energizava sozinho a cada salvamento → tremia sem
+  // parar. Suprimimos os reloads por uma janelinha após salvar.
+  const suppressReloadUntil = useRef(0);
   const persistPositions = useCallback(async () => {
     if (!supabase) return;
     const client = supabase;
+    suppressReloadUntil.current = Date.now() + 2500;
     await Promise.all(
       nodesRef.current.map((n) =>
         client.from("files").update({ pos_x: Math.round(n.pos_x), pos_y: Math.round(n.pos_y) }).eq("id", n.id)
       )
     ).catch(() => {});
+    suppressReloadUntil.current = Date.now() + 2500;
   }, []);
 
   const tick = useCallback(() => {
@@ -261,7 +268,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
         const ra = a.type === "folder" ? 30 : 20;
         const rb = b.type === "folder" ? 30 : 20;
         const minDist = ra + rb + 16;
-        if (d < minDist) rep += ((minDist - d) / minDist) * 900;
+        if (d < minDist) rep += ((minDist - d) / minDist) * 260;
         const rx = (dx / d) * rep;
         const ry = (dy / d) * rep;
         fx.set(a.id, (fx.get(a.id) ?? 0) + rx);
@@ -296,8 +303,13 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
         continue;
       }
       const v = velRef.current.get(n.id) ?? { vx: 0, vy: 0 };
-      let vx = (v.vx + (fx.get(n.id) ?? 0)) * FRICTION;
-      let vy = (v.vy + (fy.get(n.id) ?? 0)) * FRICTION;
+      // Teto na força total do nó — evita "explodir" e tremer.
+      let ffx = fx.get(n.id) ?? 0;
+      let ffy = fy.get(n.id) ?? 0;
+      const fmag = Math.hypot(ffx, ffy);
+      if (fmag > F_CLAMP) { ffx = (ffx / fmag) * F_CLAMP; ffy = (ffy / fmag) * F_CLAMP; }
+      let vx = (v.vx + ffx) * FRICTION;
+      let vy = (v.vy + ffy) * FRICTION;
       vx = Math.max(-V_CLAMP, Math.min(V_CLAMP, vx));
       vy = Math.max(-V_CLAMP, Math.min(V_CLAMP, vy));
       velRef.current.set(n.id, { vx, vy });
@@ -375,8 +387,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     let t: ReturnType<typeof setTimeout> | null = null;
     const reload = () => {
       if (dragging) return; // não recarrega no meio de um arraste
+      if (Date.now() < suppressReloadUntil.current) return; // ignora nosso próprio salvamento de posições
       if (t) clearTimeout(t);
-      t = setTimeout(() => load(), 500);
+      t = setTimeout(() => {
+        if (Date.now() < suppressReloadUntil.current) return;
+        load();
+      }, 600);
     };
     const ch = supabase
       .channel("files-graph")
@@ -621,7 +637,34 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     return ids;
   }
 
+  // Ao abrir uma pasta, posiciona os filhos diretos num anel limpo ao redor
+  // dela (velocidade zero). Assim eles não "saltam" de posições antigas e o
+  // grafo assenta certinho, sem tremer.
+  function seedRing(folderId: string) {
+    const parent = nodesRef.current.find((n) => n.id === folderId);
+    if (!parent) return;
+    const kids = nodesRef.current.filter((n) => n.parent_id === folderId);
+    if (kids.length === 0) return;
+    const radius = LINK_LEN + kids.length * 6;
+    const base = Math.random() * Math.PI * 2;
+    const kidSet = new Map<string, { x: number; y: number }>();
+    kids.forEach((k, i) => {
+      const a = base + (i / kids.length) * Math.PI * 2;
+      kidSet.set(k.id, { x: parent.pos_x + Math.cos(a) * radius, y: parent.pos_y + Math.sin(a) * radius });
+    });
+    const next = nodesRef.current.map((n) => {
+      const p = kidSet.get(n.id);
+      if (!p) return n;
+      velRef.current.set(n.id, { vx: 0, vy: 0 });
+      return { ...n, pos_x: p.x, pos_y: p.y };
+    });
+    nodesRef.current = next;
+    setNodes(next);
+  }
+
   function toggleExpand(id: string) {
+    const isOpen = expandedRef.current.has(id);
+    if (!isOpen) seedRing(id); // abre → distribui os filhos num anel estável
     setExpanded((prev) => {
       const s = new Set(prev);
       if (s.has(id)) s.delete(id);
