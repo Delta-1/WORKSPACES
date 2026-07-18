@@ -228,9 +228,20 @@ export type Chatbot = {
   apis: AgentApi[] | null;
   test_mode: boolean | null;
   slot: string | null;
+  flow: BotFlow | null;
   created_at: string;
   updated_at: string;
 };
+
+// Fluxograma visual do bot (blocos ligados) — ver components/BotFlowBuilder.
+export type BotFlowNode = {
+  id: string;
+  type: "start" | "message" | "ask" | "condition" | "buttons" | "ai" | "action" | "end";
+  x: number;
+  y: number;
+  data: { text?: string; keywords?: string; options?: string[]; action?: string };
+};
+export type BotFlow = { nodes: BotFlowNode[]; edges: { id: string; from: string; handle: string; to: string }[] };
 
 export type AgentApi = { name: string; url: string; description?: string };
 

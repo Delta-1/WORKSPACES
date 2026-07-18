@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, BrainCircuit, FlaskConical, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FlaskConical, GitBranch, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
+import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
 import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi } from "@/lib/types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -168,6 +169,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
   const [saving, setSaving] = useState(false);
   const [studying, setStudying] = useState(false);
   const [studyMsg, setStudyMsg] = useState<string | null>(null);
+  const [showFlow, setShowFlow] = useState(false);
   const set = (patch: Partial<Agent>) => setF((p) => ({ ...p, ...patch }));
   const caps = f.capabilities ?? [];
   const toggleCap = (id: string) => set({ capabilities: caps.includes(id) ? caps.filter((c) => c !== id) : [...caps, id] });
@@ -238,6 +240,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       apis: apis.filter((a) => a.name && a.url),
       test_mode: f.test_mode ?? true,
       enabled: f.enabled ?? true,
+      flow: f.flow ?? null,
       company_id: profile?.company_id ?? null,
     };
     let agentId = f.id;
@@ -298,6 +301,18 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           {studyMsg && <p className={`text-[10px] mt-1 ${studyMsg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{studyMsg}</p>}
         </div>
 
+        {/* Fluxograma: monta visualmente como o bot conversa (blocos ligados). */}
+        <button
+          onClick={() => {
+            if (!f.id) { alert("Salve o agente primeiro para montar o fluxograma dele."); return; }
+            setShowFlow(true);
+          }}
+          className="w-full flex items-center justify-between gap-2 bg-indigo-950/40 hover:bg-indigo-950/60 border border-indigo-500/30 rounded-lg px-3 py-2.5 cursor-pointer"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-indigo-200"><GitBranch size={15} /> Fluxograma do bot</span>
+          <span className="text-[10px] text-gray-400">{f.flow?.nodes?.length ? `${f.flow.nodes.length} blocos` : "montar visualmente"}</span>
+        </button>
+
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="text-[11px] text-gray-400 flex items-center gap-1"><Plug size={11} /> APIs do agente (opcional)</label>
@@ -345,6 +360,16 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           </button>
         </div>
       </div>
+
+      {showFlow && f.id && (
+        <BotFlowBuilder
+          agentId={f.id}
+          agentName={f.name ?? "Agente"}
+          initial={(f.flow as BotFlow) ?? null}
+          onClose={() => setShowFlow(false)}
+          onSaved={(flow) => set({ flow })}
+        />
+      )}
     </div>
   );
 }
