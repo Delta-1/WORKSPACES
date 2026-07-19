@@ -5,6 +5,7 @@ import { Building2, Home, KeyRound, Layers } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 const COMPANY_TYPES = ["MEI", "Microempresa (ME)", "Pequena empresa (EPP)", "Média empresa", "Grande empresa", "Outro"];
+const SEGMENTS = ["Suporte técnico / TI", "Escritório / Administrativo", "Comércio / Loja", "Serviços", "Saúde", "Educação", "Restaurante / Food", "Contabilidade", "Imobiliária", "Outro"];
 
 export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
   const [mode, setMode] = useState<"owner" | "home" | "employee">("owner");
@@ -17,6 +18,7 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
   const [razao, setRazao] = useState("");
   const [type, setType] = useState(COMPANY_TYPES[1]);
   const [employees, setEmployees] = useState("");
+  const [segment, setSegment] = useState(SEGMENTS[0]);
 
   // casa (home) — só o nome
   const [homeName, setHomeName] = useState("");
@@ -42,6 +44,7 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
       p_razao: razao.trim() || null,
       p_type: type,
       p_employees: employees ? Number(employees) : null,
+      p_segment: segment,
     });
     setLoading(false);
     if (error) setError(error.message);
@@ -172,6 +175,18 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
                 </option>
               ))}
             </select>
+            <div>
+              <label className="text-[11px] text-gray-400 block mb-1">O que a empresa faz?</label>
+              <select
+                value={segment}
+                onChange={(e) => setSegment(e.target.value)}
+                className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none"
+              >
+                {SEGMENTS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
             <button
               onClick={createCompany}
               disabled={loading || !name.trim()}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Check, ChevronDown, Home, LogIn } from "lucide-react";
+import { Building2, Check, ChevronDown, Home, LogIn, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 type Env = { company_id: string; name: string; role: string; is_active: boolean };
@@ -39,6 +39,15 @@ export default function EnvironmentSwitcher() {
     window.location.reload();
   }
 
+  async function removeEnv(id: string, name: string) {
+    if (!supabase || busy) return;
+    if (!confirm(`Remover o ambiente "${name}" da sua lista? (Se for uma casa sua, ela é apagada.)`)) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("delete_environment", { p_company: id });
+    if (error) { alert(error.message); setBusy(false); return; }
+    window.location.reload();
+  }
+
   async function createHome() {
     if (!supabase) return;
     const name = prompt("Nome da sua casa (ex.: Casa da Ana, Família Silva):")?.trim();
@@ -70,19 +79,21 @@ export default function EnvironmentSwitcher() {
             <p className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500">Seus ambientes</p>
             <div className="max-h-64 overflow-y-auto custom-scroll">
               {envs.map((e) => (
-                <button
-                  key={e.company_id}
-                  onClick={() => (e.is_active ? setOpen(false) : switchTo(e.company_id))}
-                  disabled={busy}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5 cursor-pointer ${e.is_active ? "bg-emerald-950/30" : ""}`}
-                >
-                  <Building2 size={14} className="text-gray-400 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm truncate">{e.name}</span>
-                    <span className="block text-[10px] text-gray-500 capitalize">{e.role}</span>
-                  </span>
-                  {e.is_active && <Check size={14} className="text-emerald-400 shrink-0" />}
-                </button>
+                <div key={e.company_id} className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 ${e.is_active ? "bg-emerald-950/30" : ""}`}>
+                  <button onClick={() => (e.is_active ? setOpen(false) : switchTo(e.company_id))} disabled={busy} className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer">
+                    <Building2 size={14} className="text-gray-400 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm truncate">{e.name}</span>
+                      <span className="block text-[10px] text-gray-500 capitalize">{e.role}</span>
+                    </span>
+                    {e.is_active && <Check size={14} className="text-emerald-400 shrink-0" />}
+                  </button>
+                  {envs.length > 1 && (
+                    <button onClick={() => removeEnv(e.company_id, e.name)} disabled={busy} title="Remover este ambiente" className="p-1 rounded hover:bg-red-500/20 text-gray-500 hover:text-red-300 cursor-pointer shrink-0">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
             <div className="border-t border-white/10 mt-1 pt-1">

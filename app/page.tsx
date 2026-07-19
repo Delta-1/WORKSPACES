@@ -25,6 +25,8 @@ import ClientsTab from "@/components/tabs/ClientsTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
 import AdminCompaniesTab from "@/components/tabs/AdminCompaniesTab";
+import PlansTab from "@/components/tabs/PlansTab";
+import { appEnabled, type FeatureId } from "@/lib/plan";
 import FinanceTab from "@/components/tabs/FinanceTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import LabsTab from "@/components/tabs/LabsTab";
@@ -57,6 +59,7 @@ const APPS: AppDef[] = [
   { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
   { id: "labs", label: "Labs", icon: FlaskConical, accent: "bg-indigo-900/60", roles: ["gestor", "gerente"] },
   { id: "log", label: "Log", icon: ScrollText, accent: "bg-slate-700/60", roles: ["gestor", "gerente"] },
+  { id: "planos", label: "Planos", icon: Wallet, accent: "bg-emerald-900/60", roles: ["gestor"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
 ];
 
@@ -288,8 +291,16 @@ export default function Home() {
     supabase.rpc("is_super_admin").then(({ data }) => setSuperAdmin(!!data));
   }, []);
 
+  // Plano da empresa: quais ferramentas estão ligadas (null = todas).
+  const [enabledFeatures, setEnabledFeatures] = useState<FeatureId[] | null>(null);
+  useEffect(() => {
+    if (!supabase || !profile?.company_id) return;
+    supabase.from("company_settings").select("enabled_features").eq("company_id", profile.company_id).maybeSingle()
+      .then(({ data }) => setEnabledFeatures((data?.enabled_features as FeatureId[]) ?? null));
+  }, [profile?.company_id]);
+
   const visibleApps: AppDef[] = [
-    ...APPS.filter((a) => a.roles.includes(role)),
+    ...APPS.filter((a) => a.roles.includes(role) && (a.id === "planos" || appEnabled(a.id, enabledFeatures))),
     ...(superAdmin ? [{ id: "empresas", label: "Empresas", icon: Building2, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
   ];
 
@@ -431,6 +442,7 @@ export default function Home() {
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "clientes_ia" && <ClientsIaTab profile={profile} />}
         {tab === "empresas" && superAdmin && <AdminCompaniesTab />}
+        {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
         {tab === "labs" && <LabsTab profile={profile} />}

@@ -115,6 +115,28 @@ lança uma despesa e pede ajuda pra IA — sem sair da tela.
 
 ---
 
+### 🏢 Multiempresa, Casa e Administrador Geral
+- **Troca de ambiente** (canto superior direito): a mesma pessoa pode estar em
+  várias empresas e na própria **Casa** (conta pessoal, cadastrada só com o nome).
+  Trocar não mistura nada — cada ambiente tem seus dados. Dá pra **remover** um
+  ambiente da lista.
+- **Administrador Geral** (o dono do software): aba **Empresas** com todas as
+  empresas que usam o Workspace, licença (ativar teste 7 dias / ativar / bloquear)
+  e as **chaves de IA/voz** de cada empresa (configura por ela). Só o dono publica
+  as atualizações do agente; as empresas só **baixam**.
+
+### 💳 Planos
+- Aba **Planos** (do dono da empresa): liga só as ferramentas que quer
+  (WhatsApp, Acesso Remoto, IA, Financeiro, Clientes, Automação), escolhe o
+  **limite de contatos do WhatsApp** e vê o **valor mensal ao vivo**. O app passa
+  a mostrar só o que foi ligado. (Cobrança automática via Mercado Pago entra por
+  último.)
+
+### 🎮 Modo Game (na conta Casa)
+- Jogar no computador de casa **pelo celular**: tela cheia, **controle estilo
+  PlayStation** (2 analógicos, D-pad, △○✕□, L1/R1), atalhos num menuzinho, e o
+  analógico vira **mouse** quando não está jogando. Ligado nas Configurações da Casa.
+
 ## 🧩 O que cada ferramenta resolve
 
 | Ferramenta | Pra que serve |
