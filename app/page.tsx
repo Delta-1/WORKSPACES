@@ -23,6 +23,7 @@ import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
+import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
 import FinanceTab from "@/components/tabs/FinanceTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import LabsTab from "@/components/tabs/LabsTab";
@@ -387,6 +388,8 @@ export default function Home() {
             <p className="text-xs text-gray-500">{company.description || "Workspace Multi-Empresa"}</p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        <EnvironmentSwitcher />
         <ProfileMenu
           name={displayName}
           role={ROLE_LABEL[role]}
@@ -399,6 +402,7 @@ export default function Home() {
             setProfile((p) => (p ? { ...p, full_name: patch.full_name ?? p.full_name, avatar_url: patch.avatar_url ?? p.avatar_url } : p))
           }
         />
+        </div>
       </header>
 
       <main className="flex-1 overflow-hidden p-3 sm:p-6 pb-24 sm:pb-28">
