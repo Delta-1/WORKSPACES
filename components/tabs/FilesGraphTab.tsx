@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
 import { logAction } from "@/lib/activity-log";
@@ -111,6 +111,20 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   // "Ver tudo aberto": mostra todas as pastas/arquivos de uma vez (padrão: recolhido).
   const [expandAll, setExpandAll] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  // Estilo do grafo (escolhido em Configurações → Aparência):
+  //  obsidian  → nuvem force-directed (padrão);
+  //  arvore    → árvore de habilidades (RPG), de cima pra baixo, posições fixas;
+  //  diretorio → lista de pastas indentada (explorador de arquivos).
+  const [graphStyle, setGraphStyle] = useState<"obsidian" | "arvore" | "diretorio">("obsidian");
+  const graphStyleRef = useRef(graphStyle);
+  useEffect(() => { graphStyleRef.current = graphStyle; }, [graphStyle]);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
+      const s = data?.graph_style;
+      if (s === "obsidian" || s === "arvore" || s === "diretorio") setGraphStyle(s);
+    });
+  }, []);
   // Canvas infinito estilo Miro: pan (arrastar fundo) + zoom (roda do mouse).
   const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
   const viewRef = useRef(view);
@@ -172,9 +186,10 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }, [expanded]);
   useEffect(() => {
     visibleIdsRef.current = visibleIds;
-    kick(0.4); // re-acomoda de leve ao expandir/colapsar (filhos já entram no vazio)
+    if (graphStyle === "arvore") layoutTree(); // posições fixas em árvore
+    else kick(0.4); // Obsidian: re-acomoda de leve (filhos entram no vazio)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIds]);
+  }, [visibleIds, graphStyle]);
 
   const childCount = useMemo(() => {
     const m = new Map<string, number>();
@@ -328,12 +343,58 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   const kick = useCallback(
     (energy = 1) => {
+      // Só o modo Obsidian tem física; nos outros as posições são calculadas.
+      if (graphStyleRef.current !== "obsidian") return;
       alphaRef.current = Math.max(alphaRef.current, energy);
       settledPersistRef.current = false;
       if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick);
     },
     [tick]
   );
+
+  // Layout ÁRVORE DE HABILIDADES: de cima pra baixo, cada nível numa linha, filhos
+  // espalhados embaixo do pai (folhas em sequência; pai centrado nos filhos).
+  const layoutTree = useCallback(() => {
+    const vis = visibleIdsRef.current;
+    const all = nodesRef.current;
+    const kidsOf = new Map<string | null, PositionedNode[]>();
+    for (const n of all) {
+      if (!vis.has(n.id)) continue;
+      const k = kidsOf.get(n.parent_id) ?? [];
+      k.push(n);
+      kidsOf.set(n.parent_id, k);
+    }
+    const sortByName = (a: PositionedNode, b: PositionedNode) =>
+      (a.type === b.type ? 0 : a.type === "folder" ? -1 : 1) || a.name.localeCompare(b.name);
+    const COL = 92, ROW = 120;
+    const pos = new Map<string, { x: number; y: number }>();
+    let leaf = 0;
+    const walk = (node: PositionedNode, depth: number): number => {
+      const kids = (kidsOf.get(node.id) ?? []).slice().sort(sortByName);
+      let x: number;
+      if (kids.length === 0) { x = leaf * COL; leaf += 1; }
+      else {
+        const xs = kids.map((c) => walk(c, depth + 1));
+        x = (xs[0] + xs[xs.length - 1]) / 2;
+      }
+      pos.set(node.id, { x, y: depth * ROW });
+      return x;
+    };
+    const roots = (all.filter((n) => vis.has(n.id) && (n.parent_id === null || !vis.has(n.parent_id))))
+      .slice().sort(sortByName);
+    for (const r of roots) { walk(r, 0); leaf += 1; }
+    // Centraliza no meio do mundo.
+    const xsAll = [...pos.values()].map((p) => p.x);
+    const midX = xsAll.length ? (Math.min(...xsAll) + Math.max(...xsAll)) / 2 : 0;
+    const next = all.map((n) => {
+      const p = pos.get(n.id);
+      if (!p) return n;
+      velRef.current.set(n.id, { vx: 0, vy: 0 });
+      return { ...n, pos_x: CENTER_X + (p.x - midX), pos_y: 80 + p.y };
+    });
+    nodesRef.current = next;
+    setNodes(next);
+  }, []);
 
   async function load() {
     if (!supabase) {
@@ -686,7 +747,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   function toggleExpand(id: string) {
     const isOpen = expandedRef.current.has(id);
-    if (!isOpen) seedRing(id); // abre → distribui os filhos num anel estável
+    if (!isOpen && graphStyleRef.current === "obsidian") seedRing(id); // abre → distribui os filhos no vazio
     setExpanded((prev) => {
       const s = new Set(prev);
       if (s.has(id)) s.delete(id);
@@ -835,6 +896,41 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       </div>
 
       <div className="flex-1 liquid-glass rounded-2xl overflow-hidden relative">
+        {/* Modo DIRETÓRIO: lista indentada (explorador de arquivos), por cima do canvas. */}
+        {graphStyle === "diretorio" && (
+          <div className="absolute inset-0 z-20 bg-[#0b0f16]/95 overflow-y-auto custom-scroll p-3">
+            {(() => {
+              const byParentLocal = new Map<string | null, PositionedNode[]>();
+              for (const n of nodes) { const l = byParentLocal.get(n.parent_id) ?? []; l.push(n); byParentLocal.set(n.parent_id, l); }
+              const sortFn = (a: PositionedNode, b: PositionedNode) => (a.type === b.type ? 0 : a.type === "folder" ? -1 : 1) || a.name.localeCompare(b.name);
+              const rows: React.ReactNode[] = [];
+              const walk = (parentId: string | null, depth: number) => {
+                for (const n of (byParentLocal.get(parentId) ?? []).slice().sort(sortFn)) {
+                  const isFolder = n.type === "folder";
+                  const isOpen = expanded.has(n.id) || expandAll;
+                  const kids = childCount.get(n.id) ?? 0;
+                  const dim = matches && !matches.has(n.id);
+                  rows.push(
+                    <button
+                      key={n.id}
+                      onClick={() => { setSelected(n.id); if (isFolder) toggleExpand(n.id); else openFile(n); }}
+                      style={{ paddingLeft: 8 + depth * 18, opacity: dim ? 0.4 : 1 }}
+                      className={`w-full flex items-center gap-2 pr-2 py-1.5 rounded-lg text-left cursor-pointer hover:bg-white/5 ${selected === n.id ? "bg-emerald-950/40" : ""}`}
+                    >
+                      {isFolder ? (isOpen ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />) : <span className="w-3.5 shrink-0" />}
+                      {isFolder ? <Folder size={15} className="text-emerald-400 shrink-0" /> : <FileIcon size={15} className="text-gray-400 shrink-0" />}
+                      <span className="text-sm truncate flex-1">{n.name}</span>
+                      {isFolder && kids > 0 && <span className="text-[10px] text-gray-500 shrink-0">{kids}</span>}
+                    </button>
+                  );
+                  if (isFolder && isOpen) walk(n.id, depth + 1);
+                }
+              };
+              walk(null, 0);
+              return rows.length ? <div className="space-y-0.5">{rows}</div> : <p className="text-sm text-gray-500 p-4 text-center">Sem arquivos ainda.</p>;
+            })()}
+          </div>
+        )}
         <div
           ref={containerRef}
           onPointerDown={onBackgroundPointerDown}

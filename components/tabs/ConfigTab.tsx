@@ -310,6 +310,7 @@ export default function ConfigTab({
                 </div>
                 <p className="text-[10px] text-gray-500 mt-1">Muda toda a cara do site: fundo, superfícies e clima. A cor tema continua valendo por cima.</p>
               </div>
+              <GraphStyleField />
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cor tema do site</label>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -608,6 +609,55 @@ function ReleasePublisher() {
       </div>
       <p className="text-[10px] text-gray-500">Você <b>não precisa</b> definir número de versão. Cada "Publicar" marca a data/hora e as máquinas se atualizam a partir dela.</p>
       {msg && <p className={`text-[11px] ${msg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{msg}</p>}
+    </div>
+  );
+}
+
+// Estilo do grafo de Arquivos: Obsidian (nuvem), Árvore (RPG, de cima pra baixo)
+// ou Diretório (lista de pastas). Fica guardado em company_settings.graph_style.
+const GRAPH_STYLES: { id: string; name: string; desc: string; emoji: string }[] = [
+  { id: "obsidian", name: "Obsidian", desc: "Nuvem de arquivos conectada", emoji: "🕸️" },
+  { id: "arvore", name: "Árvore", desc: "Árvore de habilidades (RPG)", emoji: "🌳" },
+  { id: "diretorio", name: "Diretório", desc: "Lista de pastas indentada", emoji: "🗂️" },
+];
+function GraphStyleField() {
+  const [style, setStyle] = useState<string>("obsidian");
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
+      if (data?.graph_style) setStyle(data.graph_style);
+    });
+  }, []);
+
+  async function pick(id: string) {
+    setStyle(id);
+    if (!supabase) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    let cid: string | null = null;
+    if (user) { const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle(); cid = p?.company_id ?? null; }
+    let q = supabase.from("company_settings").update({ graph_style: id });
+    q = cid ? q.eq("company_id", cid) : q.not("id", "is", null);
+    await q;
+  }
+
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Estilo do grafo de arquivos</label>
+      <div className="grid grid-cols-3 gap-2">
+        {GRAPH_STYLES.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => pick(s.id)}
+            className={`rounded-xl p-2.5 text-left cursor-pointer border transition-colors ${style === s.id ? "border-emerald-400 ring-1 ring-emerald-400/40" : "border-white/10 hover:border-white/25"}`}
+          >
+            <span className="text-xl block mb-1">{s.emoji}</span>
+            <span className="text-xs font-semibold block">{s.name}</span>
+            <span className="text-[10px] text-gray-500">{s.desc}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-[10px] text-gray-500 mt-1">Muda como a aba <b>Arquivos</b> mostra as pastas. Abra a aba de novo para ver o novo estilo.</p>
     </div>
   );
 }
