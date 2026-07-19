@@ -151,6 +151,21 @@ lança uma despesa e pede ajuda pra IA — sem sair da tela.
 
 ---
 
+## ⬇️ Baixar o agente (pra testar / instalar)
+
+Os instaladores ficam na aba **[Releases](https://github.com/Delta-1/WORKSPACES/releases/latest)**
+do repositório no GitHub (a cada build automático sai uma versão nova, com os
+arquivos anexados):
+
+- **Windows:** `WorkspaceAcessoRemoto-Setup.exe` — instala e atualiza sozinho.
+- **Linux:** `*.AppImage`.
+
+Para gerar uma versão nova: **Actions → "Build Remote Agent (.exe)" → Run
+workflow**. Depois copie o link do arquivo em Releases e cole no site em
+**Configurações → Instalação → Publicar atualização**.
+
+---
+
 ## ⚙️ Onde cada coisa "mora" (pra quem publica)
 
 - **Site (app web):** publica sozinho na **Vercel** a cada atualização.

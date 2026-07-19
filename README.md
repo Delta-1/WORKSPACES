@@ -11,6 +11,20 @@ multiempresa e marca branca: cada empresa tem a própria logo, dados e agentes.
 > do projeto, todas as ferramentas, o que cada uma resolve e um tutorial rápido,
 > em linguagem simples.
 
+## ⬇️ Downloads (testar o agente de Acesso Remoto)
+
+Os instaladores do **agente de Acesso Remoto** ficam na aba **[Releases](https://github.com/Delta-1/WORKSPACES/releases/latest)**
+do repositório (canto direito da página do projeto no GitHub). A cada build
+automático, uma nova release é publicada com os arquivos anexados:
+
+- **Windows:** `WorkspaceAcessoRemoto-Setup.exe` — instala e se atualiza sozinho.
+- **Linux:** `*.AppImage`.
+
+> Como publicar uma nova versão: em **Actions → "Build Remote Agent (.exe)" → Run
+> workflow**. Quando terminar, os arquivos aparecem em Releases; copie o link do
+> `.exe`/`.AppImage` e cole no site em **Configurações → Instalação → Publicar
+> atualização** para todas as máquinas se atualizarem.
+
 ---
 
 ## Detalhes técnicos

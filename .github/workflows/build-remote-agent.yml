@@ -64,3 +64,35 @@ jobs:
           name: WorkspaceAcessoRemoto-linux
           path: remote-agent/dist/*.AppImage
           if-no-files-found: error
+
+  # Publica uma RELEASE do GitHub com os instaladores anexados — assim aparece o
+  # "baixe o executável aqui" na aba Releases, e o link /releases/latest sempre
+  # aponta para a versão mais nova (dá pra colar direto no publicador do site).
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Baixar os artefatos gerados
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publicar Release com os instaladores
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agente-${{ github.run_number }}
+          name: Acesso Remoto — build ${{ github.run_number }}
+          body: |
+            Instaladores do agente de Acesso Remoto (gerados automaticamente).
+
+            - **Windows:** `WorkspaceAcessoRemoto-Setup.exe` (instala e atualiza sozinho)
+            - **Linux:** `*.AppImage`
+
+            Para publicar a atualização: cole o link do `.exe`/`.AppImage` desta release
+            no site em **Configurações → Instalação → Publicar atualização**.
+          files: |
+            dist/**/WorkspaceAcessoRemoto-Setup.exe
+            dist/**/*.AppImage
+          fail_on_unmatched_files: false
