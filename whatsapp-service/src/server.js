@@ -1964,9 +1964,29 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     const cid = number?.company_id ?? null;
     const contact = await upsertContact(phone, null, cid, jid);
     if (!contact) return;
-    const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
+    // IMPORTANTE: só REGISTRA a mensagem na conversa existente — NÃO reabre uma
+    // conversa fechada. Reabrir aqui causava um loop: o sweep fechava e mandava
+    // "como não tivemos retorno", o eco dessa mensagem reabria a conversa, o sweep
+    // fechava de novo e mandava de novo… (dezenas de mensagens repetidas).
+    const { data: convo } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("contact_id", contact.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let conversationId = convo?.id ?? null;
+    if (!conversationId) {
+      const { data: created } = await supabase
+        .from("conversations")
+        .insert({ contact_id: contact.id, status: "atendendo", number_id: numberId, sector_id: number?.sector_id ?? null, company_id: cid })
+        .select("id")
+        .single();
+      conversationId = created?.id ?? null;
+    }
+    if (!conversationId) return;
     // waId = key.id → dedup contra o envio feito pelo próprio site.
-    await logMessage(conversation.id, "out", text, null, media, cid, msg.key.id);
+    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id);
   } catch (err) {
     console.error("logOutgoingEcho failed:", err);
   }
