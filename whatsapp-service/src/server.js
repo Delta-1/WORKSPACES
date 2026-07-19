@@ -695,7 +695,7 @@ function modeGuidance(mode) {
   }
 }
 
-async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null) {
+async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null) {
   const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
@@ -711,20 +711,28 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
   const hist = Array.isArray(history) ? history.filter((h) => h && h.text) : [];
 
   try {
+    // Imagem recebida do cliente → visão (todos os bots "enxergam" a foto).
+    const imgB64 = image?.buffer ? image.buffer.toString("base64") : null;
+    const imgMime = image?.mime || "image/jpeg";
     if (provider === "anthropic") {
       const client = new Anthropic({ apiKey: key });
+      const userContent = [];
+      if (imgB64) userContent.push({ type: "image", source: { type: "base64", media_type: imgMime, data: imgB64 } });
+      userContent.push({ type: "text", text: customerText || "(o cliente enviou esta imagem)" });
       const messages = [
         ...hist.map((h) => ({ role: h.role, content: [{ type: "text", text: h.text }] })),
-        { role: "user", content: [{ type: "text", text: customerText }] },
+        { role: "user", content: userContent },
       ];
       const res = await client.messages.create({ model: "claude-sonnet-5", max_tokens: 512, system, messages });
       const block = res.content.find((b) => b.type === "text");
       return block && "text" in block ? block.text : null;
     }
     if (provider === "gemini") {
+      const userParts = [{ text: customerText || "(o cliente enviou esta imagem)" }];
+      if (imgB64) userParts.push({ inline_data: { mime_type: imgMime, data: imgB64 } });
       const contents = [
         ...hist.map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] })),
-        { role: "user", parts: [{ text: customerText }] },
+        { role: "user", parts: userParts },
       ];
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
@@ -738,6 +746,12 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
       return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
     }
     if (provider === "openai") {
+      const userContent = imgB64
+        ? [
+            { type: "text", text: customerText || "(o cliente enviou esta imagem)" },
+            { type: "image_url", image_url: { url: `data:${imgMime};base64,${imgB64}` } },
+          ]
+        : customerText;
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -746,7 +760,7 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
           messages: [
             { role: "system", content: system },
             ...hist.map((h) => ({ role: h.role, content: h.text })),
-            { role: "user", content: customerText },
+            { role: "user", content: userContent },
           ],
         }),
       });
@@ -1610,6 +1624,7 @@ async function startSession(numberId) {
 
         let media = null;
         let audioBuffer = null;
+        let imageBuffer = null;
         if (mediaKind) {
           try {
             const buffer = await downloadMediaMessage(
@@ -1619,6 +1634,7 @@ async function startSession(numberId) {
               { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
             );
             if (mediaKind === "audio") audioBuffer = buffer; // guarda p/ transcrever
+            if (mediaKind === "image") imageBuffer = buffer; // guarda p/ visão do bot
             const url = await uploadMedia(buffer, node?.mimetype || null, "in");
             if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
           } catch (err) {
@@ -1759,8 +1775,10 @@ async function startSession(numberId) {
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];
-            } else if (customerText) {
-              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid);
+            } else if (customerText || imageBuffer) {
+              // Todos os bots "enxergam" a imagem recebida (visão), mesmo sem texto.
+              const agentImage = imageBuffer ? { buffer: imageBuffer, mime: node?.mimetype || "image/jpeg" } : null;
+              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage);
             }
             // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
             for (const s of copilotSends) {
