@@ -671,7 +671,9 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   }
 
   return (
-    <div className="h-full flex overflow-hidden rounded-2xl liquid-glass">
+    // No CELULAR, com uma conversa aberta, o chat vira TELA CHEIA por cima do dock
+    // de apps (que ficava na frente da barra de escrever). No desktop, nada muda.
+    <div className={`h-full flex overflow-hidden rounded-2xl liquid-glass ${hasSel ? "max-md:fixed max-md:inset-0 max-md:z-[60] max-md:rounded-none max-md:h-[100dvh]" : ""}`}>
       {/* Rail de servidores (grupos ficam separados aqui) */}
       <div className={`w-16 shrink-0 bg-black/30 flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
