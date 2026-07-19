@@ -5,6 +5,7 @@ import { Bot, Building2, CalendarDays, ClipboardList, FlaskConical, LayoutGrid, 
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
+import BlockedScreen from "@/components/BlockedScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
 import AppDrawer from "@/components/AppDrawer";
@@ -366,6 +367,21 @@ export default function Home() {
   // Dono de empresa recém-criada ainda sem plano escolhido → tela de planos
   if (profile && myCompany && myCompany.owner_id === profile.id && myCompany.subscription_status === "trial") {
     return <PlansScreen company={myCompany} onDone={refreshIdentity} onLogout={handleLogout} />;
+  }
+
+  // Bloqueio automático por falta de pagamento: a empresa foi marcada como
+  // "blocked"/"past_due" (aviso do Mercado Pago) ou a licença venceu. O
+  // Administrador Geral, as contas Casa e o HUB nunca são bloqueados. O dono
+  // vê a tela com opção de reativar; o funcionário vê só o aviso.
+  if (profile && myCompany && !superAdmin) {
+    const isHome = myCompany.company_type === "Casa" || myCompany.name === "HUB";
+    const st = myCompany.subscription_status;
+    const licMs = myCompany.license_until ? new Date(myCompany.license_until).getTime() : null;
+    const expired = licMs !== null && licMs < Date.now();
+    const blocked = !isHome && st !== "trial" && (st === "blocked" || st === "past_due" || expired);
+    if (blocked) {
+      return <BlockedScreen company={myCompany} isOwner={myCompany.owner_id === profile.id} onLogout={handleLogout} />;
+    }
   }
 
   if (showSplash) {

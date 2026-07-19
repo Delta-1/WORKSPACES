@@ -134,12 +134,20 @@ lança uma despesa e pede ajuda pra IA — sem sair da tela.
   e as **chaves de IA/voz** de cada empresa (configura por ela). Só o dono publica
   as atualizações do agente; as empresas só **baixam**.
 
-### 💳 Planos
+### 💳 Planos + cobrança automática (Mercado Pago)
 - Aba **Planos** (do dono da empresa): liga só as ferramentas que quer
   (WhatsApp, Acesso Remoto, IA, Financeiro, Clientes, Automação), escolhe o
   **limite de contatos do WhatsApp** e vê o **valor mensal ao vivo**. O app passa
-  a mostrar só o que foi ligado. (Cobrança automática via Mercado Pago entra por
-  último.)
+  a mostrar só o que foi ligado.
+- **Cobrança recorrente via Mercado Pago:** ao assinar, a empresa é levada ao
+  checkout do Mercado Pago e passa a ser cobrada **todo mês automaticamente**.
+- **Bloqueio automático por falta de pagamento:** o Mercado Pago avisa a
+  plataforma quando o pagamento falha, é pausado ou cancelado — e o acesso é
+  **suspenso na hora** (o dono vê uma tela para **reativar** e regularizar; o
+  funcionário vê só o aviso). Quando o pagamento volta, o acesso é liberado
+  sozinho. O Administrador Geral e as contas **Casa** nunca são bloqueados.
+- Para ativar a cobrança, basta configurar a variável `MERCADOPAGO_ACCESS_TOKEN`
+  no servidor (enquanto ela não existe, o acesso continua liberado para testes).
 
 ### 🎮 Modo Game (na conta Casa)
 - Jogar no computador de casa **pelo celular**: tela cheia, **controle estilo

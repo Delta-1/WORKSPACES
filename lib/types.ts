@@ -40,6 +40,7 @@ export type Company = {
   plan: string;
   ai_addon: boolean;
   subscription_status: string;
+  license_until: string | null;
   owner_id: string | null;
   created_at: string;
 };
