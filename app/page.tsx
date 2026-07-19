@@ -24,6 +24,7 @@ import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
+import AdminCompaniesTab from "@/components/tabs/AdminCompaniesTab";
 import FinanceTab from "@/components/tabs/FinanceTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import LabsTab from "@/components/tabs/LabsTab";
@@ -280,7 +281,17 @@ export default function Home() {
     setCompany((prev) => ({ ...next, themeColor: update.themeColor ?? next.themeColor, iconColor: update.iconColor ?? next.iconColor, logoSize: update.logoSize ?? next.logoSize, themeStyle: update.themeStyle ?? next.themeStyle }));
   }
 
-  const visibleApps = APPS.filter((a) => a.roles.includes(role));
+  // Administrador Geral (super admin) — só o dono do software. Ganha a aba "Empresas".
+  const [superAdmin, setSuperAdmin] = useState(false);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.rpc("is_super_admin").then(({ data }) => setSuperAdmin(!!data));
+  }, []);
+
+  const visibleApps: AppDef[] = [
+    ...APPS.filter((a) => a.roles.includes(role)),
+    ...(superAdmin ? [{ id: "empresas", label: "Empresas", icon: Building2, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
+  ];
 
   // Barra de acesso rápido personalizável (salva por navegador).
   useEffect(() => {
@@ -419,6 +430,7 @@ export default function Home() {
         {tab === "financeiro" && <FinanceTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "clientes_ia" && <ClientsIaTab profile={profile} />}
+        {tab === "empresas" && superAdmin && <AdminCompaniesTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
         {tab === "labs" && <LabsTab profile={profile} />}

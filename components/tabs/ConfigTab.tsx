@@ -412,6 +412,7 @@ export default function ConfigTab({
                 <p className="text-[10px] text-gray-500 mt-1">Link para a 1ª instalação (download manual). Para a <b>atualização automática</b>, use o publicador abaixo.</p>
               </div>
 
+              <InstallDownloads />
               <ReleasePublisher />
               <WorkspaceIaSection />
             </div>
@@ -507,7 +508,40 @@ function ClientSubfoldersField() {
 // Publicador de versões do app de Acesso Remoto: o gestor sobe o .exe/.AppImage,
 // o site gera o link direto (Supabase Storage) e publica em app_releases — aí
 // todas as máquinas se atualizam sozinhas. Sem link manual, sem SQL.
+// Botões de DOWNLOAD do app (Windows/Linux) — para TODOS. Puxa os links da versão
+// publicada (só o Administrador Geral publica). É só clicar no ícone e baixar.
+function InstallDownloads() {
+  const [rel, setRel] = useState<{ url_win: string | null; url_linux: string | null; version: string | null } | null>(null);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("app_releases").select("url_win,url_linux,version").limit(1).maybeSingle().then(({ data }) => {
+      if (data) setRel(data as { url_win: string | null; url_linux: string | null; version: string | null });
+    });
+  }, []);
+  if (!rel || (!rel.url_win && !rel.url_linux)) return null;
+  return (
+    <div className="pt-3 border-t border-white/10 space-y-2">
+      <p className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Baixar o acesso remoto</p>
+      <p className="text-[11px] text-gray-400">Baixe o instalador e rode na máquina. Depois de instalado, ele se atualiza sozinho.{rel.version ? <> Versão atual: <b className="text-white">{rel.version}</b>.</> : null}</p>
+      <div className="flex items-center gap-2">
+        {rel.url_win && (
+          <a href={rel.url_win} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-white/10 hover:bg-white/20 px-4 py-2.5 rounded-lg cursor-pointer">
+            <MonitorDown size={16} className="text-sky-400" /> Windows (.exe)
+          </a>
+        )}
+        {rel.url_linux && (
+          <a href={rel.url_linux} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-white/10 hover:bg-white/20 px-4 py-2.5 rounded-lg cursor-pointer">
+            <MonitorDown size={16} className="text-amber-400" /> Linux (.AppImage)
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReleasePublisher() {
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => { if (supabase) supabase.rpc("is_super_admin").then(({ data }) => setIsAdmin(!!data)); }, []);
   const [version, setVersion] = useState("");
   const [current, setCurrent] = useState<{ version: string; url_win: string | null; url_linux: string | null } | null>(null);
   const [winUrl, setWinUrl] = useState<string | null>(null);
@@ -559,9 +593,12 @@ function ReleasePublisher() {
     setMsg("✓ Atualização publicada! As máquinas vão se atualizar sozinhas.");
   }
 
+  // Só o Administrador Geral publica atualização. Os demais só baixam (acima).
+  if (!isAdmin) return null;
+
   return (
     <div className="pt-3 border-t border-white/10 space-y-3">
-      <p className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Publicar atualização automática</p>
+      <p className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Publicar atualização automática (Administrador Geral)</p>
       <p className="text-[11px] text-gray-400">
         Suba aqui o instalador gerado no seu build (GitHub Actions). O site guarda e gera o link direto; ao publicar, todas as máquinas atualizam sozinhas.
         {current && <> Versão publicada hoje: <b className="text-white">{current.version}</b>.</>}
