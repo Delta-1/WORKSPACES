@@ -290,7 +290,8 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
     if (existing.status === "fechado" || existing.status === "cancelado") {
       const { data: reopened } = await supabase
         .from("conversations")
-        .update({ status: "espera", closed_at: null, number_id: numberId ?? existing.number_id })
+        // Novo chamado: o bot volta a responder (tira o silêncio e o atendente antigo).
+        .update({ status: "espera", closed_at: null, bot_paused: false, assignee_id: null, number_id: numberId ?? existing.number_id })
         .eq("id", existing.id)
         .select("*")
         .single();
@@ -836,13 +837,14 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
       else if (a === "send_website") await send(info?.website ? `🌐 ${info.website}` : "Ainda não temos site cadastrado.");
       else if (a === "handoff") {
         await send("Um momento, vou te transferir para um atendente. 🙋");
-        await supabase.from("conversations").update({ status: "atendendo", flow_node: null }).eq("id", conversation.id);
+        // Espera humana + bot em silêncio (evita loop por cima do atendente).
+        await supabase.from("conversations").update({ status: "espera", bot_paused: true, flow_node: null }).eq("id", conversation.id);
         return true;
       } else if (a === "close") {
         let msg = "Atendimento encerrado. Obrigado pelo contato! 😊";
         if (info?.review_link) msg += `\n\nAvalie nosso atendimento: ${info.review_link}`;
         await send(msg);
-        await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null }).eq("id", conversation.id);
+        await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null, bot_paused: true }).eq("id", conversation.id);
         void generateContactReport({ ...conversation, status: "fechado" });
         return true;
       }
@@ -1657,7 +1659,15 @@ async function startSession(numberId) {
           const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
           const useTools = isCopilot || agentHasCaps;
           // Modo "label" só etiqueta (não responde); demais modos respondem.
-          const botOn = number?.auto_reply && chatbot?.enabled && number?.bot_mode !== "label";
+          // O bot fica em SILÊNCIO quando um humano assumiu (assignee_id) ou quando
+          // o atendimento já foi passado/encerrado por ele (bot_paused) — assim ele
+          // não fica naquele loop chato de responder por cima do atendente.
+          const botOn =
+            number?.auto_reply &&
+            chatbot?.enabled &&
+            number?.bot_mode !== "label" &&
+            !conversation.bot_paused &&
+            !conversation.assignee_id;
           if (isCopilot || botOn) {
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
@@ -1667,22 +1677,23 @@ async function startSession(numberId) {
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
             }
-            // Preferência de voz do COPILOTO: responde em áudio por padrão; se a
-            // pessoa pedir texto ("não posso ouvir áudio", "responde por texto"),
-            // troca para texto até ela pedir áudio de novo.
-            let copilotVoice = conversation.copilot_voice !== false;
-            if (isCopilot && customerText) {
+            // Preferência de voz — para TODOS os agentes: a prioridade é responder
+            // em ÁUDIO. Se a pessoa pedir texto ("não posso ouvir áudio", "responde
+            // por texto"), troca para texto até ela pedir áudio de novo. A escolha
+            // fica guardada por conversa (coluna copilot_voice, reaproveitada).
+            let voicePref = conversation.copilot_voice !== false; // default: áudio
+            if (customerText) {
               if (/(responde|manda|escreve|prefiro|pode ser).{0,20}(por )?texto|n[aã]o posso (ouvir|escutar)|sem [aá]udio|por escrito/i.test(customerText)) {
-                copilotVoice = false;
+                voicePref = false;
                 await supabase.from("conversations").update({ copilot_voice: false }).eq("id", conversation.id);
               } else if (/(responde|manda|prefiro|pode ser|volta).{0,20}(por )?([aá]udio|voz)|fala comigo|me manda [aá]udio/i.test(customerText)) {
-                copilotVoice = true;
+                voicePref = true;
                 await supabase.from("conversations").update({ copilot_voice: true }).eq("id", conversation.id);
               }
             }
-            // Quando responder por voz: copiloto segue a preferência; bot normal só
-            // responde em áudio se a mensagem recebida foi áudio.
-            const wantVoice = (isCopilot ? copilotVoice : wasAudio) && voiceReplyOn && !!botElevenKey;
+            // Responde por voz sempre que a preferência estiver em áudio e houver
+            // chave de TTS; se não puder gerar áudio, cai para texto automaticamente.
+            const wantVoice = voicePref && voiceReplyOn && !!botElevenKey;
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
             if (!isCopilot && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
@@ -1691,7 +1702,7 @@ async function startSession(numberId) {
               if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
               const g = await sock.sendMessage(jid, { text: msg });
               await logMessage(conversation.id, "out", msg, null, null, cid, g?.key?.id ?? null);
-              await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", conversation.id);
+              await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true }).eq("id", conversation.id);
               void generateContactReport({ ...conversation, status: "fechado" });
               return;
             }
@@ -1800,7 +1811,7 @@ async function startSession(numberId) {
               // Responde por áudio conforme a preferência (copiloto) ou se o cliente falou por áudio.
               let sentAsAudio = false;
               if (wantVoice) {
-                const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, chatbot?.elevenlabs_voice_id);
+                const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, agentForReply?.elevenlabs_voice_id);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
                 if (ogg) {
@@ -1821,6 +1832,34 @@ async function startSession(numberId) {
               if (!sentAsAudio) {
                 const st = await sock.sendMessage(jid, { text: reply });
                 await logMessage(conversation.id, "out", reply, null, null, cid, st?.key?.id ?? null);
+              }
+            }
+            // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
+            // humano, a gente conclui isso de verdade — senão ele fica repetindo
+            // "vou encerrar" pra sempre. (Não vale para o copiloto interno.)
+            if (!isCopilot && reply) {
+              const intent = detectBotClosureIntent(reply);
+              if (intent === "close") {
+                const info2 = await getCompanyInfo(cid);
+                if (info2?.review_link && !/avali/i.test(reply)) {
+                  const rv = `Se puder, avalie nosso atendimento: ${info2.review_link}`;
+                  const g = await sock.sendMessage(jid, { text: rv }).catch(() => null);
+                  await logMessage(conversation.id, "out", rv, null, null, cid, g?.key?.id ?? null);
+                }
+                await supabase
+                  .from("conversations")
+                  .update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null, bot_paused: true })
+                  .eq("id", conversation.id);
+                void generateContactReport({ ...conversation, status: "fechado" });
+              } else if (intent === "handoff") {
+                // Passa para a fila humana: guarda um resumo na nota do contato
+                // (campo problem) e coloca em ESPERA (aguardando atendimento). O bot
+                // some (bot_paused) para o atendente assumir sem interferência.
+                const note = conversation.problem || (customerText ? customerText.slice(0, 400) : null);
+                await supabase
+                  .from("conversations")
+                  .update({ status: "espera", bot_paused: true, flow_node: null, ...(note ? { problem: note } : {}) })
+                  .eq("id", conversation.id);
               }
             }
             try {
@@ -2095,6 +2134,136 @@ async function watchdog() {
 // Gera um relatório do atendimento (resumo + nota + sentimento) e salva no log
 // do contato. Funciona tanto para atendimento por bot quanto MANUAL — a IA lê a
 // conversa e avalia como foi. Evita duplicar (um relatório por conversa).
+// Detecta, pela PRÓPRIA resposta do bot, que ele decidiu ENCERRAR o atendimento
+// ou PASSAR PARA UM HUMANO. Assim a gente fecha/transfere de verdade e não fica
+// no loop chato de "vou encerrar" sem nunca encerrar. Só sinais fortes contam.
+function detectBotClosureIntent(reply) {
+  if (!reply) return null;
+  const t = String(reply).toLowerCase();
+  // 1) Passar para atendente humano / suporte.
+  if (
+    /(vou|vamos|posso|estou|deixa eu|j[aá] vou)\s+(te\s+)?(passar|encaminhar|transferir|repassar|direcionar)\b[\s\S]{0,40}(atendente|humano|suporte|equipe|setor|respons[aá]vel|especialista|t[eé]cnic)/i.test(t) ||
+    /um[a]? (atendente|t[eé]cnico|respons[aá]vel|pessoa da equipe)[\s\S]{0,30}(vai|ir[aá]|j[aá])[\s\S]{0,20}(te )?(ajud|atend|responder|falar|assumir|continuar)/i.test(t) ||
+    /(encaminhando|transferindo|passando)[\s\S]{0,20}(para|pro|pra)[\s\S]{0,20}(o |a )?(suporte|atendimento|equipe|setor|atendente)/i.test(t)
+  ) {
+    return "handoff";
+  }
+  // 2) Encerrar / finalizar o atendimento.
+  if (
+    /(vou|estou|vamos|pode(mos)?|deixa eu|j[aá] vou)\s+(ent[ãa]o\s+)?(encerr|finaliz)/i.test(t) ||
+    /atendimento (ser[aá] |foi |vai ser )?(encerrad|finalizad)/i.test(t) ||
+    /(encerrando|finalizando)\s+(o|nosso|por|aqui|ent[ãa]o)/i.test(t) ||
+    /estou (te )?(encerrando|finalizando)/i.test(t)
+  ) {
+    return "close";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// MEMÓRIA EVOLUTIVA DOS AGENTES ("cérebro" que aprende sozinho)
+// ---------------------------------------------------------------------------
+// Todo agente tem uma pasta de memória no grafo (o "rosto"/cérebro dele). Aqui
+// garantimos a pasta para QUALQUER agente e, ao fim de um atendimento, destilamos
+// aprendizados duradouros — principalmente os VÍCIOS DE LINGUAGEM e o jeito de
+// falar do cliente/empresa — num .md que evolui com o tempo (a pasta do grafo é a
+// mesma pasta do servidor: um só registro em `files`).
+const MEMORY_FILE = "memoria_evolutiva.md";
+
+async function ensureBrainFolder(chatbot) {
+  if (!supabase || !chatbot?.id) return null;
+  if (chatbot.folder_id) return chatbot.folder_id;
+  const { data: folder } = await supabase
+    .from("files")
+    .insert({ name: `Agente: ${chatbot.name || "sem nome"}`, type: "folder", parent_id: null, company_id: chatbot.company_id ?? null })
+    .select("id")
+    .single();
+  const fid = folder?.id ?? null;
+  if (fid) {
+    await supabase.from("chatbots").update({ folder_id: fid }).eq("id", chatbot.id);
+    chatbot.folder_id = fid;
+  }
+  return fid;
+}
+
+// Garante pasta de memória para TODOS os agentes já existentes (roda no start).
+async function backfillBrainFolders() {
+  if (!supabase) return;
+  try {
+    const { data: agents } = await supabase.from("chatbots").select("id,name,company_id,folder_id").is("folder_id", null);
+    for (const a of agents || []) await ensureBrainFolder(a);
+    if (agents && agents.length) console.log(`brain folders backfilled: ${agents.length}`);
+  } catch (e) {
+    console.error("backfillBrainFolders failed:", e?.message || e);
+  }
+}
+
+async function evolveAgentMemory(chatbot, transcript, companyId) {
+  if (!supabase || !chatbot?.id || !transcript) return;
+  const provider = chatbot.provider || "anthropic";
+  const agentKey = chatbot.api_key || (await resolveAgentKey(companyId, provider));
+  // A destilação roda em Anthropic (estável aqui); usa a chave do agente se for
+  // anthropic, senão a chave comum do ambiente. Sem chave, não evolui.
+  const anthKey = fallbackAnthropicKey || (provider === "anthropic" ? agentKey : null);
+  if (!anthKey) return;
+  const folderId = await ensureBrainFolder(chatbot);
+  if (!folderId) return;
+  try {
+    // Lê a memória atual (se houver) para EVOLUIR em cima, não recomeçar.
+    const { data: existing } = await supabase
+      .from("files")
+      .select("id,text_content")
+      .eq("parent_id", folderId)
+      .eq("name", MEMORY_FILE)
+      .maybeSingle();
+    const current = existing?.text_content || "";
+    const client = new Anthropic({ apiKey: anthKey });
+    const res = await client.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 900,
+      system:
+        "Você é a MEMÓRIA EVOLUTIVA de um agente de atendimento. Recebe (1) a memória atual em Markdown e (2) a transcrição de um atendimento recém-encerrado. " +
+        "Devolva a memória ATUALIZADA em Markdown, curta e útil, MESCLANDO o que já existe com novos aprendizados — não repita, não apague o que ainda vale. " +
+        "Foque em: VÍCIOS DE LINGUAGEM e jeito de falar do cliente/empresa (gírias, expressões, tom, saudações, como chamam produtos/sistemas), preferências e fatos recorrentes, e o que funcionou ou irritou. " +
+        "Organize em seções (## Vícios de linguagem, ## Preferências, ## Fatos recorrentes, ## Aprendizados). No máximo ~1200 palavras. Responda SOMENTE com o Markdown, sem comentários.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: `MEMÓRIA ATUAL:\n${current || "(vazia)"}\n\n---\nATENDIMENTO:\n${String(transcript).slice(0, 6000)}` }] },
+      ],
+    });
+    const block = res.content.find((b) => b.type === "text");
+    const md = (block && "text" in block ? block.text : "").replace(/```(markdown)?/gi, "").trim();
+    if (!md) return;
+    const capped = md.slice(0, 60000);
+    if (existing?.id) {
+      await supabase.from("files").update({ text_content: capped }).eq("id", existing.id);
+    } else {
+      await supabase.from("files").insert({
+        name: MEMORY_FILE,
+        type: "file",
+        parent_id: folderId,
+        company_id: companyId ?? null,
+        text_content: capped,
+        mime: "text/markdown",
+      });
+    }
+  } catch (e) {
+    console.error("evolveAgentMemory failed:", e?.message || e);
+  }
+}
+
+// Resolve o agente que cuidou da conversa (bot do número ou copiloto) e evolui a
+// memória dele com o que rolou no atendimento.
+async function evolveMemoryForConversation(conversation, transcript) {
+  try {
+    let chatbot = null;
+    if (conversation.number_id) chatbot = (await getNumberConfig(conversation.number_id)).chatbot;
+    if (!chatbot) chatbot = await getCopilotAgent(conversation.company_id);
+    if (chatbot) await evolveAgentMemory(chatbot, transcript, conversation.company_id);
+  } catch (e) {
+    console.error("evolveMemoryForConversation failed:", e?.message || e);
+  }
+}
+
 async function generateContactReport(conversation) {
   if (!supabase) return;
   const key = fallbackAnthropicKey;
@@ -2140,6 +2309,8 @@ async function generateContactReport(conversation) {
       sentiment: ["positivo", "neutro", "negativo"].includes(json.sentiment) ? json.sentiment : null,
       handled_by: conversation.assignee_id ? "humano" : "bot",
     });
+    // O agente aprende com o atendimento: evolui o "cérebro" dele no grafo.
+    if (msgs.length >= 4) void evolveMemoryForConversation(conversation, transcript);
   } catch (e) {
     console.error("generateContactReport failed:", e?.message || e);
   }
@@ -2199,6 +2370,7 @@ async function attendanceSweep() {
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on :${PORT}`);
   void resumeSessions();
+  void backfillBrainFolders(); // garante pasta de memória p/ todo agente
   setInterval(watchdog, 60000);
   setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
 });

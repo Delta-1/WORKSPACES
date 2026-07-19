@@ -62,6 +62,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showNewChat, setShowNewChat] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
+  const [listMenu, setListMenu] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [reports, setReports] = useState<ContactReport[]>([]);
   const [accessAgent, setAccessAgent] = useState<RemoteAgent | null>(null);
@@ -255,6 +256,60 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
     await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id);
     setMessages([]);
+    loadConversations();
+  }
+
+  // Backup de TODAS as conversas de uma vez (um .txt com tudo).
+  async function backupAllConversations() {
+    if (!supabase) return;
+    setListMenu(false);
+    const ids = visibleConvs.map((c) => c.id);
+    if (ids.length === 0) {
+      alert("Não há conversas para exportar aqui.");
+      return;
+    }
+    const { data: msgs } = await supabase
+      .from("whatsapp_messages")
+      .select("conversation_id, direction, text, media_type, media_name, at")
+      .in("conversation_id", ids)
+      .order("at", { ascending: true });
+    const byConv = new Map<string, typeof msgs>();
+    for (const m of msgs ?? []) {
+      const list = byConv.get(m.conversation_id) ?? [];
+      list.push(m);
+      byConv.set(m.conversation_id, list as typeof msgs);
+    }
+    const blocks: string[] = [];
+    for (const c of visibleConvs) {
+      const who = contactLabel(c.contacts);
+      const head = `${"=".repeat(48)}\nConversa com ${who}${c.contacts?.phone ? ` (${c.contacts.phone})` : ""} — Protocolo #${c.protocol}\n${"-".repeat(48)}`;
+      const lines = (byConv.get(c.id) ?? []).map((m) => {
+        const at = new Date(m.at).toLocaleString("pt-BR");
+        const from = m.direction === "in" ? who : "Nós";
+        const body = m.text || (m.media_type ? `[${m.media_type}] ${m.media_name || ""}`.trim() : "");
+        return `[${at}] ${from}: ${body}`;
+      });
+      blocks.push(`${head}\n${lines.join("\n") || "(sem mensagens)"}`);
+    }
+    const header = `Backup de conversas — ${server === "whatsapp" ? "Todas" : currentGroupName}\nExportado em ${new Date().toLocaleString("pt-BR")}\nTotal: ${visibleConvs.length} conversa(s)\n`;
+    const blob = new Blob([header + "\n" + blocks.join("\n\n")], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `backup-conversas-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // Limpa (apaga) as mensagens de TODAS as conversas visíveis de uma vez.
+  async function clearAllConversations() {
+    if (!supabase) return;
+    setListMenu(false);
+    const ids = visibleConvs.map((c) => c.id);
+    if (ids.length === 0) return;
+    if (!confirm(`Apagar as mensagens de TODAS as ${ids.length} conversa(s) aqui? Faça o backup antes — isso não pode ser desfeito.`)) return;
+    await supabase.from("whatsapp_messages").delete().in("conversation_id", ids);
+    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).in("id", ids);
+    if (selConv && ids.includes(selConv.id)) setMessages([]);
     loadConversations();
   }
 
@@ -656,6 +711,26 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                 <button onClick={() => deleteGroup(server)} title="Excluir grupo" className="text-gray-500 hover:text-red-400 cursor-pointer">
                   <Trash2 size={14} />
                 </button>
+              )}
+              {server !== "equipe" && (
+                <div className="relative">
+                  <button onClick={() => setListMenu((v) => !v)} title="Backup / limpar conversas" className="text-gray-400 hover:text-white cursor-pointer">
+                    <MoreVertical size={15} />
+                  </button>
+                  {listMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setListMenu(false)} />
+                      <div className="absolute right-0 top-6 z-50 w-52 bg-[#0b0f16] border border-white/10 rounded-lg shadow-xl py-1 text-xs">
+                        <button onClick={backupAllConversations} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer text-left">
+                          <Download size={13} className="text-emerald-400" /> Backup de todas
+                        </button>
+                        <button onClick={clearAllConversations} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer text-left text-red-300">
+                          <Trash2 size={13} /> Limpar todas as conversas
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           </div>
