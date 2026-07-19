@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Check, ChevronDown, LogIn } from "lucide-react";
+import { Building2, Check, ChevronDown, Home, LogIn } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 type Env = { company_id: string; name: string; role: string; is_active: boolean };
@@ -35,6 +35,16 @@ export default function EnvironmentSwitcher() {
     if (!code) return;
     setBusy(true);
     const { error } = await supabase.rpc("join_company", { p_code: code });
+    if (error) { alert(error.message); setBusy(false); return; }
+    window.location.reload();
+  }
+
+  async function createHome() {
+    if (!supabase) return;
+    const name = prompt("Nome da sua casa (ex.: Casa da Ana, Família Silva):")?.trim();
+    if (!name) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("create_home", { p_name: name });
     if (error) { alert(error.message); setBusy(false); return; }
     window.location.reload();
   }
@@ -78,6 +88,9 @@ export default function EnvironmentSwitcher() {
             <div className="border-t border-white/10 mt-1 pt-1">
               <button onClick={joinAnother} disabled={busy} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-white/5 cursor-pointer text-emerald-300">
                 <LogIn size={13} /> Entrar em outro ambiente
+              </button>
+              <button onClick={createHome} disabled={busy} className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-white/5 cursor-pointer text-gray-300">
+                <Home size={13} /> Criar minha casa
               </button>
             </div>
           </div>

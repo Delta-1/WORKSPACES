@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, KeyRound, Layers } from "lucide-react";
+import { Building2, Home, KeyRound, Layers } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 const COMPANY_TYPES = ["MEI", "Microempresa (ME)", "Pequena empresa (EPP)", "Média empresa", "Grande empresa", "Outro"];
 
 export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
-  const [mode, setMode] = useState<"owner" | "employee">("owner");
+  const [mode, setMode] = useState<"owner" | "home" | "employee">("owner");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,6 +17,9 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
   const [razao, setRazao] = useState("");
   const [type, setType] = useState(COMPANY_TYPES[1]);
   const [employees, setEmployees] = useState("");
+
+  // casa (home) — só o nome
+  const [homeName, setHomeName] = useState("");
 
   // funcionário
   const [code, setCode] = useState("");
@@ -48,6 +51,16 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
     }
   }
 
+  async function createHome() {
+    if (!supabase || !homeName.trim()) return;
+    setLoading(true);
+    setError(null);
+    const { error } = await supabase.rpc("create_home", { p_name: homeName.trim() });
+    setLoading(false);
+    if (error) setError(error.message);
+    else { localStorage.removeItem("pendingCompanyCode"); onDone(); }
+  }
+
   async function joinCompany() {
     if (!supabase || !code.trim()) return;
     setLoading(true);
@@ -69,25 +82,27 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
             <Layers size={26} />
           </div>
           <h1 className="text-xl font-bold">Vamos configurar seu acesso</h1>
-          <p className="text-gray-400 text-sm mt-1">Crie sua empresa ou entre com o código de uma existente.</p>
+          <p className="text-gray-400 text-sm mt-1">Crie uma empresa, sua casa, ou entre com um código.</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-1 bg-black/20 rounded-lg p-1 mb-5">
+        <div className="grid grid-cols-3 gap-1 bg-black/20 rounded-lg p-1 mb-5">
           <button
             onClick={() => setMode("owner")}
-            className={`flex items-center justify-center gap-2 text-xs font-medium py-2 rounded-md cursor-pointer ${
-              mode === "owner" ? "bg-emerald-600 text-white" : "text-gray-400"
-            }`}
+            className={`flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-md cursor-pointer ${mode === "owner" ? "bg-emerald-600 text-white" : "text-gray-400"}`}
           >
-            <Building2 size={14} /> Sou o dono
+            <Building2 size={14} /> Empresa
+          </button>
+          <button
+            onClick={() => setMode("home")}
+            className={`flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-md cursor-pointer ${mode === "home" ? "bg-emerald-600 text-white" : "text-gray-400"}`}
+          >
+            <Home size={14} /> Casa
           </button>
           <button
             onClick={() => setMode("employee")}
-            className={`flex items-center justify-center gap-2 text-xs font-medium py-2 rounded-md cursor-pointer ${
-              mode === "employee" ? "bg-emerald-600 text-white" : "text-gray-400"
-            }`}
+            className={`flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-md cursor-pointer ${mode === "employee" ? "bg-emerald-600 text-white" : "text-gray-400"}`}
           >
-            <KeyRound size={14} /> Sou funcionário
+            <KeyRound size={14} /> Código
           </button>
         </div>
 
@@ -97,7 +112,27 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
           </p>
         )}
 
-        {mode === "owner" ? (
+        {mode === "home" ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-emerald-300 text-sm bg-emerald-950/30 border border-emerald-800/40 rounded-lg px-3 py-2">
+              <Home size={15} /> Um espaço só seu, pra coisas de casa. Sem CNPJ — só o nome.
+            </div>
+            <input
+              value={homeName}
+              onChange={(e) => setHomeName(e.target.value)}
+              placeholder="Nome da sua casa (ex.: Casa da Ana, Família Silva) *"
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none"
+            />
+            <p className="text-[11px] text-gray-500">Depois você recebe um código pra convidar a família — e some no canto superior direito pra trocar entre casa e empresa.</p>
+            <button
+              onClick={createHome}
+              disabled={loading || !homeName.trim()}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg cursor-pointer disabled:opacity-50"
+            >
+              {loading ? "Criando..." : "Criar minha casa e continuar"}
+            </button>
+          </div>
+        ) : mode === "owner" ? (
           <div className="space-y-3">
             <input
               value={name}
