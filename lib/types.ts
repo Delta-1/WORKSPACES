@@ -248,6 +248,7 @@ export type Chatbot = {
   accent: string | null;
   apis: AgentApi[] | null;
   test_mode: boolean | null;
+  continuous?: boolean | null;
   slot: string | null;
   flow: BotFlow | null;
   created_at: string;

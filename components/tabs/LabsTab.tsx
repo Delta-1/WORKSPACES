@@ -298,6 +298,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       apis: apis.filter((a) => a.name && a.url),
       test_mode: f.test_mode ?? true,
       enabled: f.enabled ?? true,
+      continuous: f.continuous ?? false,
       flow: f.flow ?? null,
       company_id: profile?.company_id ?? null,
     };
@@ -414,6 +415,13 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
 
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={f.enabled ?? true} onChange={(e) => set({ enabled: e.target.checked })} className="accent-indigo-500" /> Agente ativo
+        </label>
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
+          <input type="checkbox" checked={f.continuous ?? false} onChange={(e) => set({ continuous: e.target.checked })} className="accent-emerald-500 mt-0.5" />
+          <span>
+            <b className="text-emerald-300">IA contínua</b> — responde sempre e <b>NÃO fica encerrando</b> o atendimento; encerra sozinho em silêncio e <b>lembra das conversas antigas</b> do contato.
+            <br /><span className="text-gray-500">Ideal quando o agente tem número próprio e é a atendente fixa daquele WhatsApp.</span>
+          </span>
         </label>
         <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2">
           <input type="checkbox" checked={f.test_mode ?? true} onChange={(e) => set({ test_mode: e.target.checked })} className="accent-amber-500 mt-0.5" />

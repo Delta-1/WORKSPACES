@@ -1671,6 +1671,9 @@ async function startSession(numberId) {
           // atendimento do número (ex.: "Vitor"). Se não existir, cai no do número.
           const copilotAgent = isCopilot ? await getCopilotAgent(cid) : null;
           const agentForReply = copilotAgent || chatbot;
+          // IA CONTÍNUA: responde sempre, NÃO fica anunciando "vou encerrar", e
+          // lembra das conversas anteriores do contato. O copiloto é sempre contínuo.
+          const continuous = isCopilot || agentForReply?.continuous === true;
           // Agente do Labs com capacidades → usa ferramentas para TODOS deste número.
           const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
           const useTools = isCopilot || agentHasCaps;
@@ -1712,7 +1715,7 @@ async function startSession(numberId) {
             const wantVoice = voicePref && voiceReplyOn && !!botElevenKey;
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
-            if (!isCopilot && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
+            if (!isCopilot && !continuous && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
               const info = await getCompanyInfo(cid);
               let msg = "Perfeito, vou encerrar nosso atendimento então. Muito obrigado pelo contato! 😊";
               if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
@@ -1729,15 +1732,20 @@ async function startSession(numberId) {
               const g = await sock.sendMessage(jid, { text: chatbot.greeting });
               await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
             }
-            // Puxa as últimas mensagens desta conversa p/ dar contexto contínuo ao bot.
+            // Puxa as últimas mensagens p/ dar contexto ao bot. IA CONTÍNUA lembra
+            // de TODAS as conversas anteriores do contato (memória entre atendimentos);
+            // o bot normal só desta conversa.
             let history = [];
             try {
-              const { data: prior } = await supabase
-                .from("whatsapp_messages")
-                .select("direction,text")
-                .eq("conversation_id", conversation.id)
-                .order("at", { ascending: false })
-                .limit(40);
+              let priorQ = supabase.from("whatsapp_messages").select("direction,text").order("at", { ascending: false }).limit(continuous ? 60 : 40);
+              if (continuous) {
+                const { data: convs } = await supabase.from("conversations").select("id").eq("contact_id", contact.id).order("created_at", { ascending: false }).limit(10);
+                const ids = (convs ?? []).map((c) => c.id);
+                priorQ = ids.length ? priorQ.in("conversation_id", ids) : priorQ.eq("conversation_id", conversation.id);
+              } else {
+                priorQ = priorQ.eq("conversation_id", conversation.id);
+              }
+              const { data: prior } = await priorQ;
               history = (prior ?? [])
                 .reverse()
                 .filter((m) => m.text)
@@ -1854,8 +1862,8 @@ async function startSession(numberId) {
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
             // humano, a gente conclui isso de verdade — senão ele fica repetindo
-            // "vou encerrar" pra sempre. (Não vale para o copiloto interno.)
-            if (!isCopilot && reply) {
+            // "vou encerrar" pra sempre. (Não vale para o copiloto nem IA contínua.)
+            if (!isCopilot && !continuous && reply) {
               const intent = detectBotClosureIntent(reply);
               if (intent === "close") {
                 const info2 = await getCompanyInfo(cid);
@@ -2380,6 +2388,9 @@ async function attendanceSweep() {
         .update({ status: "fechado", closed_at: new Date().toISOString() })
         .eq("id", conv.id);
       try {
+        // IA CONTÍNUA fecha em SILÊNCIO (não manda "como não tivemos retorno").
+        const { chatbot: numBot } = await getNumberConfig(conv.number_id);
+        if (numBot?.continuous) continue;
         const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conv.contact_id).maybeSingle();
         const to = contact?.jid || contact?.phone;
         if (to) {
