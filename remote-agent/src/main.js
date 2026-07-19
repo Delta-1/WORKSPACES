@@ -157,6 +157,48 @@ function createOrbWindow(cfg) {
 ipcMain.on("orb-hide", () => { if (orbWin && !orbWin.isDestroyed()) orbWin.hide(); });
 let orbCfgGlobal = null;
 ipcMain.on("orb-show", () => { if (orbCfgGlobal) createOrbWindow(orbCfgGlobal); });
+
+// GUIA VISUAL: desenha um círculo (vermelho/amarelo) na tela, no ponto que a IA
+// indicou, para a pessoa ver ONDE clicar. Janela transparente, clique-atravessa
+// (não atrapalha o uso), some sozinha depois de alguns segundos.
+let hlWin = null;
+function highlightAt(params) {
+  try {
+    const disp = activeDisplay();
+    const b = disp.bounds;
+    const fx = Math.max(0, Math.min(1, Number(params.x) || 0.5));
+    const fy = Math.max(0, Math.min(1, Number(params.y) || 0.5));
+    const color = params.color === "amarelo" || params.color === "yellow" ? "#ffcc00" : "#ff2d2d";
+    const label = String(params.label || "").slice(0, 60).replace(/[<>&]/g, "");
+    if (!hlWin || hlWin.isDestroyed()) {
+      hlWin = new BrowserWindow({
+        x: b.x, y: b.y, width: b.width, height: b.height,
+        frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true, hasShadow: false,
+        focusable: false, resizable: false, movable: false, fullscreenable: false, enableLargerThanScreen: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true },
+      });
+      hlWin.setAlwaysOnTop(true, "screen-saver");
+      hlWin.setIgnoreMouseEvents(true, { forward: true }); // clique passa direto
+    } else {
+      hlWin.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+    }
+    const px = Math.round(fx * b.width);
+    const py = Math.round(fy * b.height);
+    const html =
+      `<!doctype html><meta charset=utf-8><style>html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:Segoe UI,system-ui,sans-serif}` +
+      `.ring{position:fixed;left:${px}px;top:${py}px;width:84px;height:84px;margin:-42px 0 0 -42px;border:5px solid ${color};border-radius:50%;` +
+      `box-shadow:0 0 0 3px rgba(0,0,0,.35),0 0 18px ${color};animation:p 1s ease-out infinite}` +
+      `.tag{position:fixed;left:${px}px;top:${py + 52}px;transform:translateX(-50%);background:${color};color:#111;font-weight:700;` +
+      `font-size:13px;padding:3px 9px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4)}` +
+      `@keyframes p{0%{transform:scale(.7);opacity:1}100%{transform:scale(1.5);opacity:0}}</style>` +
+      `<div class=ring></div>${label ? `<div class=tag>${label}</div>` : ""}`;
+    hlWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+    hlWin.showInactive();
+    clearTimeout(highlightAt._t);
+    highlightAt._t = setTimeout(() => { try { if (hlWin && !hlWin.isDestroyed()) hlWin.hide(); } catch {} }, 3200);
+  } catch { /* ignore */ }
+}
+ipcMain.on("highlight-at", (_e, params) => highlightAt(params || {}));
 function toggleOrb(cfg) {
   if (orbWin && !orbWin.isDestroyed()) {
     if (orbWin.isVisible()) orbWin.hide(); else orbWin.show();

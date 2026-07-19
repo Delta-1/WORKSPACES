@@ -25,6 +25,7 @@ type Body = {
   history?: { role: "user" | "assistant"; text: string }[];
   image?: { mediaType: string; base64: string } | null;
   has_access?: boolean;
+  mode?: "guiado" | "autonomo";
 };
 
 export async function POST(request: Request) {
@@ -71,8 +72,15 @@ export async function POST(request: Request) {
       `procurar/instalar programas, achar coisas, resolver erros — sempre explicando PASSO A PASSO, numerado e simples. ` +
       `Para instalar algo, oriente a ir ao SITE OFICIAL do programa e baixar a versão oficial; se houver edições diferentes, pergunte qual. ` +
       (body.has_access
-        ? `A pessoa conectou o acesso remoto e você pode VER A TELA dela quando um print vier junto: olhe o print e diga exatamente onde clicar. `
-        : `Se a pessoa quiser que você VEJA A TELA e guie ao vivo, peça para ela instalar o acesso remoto e colar o código de acesso no campo indicado. `) +
+        ? `A pessoa CONECTOU o acesso remoto e você VÊ A TELA dela (o print vem junto). Você marca/age na tela emitindo comandos entre «» (o sistema executa):\n` +
+          `• «apontar: x,y | rótulo» — marca UM ponto (x,y são frações de 0 a 1 do centro do elemento) com um rótulo curto.\n` +
+          `• «duploapontar: x,y | rótulo» — ponto que precisa de DOIS cliques (ícone da área de trabalho).\n` +
+          (body.mode === "autonomo"
+            ? `• «digitar: TEXTO» — digita no campo em foco. • «abrir: APP» — abre um programa. • «tecla: NOME» — enter/tab/esc.\n` +
+              `MODO AUTÔNOMO: você MESMO faz — clique, digite e complete a tarefa em PASSOS. Aja sem ficar perguntando muito; só pergunte se for realmente necessário (ex.: qual versão instalar) ou se houver risco. Depois de cada passo vem um print novo: confira e continue. Termine com «fim».\n`
+            : `MODO GUIADO: você NÃO clica nem digita — apenas MARCA na tela com «apontar»/«duploapontar» ONDE a pessoa deve clicar e EXPLICA em texto, passo a passo, o que ela deve fazer (inclusive o que digitar). Um passo por vez.\n`) +
+          `Olhe o print com atenção, leia os rótulos e mire no CENTRO certo. Se houver itens de nome parecido/idêntico ou você não achar algo, PERGUNTE. `
+        : `Se a pessoa quiser que você VEJA A TELA e guie ao vivo (marcando onde clicar) ou até faça sozinho, peça para ela instalar o acesso remoto e colar o código de acesso no campo indicado. `) +
       `NUNCA invente dados internos da empresa e NÃO forneça informações confidenciais — você só conhece os contatos públicos abaixo. ` +
       (pub.length ? `\nContatos públicos da empresa:\n- ${pub.join("\n- ")}` : "");
 

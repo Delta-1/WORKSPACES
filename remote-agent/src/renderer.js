@@ -422,6 +422,44 @@ async function runAgentJobs() {
       } else if (j.kind === "show_orb") {
         try { ipcRenderer.send("orb-show"); } catch { /* ignore */ }
         await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: null });
+      } else if (j.kind === "highlight") {
+        // Modo GUIADO: desenha um círculo (vermelho/amarelo) na tela mostrando
+        // onde a pessoa deve clicar. Não mexe em nada — só destaca.
+        try { ipcRenderer.send("highlight-at", j.params || {}); } catch { /* ignore */ }
+        await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: null });
+      } else if (j.kind === "input") {
+        // Modo AUTÔNOMO: a IA age na tela (clica/digita/abre). Exige permissão de
+        // controle na máquina.
+        let err = null;
+        if (!agentPerms.control) {
+          err = "controle não permitido nesta máquina";
+        } else {
+          try {
+            const p = j.params || {};
+            const act = String(p.action || "");
+            if (act === "clickat" || act === "doubleclickat") {
+              ipcRenderer.send("input", { kind: "move", x: Number(p.x) || 0, y: Number(p.y) || 0, smooth: true });
+              await new Promise((r) => setTimeout(r, 380));
+              ipcRenderer.send("input", { kind: "click", button: 0 });
+              if (act === "doubleclickat") { await new Promise((r) => setTimeout(r, 90)); ipcRenderer.send("input", { kind: "click", button: 0 }); }
+            } else if (act === "type") {
+              ipcRenderer.send("input", { kind: "type", text: String(p.text || "") });
+            } else if (act === "key") {
+              ipcRenderer.send("input", { kind: "combo", name: String(p.name || "") });
+            } else if (act === "open") {
+              ipcRenderer.send("input", { kind: "combo", name: "run" });
+              await new Promise((r) => setTimeout(r, 500));
+              ipcRenderer.send("input", { kind: "type", text: String(p.text || "") });
+              await new Promise((r) => setTimeout(r, 250));
+              ipcRenderer.send("input", { kind: "combo", name: "enter" });
+            } else if (act === "click") {
+              ipcRenderer.send("input", { kind: "click", button: 0 });
+            } else {
+              err = "ação desconhecida";
+            }
+          } catch (e) { err = String(e?.message || e).slice(0, 200); }
+        }
+        await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: err });
       } else {
         await supabase.rpc("agent_complete_job", { p_access_code: cfg.accessCode, p_job_id: j.id, p_url: null, p_error: "tipo desconhecido" });
       }
@@ -433,7 +471,7 @@ async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
   runAgentJobs();
-  setInterval(runAgentJobs, 8000); // trabalhos sob demanda (print da tela, etc.)
+  setInterval(runAgentJobs, 2000); // trabalhos sob demanda (print, círculo-guia, ações)
   reportSpecs();
   setInterval(reportSpecs, 300000); // atualiza o panorama a cada 5 min
   refreshServerRole();

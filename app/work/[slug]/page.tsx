@@ -20,6 +20,7 @@ export default function WorkPage() {
   const [showCode, setShowCode] = useState(false);
   const [code, setCode] = useState("");
   const [linked, setLinked] = useState(false);
+  const [mode, setMode] = useState<"guiado" | "autonomo">("guiado");
   const [sessionId, setSessionId] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -47,20 +48,79 @@ export default function WorkPage() {
 
   const accent = info?.theme_color || "#6366f1";
 
+  // Tira um print da tela da pessoa e devolve como imagem base64 (para a IA ver).
+  async function grabScreenshot(): Promise<{ mediaType: string; base64: string } | null> {
+    try {
+      const res = await fetch("/api/work/screenshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug, access_code: code.trim() }) });
+      const data = await res.json();
+      if (!data.url) return null;
+      const blob = await (await fetch(data.url)).blob();
+      const base64 = await new Promise<string>((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1] || ""); fr.readAsDataURL(blob); });
+      return { mediaType: blob.type || "image/jpeg", base64 };
+    } catch { return null; }
+  }
+
+  // Extrai os comandos «…» da resposta e os executa: no modo GUIADO desenha o
+  // círculo onde clicar; no AUTÔNOMO a IA clica/digita de fato. Devolve o texto
+  // limpo e se houve alguma AÇÃO de controle (para o autônomo continuar).
+  async function runCommands(reply: string): Promise<{ text: string; acted: boolean }> {
+    const re = /«\s*([^»]+?)\s*»/g;
+    let m: RegExpExecArray | null;
+    let acted = false;
+    const act = (payload: Record<string, unknown>) =>
+      fetch("/api/work/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug, access_code: code.trim(), mode, ...payload }) }).catch(() => {});
+    while ((m = re.exec(reply)) !== null) {
+      const raw = m[1].trim();
+      const low = raw.toLowerCase();
+      if (low === "fim") continue;
+      const after = raw.slice(raw.indexOf(":") + 1);
+      if (low.startsWith("apontar:") || low.startsWith("duploapontar:")) {
+        const [coords, label] = after.split("|");
+        const nums = coords.split(",").map((s) => parseFloat(s.trim()));
+        if (nums.length >= 2 && nums.every((n) => Number.isFinite(n))) {
+          const dbl = low.startsWith("duplo");
+          const x = nums[0] > 1 ? nums[0] / 100 : nums[0];
+          const y = nums[1] > 1 ? nums[1] / 100 : nums[1];
+          if (mode === "autonomo") { await act({ action: dbl ? "doubleclickat" : "clickat", x, y }); acted = true; }
+          else await act({ action: dbl ? "doubleclickat" : "clickat", x, y, color: "vermelho", label: (label || "").trim() || "clique aqui" });
+        }
+      } else if (mode === "autonomo" && low.startsWith("digitar:")) { await act({ action: "type", text: after.trim() }); acted = true; }
+      else if (mode === "autonomo" && low.startsWith("abrir:")) { await act({ action: "open", text: after.trim() }); acted = true; }
+      else if (mode === "autonomo" && low.startsWith("tecla:")) { await act({ action: "key", name: after.trim().toLowerCase() }); acted = true; }
+    }
+    const text = reply.replace(re, "").replace(/\s{2,}/g, " ").trim() || "Feito.";
+    return { text, acted };
+  }
+
   async function send(text: string, image?: { mediaType: string; base64: string }) {
     if (!text.trim() || busy) return;
-    const next: Msg[] = [...msgs, { role: "user", text }];
-    setMsgs(next);
+    let convo: Msg[] = [...msgs, { role: "user", text }];
+    setMsgs(convo);
     setInput("");
     setBusy(true);
     try {
-      const res = await fetch("/api/work/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, session_id: sessionId, text, history: next.slice(-10), image: image ?? null, has_access: linked }),
-      });
-      const data = await res.json();
-      setMsgs((m) => [...m, { role: "assistant", text: data.answer || data.error || "Não consegui responder." }]);
+      // No autônomo, roda em passos (age → vê o resultado → continua). No guiado
+      // e no chat comum, é uma resposta só (a pessoa age depois de ver o círculo).
+      const maxSteps = linked && mode === "autonomo" ? 6 : 1;
+      let img = image ?? null;
+      for (let step = 0; step < maxSteps; step++) {
+        const res = await fetch("/api/work/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, session_id: sessionId, text: step === 0 ? text : "(feito — aqui está a tela agora, continue; se terminou responda «fim»)", history: convo.slice(-10), image: img, has_access: linked, mode }),
+        });
+        const data = await res.json();
+        const raw: string = data.answer || data.error || "Não consegui responder.";
+        let shown = raw;
+        let acted = false;
+        if (linked) { const r = await runCommands(raw); shown = r.text; acted = r.acted; }
+        convo = [...convo, { role: "assistant", text: shown }];
+        setMsgs(convo);
+        if (!linked || mode !== "autonomo" || !acted || /«?\s*fim\s*»?/i.test(raw)) break;
+        await new Promise((r) => setTimeout(r, 1300));
+        img = await grabScreenshot();
+        if (!img) break;
+      }
     } catch {
       setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema de conexão. Tenta de novo?" }]);
     } finally {
@@ -96,34 +156,12 @@ export default function WorkPage() {
     }
   }
 
-  // Tira um print da tela da pessoa e manda para a IA "ver" e orientar.
+  // Tira um print da tela da pessoa e manda para a IA "ver" e orientar/agir.
   async function seeScreen() {
     if (!linked || busy) return;
-    setBusy(true);
-    setMsgs((m) => [...m, { role: "user", text: "(veja minha tela)" }]);
-    try {
-      const res = await fetch("/api/work/screenshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, access_code: code.trim() }),
-      });
-      const data = await res.json();
-      if (!data.url) { setMsgs((m) => [...m, { role: "assistant", text: data.error || "Não consegui ver a tela agora." }]); return; }
-      // Converte o print (URL) em base64 para mandar como imagem para a IA.
-      const blob = await (await fetch(data.url)).blob();
-      const base64 = await new Promise<string>((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1] || ""); fr.readAsDataURL(blob); });
-      const res2 = await fetch("/api/work/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, session_id: sessionId, text: "Aqui está a minha tela agora. O que eu faço?", history: msgs.slice(-8), image: { mediaType: blob.type || "image/jpeg", base64 }, has_access: true }),
-      });
-      const d2 = await res2.json();
-      setMsgs((m) => [...m, { role: "assistant", text: d2.answer || "Vi sua tela, mas não consegui responder." }]);
-    } catch {
-      setMsgs((m) => [...m, { role: "assistant", text: "Não consegui ver a tela agora." }]);
-    } finally {
-      setBusy(false);
-    }
+    const img = await grabScreenshot();
+    if (!img) { setMsgs((m) => [...m, { role: "assistant", text: "Não consegui ver a tela agora. O computador está ligado e com o acesso aberto?" }]); return; }
+    await send(mode === "autonomo" ? "Veja minha tela e faça o que eu pedi." : "Veja minha tela e me marque onde eu clico.", img);
   }
 
   if (notFound) {
@@ -182,11 +220,23 @@ export default function WorkPage() {
               <KeyRound size={13} /> Colar código de acesso
             </button>
           ) : (
-            <button onClick={seeScreen} disabled={busy} className="text-[11px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ background: accent }}>
-              <Eye size={13} /> Ver minha tela
-            </button>
+            <>
+              <button onClick={seeScreen} disabled={busy} className="text-[11px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50" style={{ background: accent }}>
+                <Eye size={13} /> Ver minha tela
+              </button>
+              {/* Dois poderes: Guiado (círculo mostrando onde clicar) e Autônomo (a IA faz). */}
+              <div className="flex items-center rounded-lg bg-white/10 p-0.5 text-[11px]">
+                <button onClick={() => setMode("guiado")} className={`px-2 py-1 rounded-md cursor-pointer ${mode === "guiado" ? "bg-white/20 font-semibold" : "text-gray-400"}`}>Guiado</button>
+                <button onClick={() => setMode("autonomo")} title="A IA faz sozinha (uso avançado)" className={`px-2 py-1 rounded-md cursor-pointer ${mode === "autonomo" ? "text-white font-semibold" : "text-gray-400"}`} style={mode === "autonomo" ? { background: accent } : undefined}>Autônomo</button>
+              </div>
+            </>
           )}
         </div>
+        {linked && (
+          <p className="text-[10px] text-gray-500 -mt-1 pb-1">
+            {mode === "guiado" ? "Guiado: eu circulo na sua tela onde você deve clicar e te explico." : "Autônomo: eu mesmo clico e digito por você. Peça e eu faço."}
+          </p>
+        )}
 
         {showCode && (
           <div className="flex items-center gap-2 pb-2">
