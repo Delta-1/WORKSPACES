@@ -569,6 +569,12 @@ function ReleasePublisher() {
             <input type="file" accept=".exe" className="hidden" disabled={busy !== null} onChange={(e) => e.target.files?.[0] && upload("win", e.target.files[0])} />
           </label>
           {winUrl && <p className="text-[9px] text-emerald-400 mt-1 truncate">✓ pronto</p>}
+          <input
+            value={winUrl ?? ""}
+            onChange={(e) => setWinUrl(e.target.value.trim() || null)}
+            placeholder="ou cole o link direto do .exe"
+            className="w-full mt-1.5 bg-black/30 border border-white/10 rounded px-2 py-1 text-[10px] outline-none font-mono"
+          />
         </div>
         <div className="bg-black/20 rounded-lg p-2.5">
           <p className="text-[11px] font-semibold mb-1.5">Linux (.AppImage)</p>
@@ -577,8 +583,19 @@ function ReleasePublisher() {
             <input type="file" accept=".AppImage,application/octet-stream" className="hidden" disabled={busy !== null} onChange={(e) => e.target.files?.[0] && upload("linux", e.target.files[0])} />
           </label>
           {linuxUrl && <p className="text-[9px] text-emerald-400 mt-1 truncate">✓ pronto</p>}
+          <input
+            value={linuxUrl ?? ""}
+            onChange={(e) => setLinuxUrl(e.target.value.trim() || null)}
+            placeholder="ou cole o link direto do .AppImage"
+            className="w-full mt-1.5 bg-black/30 border border-white/10 rounded px-2 py-1 text-[10px] outline-none font-mono"
+          />
         </div>
       </div>
+      <p className="text-[10px] text-gray-500 leading-relaxed">
+        <b>Link direto</b> = o link que baixa o arquivo na hora (não a pasta/página). O ideal é uma <b>Release do GitHub</b> (link do
+        <i> asset</i> .exe/.AppImage). Link de <b>pasta</b> do Google Drive <b>não funciona</b>; e arquivos grandes no Drive abrem uma
+        página de confirmação, então prefira o GitHub. No Windows o instalador (.exe) <b>baixa e instala</b> sozinho e reinicia o app.
+      </p>
       <div className="flex items-center gap-2">
         <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Nome da versão (opcional — automático pela data)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
         <button onClick={publish} disabled={busy !== null || (!winUrl && !linuxUrl)} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
