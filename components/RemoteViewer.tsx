@@ -381,6 +381,28 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTouch]);
+
+  // TECLADO DO CELULAR: no celular o `keydown` não entrega as letras (vem tudo
+  // como "Unidentified"). Então escutamos o evento `beforeinput`, que dá o texto
+  // digitado de forma confiável, e mandamos pra máquina como digitação/tecla.
+  useEffect(() => {
+    const el = kbRef.current;
+    if (!el) return;
+    const onBefore = (ev: Event) => {
+      const e = ev as InputEvent;
+      const t = e.inputType;
+      if (t === "insertText" && e.data) sendInput({ kind: "type", text: e.data });
+      else if (t === "insertLineBreak" || t === "insertParagraph") sendInput({ kind: "combo", name: "enter" });
+      else if (t === "deleteContentBackward") sendInput({ kind: "combo", name: "backspace" });
+      else if (t === "insertFromPaste" && e.data) sendInput({ kind: "type", text: e.data });
+      else return; // composição em andamento (IME): espera terminar
+      e.preventDefault();
+      el.value = ""; // mantém o campo vazio (só serve pra abrir o teclado)
+    };
+    el.addEventListener("beforeinput", onBefore);
+    return () => el.removeEventListener("beforeinput", onBefore);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showKeyboard]);
   // Orb AUTÔNOMO: executa uma ação real na máquina remota (digitar, teclas,
   // clicar, abrir app). Traduz comandos de alto nível em eventos do canal de
   // controle. Retorna uma confirmação curta pro Orb narrar.
@@ -600,7 +622,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
                     <span className="text-gray-300">Sensibilidade do mouse</span>
                     <span className="text-gray-500">{mouseSens.toFixed(1)}x</span>
                   </div>
-                  <input type="range" min={0.4} max={3} step={0.1} value={mouseSens} onChange={(e) => saveMouseSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
+                  <input type="range" min={0.4} max={6} step={0.1} value={mouseSens} onChange={(e) => saveMouseSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
                 </div>
                 <div>
                   <div className="flex items-center justify-between text-[11px] mb-1">
@@ -798,9 +820,22 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             ref={kbRef}
             className={showKeyboard ? "w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" : "sr-only"}
             placeholder="Digite aqui — o texto vai pra máquina"
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            enterKeyHint="enter"
+            // Só teclas ESPECIAIS aqui (Tab/Esc/setas/atalhos). As letras e o Enter/
+            // Backspace vão pelo `beforeinput` acima — assim funciona no celular sem
+            // digitar em dobro.
             onKeyDown={(e) => {
-              sendInput({ kind: "key", key: e.key, text: e.key.length === 1 ? e.key : "", down: true });
-              sendInput({ kind: "key", key: e.key, down: false });
+              const k = e.key;
+              const special = ["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Delete", "PageUp", "PageDown"];
+              if (e.ctrlKey || e.altKey || e.metaKey || special.includes(k)) {
+                e.preventDefault();
+                sendInput({ kind: "key", key: k, text: "", down: true, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, shift: e.shiftKey });
+                sendInput({ kind: "key", key: k, down: false });
+              }
             }}
             onChange={(e) => (e.currentTarget.value = "")}
           />

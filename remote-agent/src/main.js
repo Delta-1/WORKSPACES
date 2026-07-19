@@ -649,7 +649,7 @@ ipcMain.on("input", async (_e, ev) => {
     } else if (ev.kind === "move-rel") {
       // Movimento relativo (trackpad do celular): desloca o cursor atual.
       const cur = await mouse.getPosition();
-      const gain = 1.4;
+      const gain = 2.2; // trackpad do celular mais ágil (a sensibilidade fina fica no app)
       let nx = cur.x + (ev.dx || 0) * gain;
       let ny = cur.y + (ev.dy || 0) * gain;
       // Mantém dentro do monitor controlado.
@@ -687,6 +687,9 @@ ipcMain.on("input", async (_e, ev) => {
       } else if (ev.name === "esc" || ev.name === "escape") {
         await keyboard.pressKey(Key.Escape);
         await keyboard.releaseKey(Key.Escape);
+      } else if (ev.name === "backspace") {
+        await keyboard.pressKey(Key.Backspace);
+        await keyboard.releaseKey(Key.Backspace);
       } else if (ev.name === "selectall") {
         await keyboard.pressKey(Key.LeftControl, Key.A);
         await keyboard.releaseKey(Key.LeftControl, Key.A);
