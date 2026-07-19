@@ -622,8 +622,11 @@ const GRAPH_STYLES: { id: string; name: string; desc: string; emoji: string }[] 
 ];
 function GraphStyleField() {
   const [style, setStyle] = useState<string>("obsidian");
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    // Prioriza o que já está salvo NESTE aparelho (instantâneo), depois o banco.
+    try { const ls = localStorage.getItem("graph_style"); if (ls) setStyle(ls); } catch {}
     if (!supabase) return;
     supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
       if (data?.graph_style) setStyle(data.graph_style);
@@ -632,6 +635,12 @@ function GraphStyleField() {
 
   async function pick(id: string) {
     setStyle(id);
+    // 1) Salva JÁ no aparelho e avisa a aba Arquivos (troca na hora, sem reabrir).
+    try { localStorage.setItem("graph_style", id); } catch {}
+    try { window.dispatchEvent(new CustomEvent("graph-style", { detail: id })); } catch {}
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1600);
+    // 2) Salva no banco (pra valer em qualquer aparelho da empresa).
     if (!supabase) return;
     const { data: { user } } = await supabase.auth.getUser();
     let cid: string | null = null;
@@ -643,7 +652,10 @@ function GraphStyleField() {
 
   return (
     <div>
-      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Estilo do grafo de arquivos</label>
+      <div className="flex items-center gap-2 mb-2">
+        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Estilo do grafo de arquivos</label>
+        {saved && <span className="text-[10px] text-emerald-400 font-semibold">✓ Salvo</span>}
+      </div>
       <div className="grid grid-cols-3 gap-2">
         {GRAPH_STYLES.map((s) => (
           <button
@@ -657,7 +669,7 @@ function GraphStyleField() {
           </button>
         ))}
       </div>
-      <p className="text-[10px] text-gray-500 mt-1">Muda como a aba <b>Arquivos</b> mostra as pastas. Abra a aba de novo para ver o novo estilo.</p>
+      <p className="text-[10px] text-gray-500 mt-1">Toque num estilo — já salva sozinho. A aba <b>Arquivos</b> muda na hora.</p>
     </div>
   );
 }

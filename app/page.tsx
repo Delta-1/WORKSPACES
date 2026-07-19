@@ -362,7 +362,7 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden">
+    <div className="h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
       <header className="h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
         <div className="flex items-center gap-3">
           {company.logoDataUrl ? (

@@ -950,7 +950,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               {thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
             </div>
 
-            <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0 relative">
+            <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0 relative pb-[max(0.75rem,env(safe-area-inset-bottom))]">
               {showEmoji && (
                 <div className="absolute bottom-full left-2 mb-2 w-72 max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
                   {EMOJIS.map((e) => (

@@ -119,11 +119,21 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const graphStyleRef = useRef(graphStyle);
   useEffect(() => { graphStyleRef.current = graphStyle; }, [graphStyle]);
   useEffect(() => {
-    if (!supabase) return;
-    supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
-      const s = data?.graph_style;
+    // Preferência deste aparelho primeiro (instantâneo), depois confirma no banco.
+    try { const ls = localStorage.getItem("graph_style"); if (ls === "obsidian" || ls === "arvore" || ls === "diretorio") setGraphStyle(ls); } catch {}
+    if (supabase) {
+      supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
+        const s = data?.graph_style;
+        if (s === "obsidian" || s === "arvore" || s === "diretorio") setGraphStyle(s);
+      });
+    }
+    // Troca AO VIVO quando muda em Configurações (mesmo sem reabrir a aba).
+    const onStyle = (e: Event) => {
+      const s = (e as CustomEvent).detail;
       if (s === "obsidian" || s === "arvore" || s === "diretorio") setGraphStyle(s);
-    });
+    };
+    window.addEventListener("graph-style", onStyle);
+    return () => window.removeEventListener("graph-style", onStyle);
   }, []);
   // Canvas infinito estilo Miro: pan (arrastar fundo) + zoom (roda do mouse).
   const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
