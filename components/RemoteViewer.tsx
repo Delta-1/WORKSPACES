@@ -464,8 +464,29 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     const ctx = c.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(v, 0, 0, c.width, c.height);
+    // GRADE DE COORDENADAS (só nesta cópia que a IA vê — NÃO aparece na tela do
+    // cliente). Linhas a cada 10% com o número da porcentagem ajudam o modelo de
+    // visão a mirar o ponto certo (0–100 na horizontal e vertical).
+    ctx.save();
+    ctx.font = `${Math.round(c.height / 42)}px monospace`;
+    ctx.textBaseline = "top";
+    for (let p = 10; p < 100; p += 10) {
+      const x = (p / 100) * c.width;
+      const y = (p / 100) * c.height;
+      ctx.strokeStyle = p === 50 ? "rgba(255,60,60,0.55)" : "rgba(0,200,255,0.33)";
+      ctx.lineWidth = p === 50 ? 2 : 1;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke();
+      // Rótulos (com contorno preto pra ler sobre qualquer fundo).
+      const label = String(p);
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.strokeText(label, x + 2, 2); ctx.strokeText(label, 2, y + 2);
+      ctx.fillStyle = "rgba(255,255,0,0.95)";
+      ctx.fillText(label, x + 2, 2); ctx.fillText(label, 2, y + 2);
+    }
+    ctx.restore();
     try {
-      return { mediaType: "image/jpeg", base64: c.toDataURL("image/jpeg", 0.82).split(",")[1] };
+      return { mediaType: "image/jpeg", base64: c.toDataURL("image/jpeg", 0.85).split(",")[1] };
     } catch {
       return null; // tela protegida (DRM) — sem captura
     }
