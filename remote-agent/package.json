@@ -23,8 +23,16 @@
     "appId": "com.workspace.remoteagent",
     "productName": "Workspace Acesso Remoto",
     "files": ["src/**/*", "config.json"],
-    "win": { "target": "portable", "requestedExecutionLevel": "requireAdministrator" },
-    "portable": { "artifactName": "WorkspaceAcessoRemoto.exe", "requestExecutionLevel": "admin" },
+    "win": { "target": "nsis", "requestedExecutionLevel": "requireAdministrator" },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": true,
+      "allowElevation": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "WorkspaceAcessoRemoto-Setup.exe",
+      "shortcutName": "Workspace Acesso Remoto"
+    },
     "mac": { "target": "dmg" },
     "linux": { "target": "AppImage" }
   }

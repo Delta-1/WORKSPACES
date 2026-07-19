@@ -816,8 +816,12 @@ async function checkForUpdate(cfg, manual = false) {
     const dest = path.join(app.getPath("temp"), `workspace-remote-update-${Date.now()}${ext}`);
     await httpsDownload(url, dest);
     if (process.platform !== "win32") { try { fs.chmodSync(dest, 0o755); } catch {} }
-    // Executa o instalador/nova versão e fecha o app atual para concluir.
-    const child = spawn(dest, [], { detached: true, stdio: "ignore" });
+    // Executa o instalador e fecha o app atual para concluir. No Windows é um
+    // instalador NSIS: passamos "/S" para instalar em silêncio (sem assistente) e
+    // reabrir sozinho — como o app já roda elevado, não pede UAC de novo. No Linux
+    // o AppImage apenas roda a nova versão.
+    const args = process.platform === "win32" ? ["/S"] : [];
+    const child = spawn(dest, args, { detached: true, stdio: "ignore" });
     child.unref();
     app.isQuitting = true;
     setTimeout(() => app.quit(), 900);

@@ -31,14 +31,14 @@ jobs:
       - name: Instalar dependências
         run: npm install
 
-      - name: Gerar .exe portátil
+      - name: Gerar instalador (.exe NSIS)
         run: npm run dist:win
 
-      - name: Publicar o .exe como artefato
+      - name: Publicar o instalador como artefato
         uses: actions/upload-artifact@v4
         with:
           name: WorkspaceAcessoRemoto-exe
-          path: remote-agent/dist/WorkspaceAcessoRemoto.exe
+          path: remote-agent/dist/WorkspaceAcessoRemoto-Setup.exe
           if-no-files-found: error
 
   build-linux:
