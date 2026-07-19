@@ -33,6 +33,25 @@ const supabase =
 
 // Fallback env key used only if a chatbot has no key of its own.
 const fallbackAnthropicKey = process.env.ANTHROPIC_API_KEY || null;
+const fallbackGeminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
+const fallbackOpenaiKey = process.env.OPENAI_API_KEY || null;
+
+// Resolve a chave de IA de um agente. Se o agente NÃO tiver chave própria, usa:
+// (1) a chave de env do provedor; senão (2) a chave de OUTRO chatbot da empresa
+// com o MESMO provedor (a "já fornecida"). Assim nenhum agente fica sem IA.
+const companyKeyCache = new Map();
+async function resolveAgentKey(companyId, provider) {
+  const env = provider === "anthropic" ? fallbackAnthropicKey : provider === "gemini" ? fallbackGeminiKey : provider === "openai" ? fallbackOpenaiKey : null;
+  if (env) return env;
+  if (!companyId || !supabase) return null;
+  const ck = `${companyId}:${provider}`;
+  const cached = companyKeyCache.get(ck);
+  if (cached && Date.now() - cached.at < 60000) return cached.key;
+  const { data } = await supabase.from("chatbots").select("api_key").eq("company_id", companyId).eq("provider", provider).not("api_key", "is", null).limit(1).maybeSingle();
+  const key = data?.api_key || null;
+  companyKeyCache.set(ck, { key, at: Date.now() });
+  return key;
+}
 // ElevenLabs: transcrição de áudio (STT) + voz do robô (TTS). Opcional.
 const elevenKey = process.env.ELEVENLABS_API_KEY || null;
 const elevenVoiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // voz padrão
@@ -685,7 +704,7 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
   const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}`;
 
   const provider = chatbot?.provider || "anthropic";
-  const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
+  const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
   if (!key) return null;
 
   const hist = Array.isArray(history) ? history.filter((h) => h && h.text) : [];
@@ -978,6 +997,18 @@ const COPILOT_TOOLS = [
       "Tira um PRINT da tela do computador de um CLIENTE e anexa aqui no chat. Use quando o cliente reportar um erro e quiser mostrar a tela dele. SEMPRE identifique o cliente; se o cliente tiver mais de um computador, PERGUNTE qual (a ferramenta devolve as opções). Passe 'computer' com o nome da máquina quando souber.",
     input_schema: { type: "object", properties: { client: { type: "string" }, computer: { type: "string" } }, required: ["client"] },
   },
+  {
+    name: "graph_overview",
+    description:
+      "Panorama do GRAFO da empresa: as pastas de topo (raízes) e um resumo de quantos itens tem. Use quando perguntarem 'o que temos', 'quais pastas/servidores existem', 'me mostra tudo'. Depois use list_folder para entrar numa pasta.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_servers",
+    description:
+      "Lista os SERVIDORES/computadores da empresa (nome, online/offline, e a pasta do grafo de cada um). Use para saber quais máquinas existem e o que cada uma guarda.",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1093,6 +1124,30 @@ async function copilotAction(companyId, name, input) {
       const arquivos = (kids || []).filter((k) => k.type === "file").map((k) => k.name);
       return { pasta: folder.name, subpastas: pastas, arquivos, total_subpastas: pastas.length, total_arquivos: arquivos.length };
     }
+    if (name === "graph_overview") {
+      const { data: roots } = await supabase.from("files").select("id,name").eq("company_id", companyId).eq("type", "folder").is("parent_id", null).order("name");
+      const out = [];
+      for (const r of roots || []) {
+        const { count: subFolders } = await supabase.from("files").select("id", { count: "exact", head: true }).eq("parent_id", r.id).eq("type", "folder");
+        const { count: files } = await supabase.from("files").select("id", { count: "exact", head: true }).eq("parent_id", r.id).eq("type", "file");
+        out.push({ pasta: r.name, subpastas: subFolders || 0, arquivos: files || 0 });
+      }
+      return { pastas_de_topo: out, total: out.length };
+    }
+    if (name === "list_servers") {
+      const { data: servers } = await supabase.from("remote_agents").select("name,status,last_seen,is_server,graph_folder_id").eq("company_id", companyId).order("name");
+      const list = [];
+      for (const s of servers || []) {
+        let folder = null;
+        if (s.graph_folder_id) {
+          const { data: f } = await supabase.from("files").select("name").eq("id", s.graph_folder_id).maybeSingle();
+          folder = f?.name || null;
+        }
+        const online = s.status === "online" && s.last_seen && Date.now() - new Date(s.last_seen).getTime() < 60000;
+        list.push({ nome: s.name, online, servidor: s.is_server === true, pasta_no_grafo: folder });
+      }
+      return { computadores: list, total: list.length };
+    }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
     return { ok: false, message: String(e?.message || e) };
@@ -1207,11 +1262,26 @@ async function copilotSearchFiles(companyId, query) {
   if (!q || !companyId) return [];
   const { data } = await supabase
     .from("files")
-    .select("id,name,type,storage_path,data_url")
+    .select("id,name,type,storage_path,data_url,parent_id")
     .eq("company_id", companyId)
     .ilike("name", `%${q}%`)
-    .limit(15);
-  return (data ?? []).map((f) => ({ id: f.id, name: f.name, type: f.type, hasContent: Boolean(f.storage_path || f.data_url) }));
+    .limit(20);
+  const rows = data ?? [];
+  // Descobre o nome da pasta de origem de cada resultado (pra IA dizer "de que
+  // pasta veio" e numerar a lista).
+  const parentIds = [...new Set(rows.map((r) => r.parent_id).filter(Boolean))];
+  const nameById = new Map();
+  if (parentIds.length) {
+    const { data: parents } = await supabase.from("files").select("id,name").in("id", parentIds);
+    for (const p of parents || []) nameById.set(p.id, p.name);
+  }
+  return rows.map((f) => ({
+    id: f.id,
+    name: f.name,
+    type: f.type,
+    pasta: f.parent_id ? nameById.get(f.parent_id) || null : null,
+    hasContent: Boolean(f.storage_path || f.data_url),
+  }));
 }
 
 async function copilotLoadFile(companyId, id) {
@@ -1235,9 +1305,11 @@ async function copilotLoadFile(companyId, id) {
 // Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
 // (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
 async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false) {
-  const provider = chatbot?.api_key ? chatbot.provider || "anthropic" : fallbackAnthropicKey ? "anthropic" : null;
-  const key = chatbot?.api_key || (provider === "anthropic" ? fallbackAnthropicKey : null);
-  if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot).", files: [] };
+  // Provedor: o do agente (se tiver chave própria); senão o do agente mesmo, e a
+  // chave cai no fallback (env ou de outro chatbot da empresa com o mesmo provedor).
+  const provider = chatbot?.provider || "anthropic";
+  const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
+  if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot ou no Labs).", files: [] };
   const name = await companyName(companyId);
   const testMode = chatbot?.test_mode !== false;
   const system =
@@ -1256,7 +1328,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `Ao enviar mensagem/arquivo para alguém, CONFIRME o destinatário juntando NOME + TELEFONE (ex.: "confirmando: João, +55 11 9...., certo?") antes de mandar. ` +
     `Se for algo ROTINEIRO que você já fez com o mesmo contato, seja direto e não fique repetindo perguntas de confirmação bobas. ` +
     `FINANCEIRO: você pode consultar e lançar no financeiro DA EMPRESA. Para 'como está o financeiro', 'quais os gastos', saldo do mês, use finance_summary e dê um PANORAMA claro (receitas, despesas, saldo e principais gastos), com um conselho curto pro dono (ex.: alertar se as despesas passaram das receitas). Para lançar, use add_finance_entry (confirme o valor antes). ` +
-    `Ao listar arquivos/pastas, mande em TEXTO organizado (use list_folder) — uma lista de itens, não frase corrida. ` +
+    `VISÃO DO GRAFO: você tem acesso a TUDO — use graph_overview para ver as pastas de topo, list_servers para os computadores/servidores, e list_folder para entrar numa pasta. ` +
+    `Ao listar, mande VISUAL e organizado: cada pasta com 📁 e cada arquivo com 📄, um por linha, mostrando as subpastas e os arquivos que tem dentro. Nada de frase corrida. ` +
+    `Ao procurar um ARQUIVO pelo nome (search_files): se a pessoa não disse a pasta e vier mais de um resultado, PERGUNTE se ela tem preferência de pasta; se ela disser que não, LISTE todos os resultados NUMERADOS (1, 2, 3…) mostrando o nome e de qual PASTA veio, e peça o número. ` +
     `SUPORTE REMOTO: se pedirem para ver a tela de um cliente (ex.: 'tira um print da máquina do fulano'), use screenshot_client. SEMPRE saiba QUAL CLIENTE e, se ele tiver mais de um computador, PERGUNTE qual antes. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
@@ -1268,7 +1342,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   // Ferramentas liberadas pelas CAPACIDADES do agente (Labs). Vazio/nulo = todas.
   const caps = Array.isArray(chatbot?.capabilities) ? chatbot.capabilities : null;
   const CAP_TOOLS = {
-    files: ["search_files", "send_file", "list_folder"],
+    files: ["search_files", "send_file", "list_folder", "graph_overview", "list_servers"],
     tasks: ["list_sectors", "list_employees", "create_task", "list_tasks", "move_task"],
     clients: ["lookup_client", "create_client"],
     announcements: ["post_announcement"],

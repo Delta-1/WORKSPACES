@@ -127,6 +127,16 @@ const TOOLS: Anthropic.Tool[] = [
     description: "Lista em texto o conteúdo de uma pasta pelo nome (subpastas e arquivos).",
     input_schema: { type: "object", properties: { folder: { type: "string" } }, required: ["folder"] },
   },
+  {
+    name: "graph_overview",
+    description: "Panorama do grafo: pastas de topo com contagem de subpastas e arquivos.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_servers",
+    description: "Lista os computadores/servidores da empresa (nome, online, pasta no grafo).",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 type Ctx = { userId: string | null; companyId: string | null };
@@ -245,6 +255,24 @@ async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: 
       const pastas = ((kids ?? []) as { name: string; type: string }[]).filter((k) => k.type === "folder").map((k) => k.name);
       const arquivos = ((kids ?? []) as { name: string; type: string }[]).filter((k) => k.type === "file").map((k) => k.name);
       return { pasta: folder.name, subpastas: pastas, arquivos, total_subpastas: pastas.length, total_arquivos: arquivos.length };
+    }
+    if (name === "graph_overview") {
+      const { data: roots } = await client.from("files").select("id,name").eq("type", "folder").is("parent_id", null).order("name");
+      const out: { pasta: string; subpastas: number; arquivos: number }[] = [];
+      for (const r of (roots ?? []) as { id: string; name: string }[]) {
+        const { count: sub } = await client.from("files").select("id", { count: "exact", head: true }).eq("parent_id", r.id).eq("type", "folder");
+        const { count: fil } = await client.from("files").select("id", { count: "exact", head: true }).eq("parent_id", r.id).eq("type", "file");
+        out.push({ pasta: r.name, subpastas: sub || 0, arquivos: fil || 0 });
+      }
+      return { pastas_de_topo: out };
+    }
+    if (name === "list_servers") {
+      const { data: servers } = await client.from("remote_agents").select("name,status,last_seen,is_server").order("name");
+      return (servers ?? []).map((s: { name: string; status: string; last_seen: string | null; is_server: boolean | null }) => ({
+        nome: s.name,
+        online: s.status === "online" && !!s.last_seen && Date.now() - new Date(s.last_seen).getTime() < 60000,
+        servidor: s.is_server === true,
+      }));
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
