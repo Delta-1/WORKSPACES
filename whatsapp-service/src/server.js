@@ -291,7 +291,7 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
       const { data: reopened } = await supabase
         .from("conversations")
         // Novo chamado: o bot volta a responder (tira o silêncio e o atendente antigo).
-        .update({ status: "espera", closed_at: null, bot_paused: false, assignee_id: null, number_id: numberId ?? existing.number_id })
+        .update({ status: "espera", closed_at: null, bot_paused: false, assignee_id: null, closing_sent: false, number_id: numberId ?? existing.number_id })
         .eq("id", existing.id)
         .select("*")
         .single();
@@ -1740,12 +1740,17 @@ async function startSession(numberId) {
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
             if (!isCopilot && !continuous && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
+              // Já fechou e mandou a despedida uma vez? Não repete — só encerra em silêncio.
+              if (conversation.closing_sent || conversation.status === "fechado") {
+                await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true }).eq("id", conversation.id);
+                return;
+              }
               const info = await getCompanyInfo(cid);
               let msg = "Perfeito, vou encerrar nosso atendimento então. Muito obrigado pelo contato! 😊";
               if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
               const g = await sock.sendMessage(jid, { text: msg });
               await logMessage(conversation.id, "out", msg, null, null, cid, g?.key?.id ?? null);
-              await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true }).eq("id", conversation.id);
+              await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true, closing_sent: true }).eq("id", conversation.id);
               void generateContactReport({ ...conversation, status: "fechado" });
               return;
             }
@@ -1898,7 +1903,7 @@ async function startSession(numberId) {
                 }
                 await supabase
                   .from("conversations")
-                  .update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null, bot_paused: true })
+                  .update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null, bot_paused: true, closing_sent: true })
                   .eq("id", conversation.id);
                 void generateContactReport({ ...conversation, status: "fechado" });
               } else if (intent === "handoff") {
@@ -2420,17 +2425,25 @@ async function attendanceSweep() {
       .select("*")
       .in("status", ["espera", "atendendo"])
       .lt("last_message_at", minCutoff)
+      .order("last_message_at", { ascending: false })
       .limit(50);
+    // Um contato pode ter mais de uma conversa aberta (dados antigos, corridas).
+    // Só a MAIS RECENTE recebe a despedida; as demais fecham EM SILÊNCIO — senão o
+    // cliente recebe "como não tivemos retorno" várias vezes (o loop que ele viu).
+    const farewellDone = new Set();
     for (const conv of stale || []) {
       const info = await getCompanyInfo(conv.company_id);
       const minutes = Number(info?.auto_close_minutes || 0);
       if (minutes <= 0) continue;
       const age = Date.now() - new Date(conv.last_message_at || conv.updated_at || Date.now()).getTime();
       if (age < minutes * 60000) continue;
+      // Fecha (uma vez que a despedida saiu para este contato, marca como enviada).
+      const alreadyGreeted = conv.closing_sent || farewellDone.has(conv.contact_id);
       await supabase
         .from("conversations")
-        .update({ status: "fechado", closed_at: new Date().toISOString() })
+        .update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true, closing_sent: true })
         .eq("id", conv.id);
+      if (alreadyGreeted) continue; // já mandou a despedida uma vez — fecha calado.
       try {
         // IA CONTÍNUA fecha em SILÊNCIO (não manda "como não tivemos retorno").
         const { chatbot: numBot } = await getNumberConfig(conv.number_id);
@@ -2438,6 +2451,7 @@ async function attendanceSweep() {
         const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conv.contact_id).maybeSingle();
         const to = contact?.jid || contact?.phone;
         if (to) {
+          farewellDone.add(conv.contact_id);
           let msg = "Como não tivemos retorno, vou encerrar nosso atendimento por aqui. 😊 Qualquer coisa é só chamar!";
           if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
           await sendMessage(conv.number_id, to, msg, null, null).catch(() => {});
