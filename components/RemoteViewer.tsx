@@ -9,9 +9,12 @@ import {
   File as FileIcon,
   Folder,
   FolderOpen,
+  Gamepad2,
   Gauge,
   Home,
   Keyboard,
+  Settings,
+  Wifi,
   Laptop,
   ListTree,
   Monitor as MonitorIcon,
@@ -76,6 +79,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const [showSettings, setShowSettings] = useState(false);
   const [orbOpen, setOrbOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [gameMode, setGameMode] = useState(false);
   const [mouseSens, setMouseSens] = useState(1);
   const [scrollSens, setScrollSens] = useState(1);
   useEffect(() => {
@@ -800,6 +804,9 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             >
               <Keyboard size={14} /> Teclado
             </button>
+            <button onClick={() => setGameMode(true)} title="Modo Game: jogar no computador pelo celular" className="flex items-center gap-1 text-xs bg-fuchsia-600 hover:bg-fuchsia-500 text-white px-3 py-2 rounded-lg cursor-pointer">
+              <Gamepad2 size={14} /> Game
+            </button>
             <button onClick={() => combo("home")} title="Tecla casa (menu iniciar)" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <Home size={14} /> Início
             </button>
@@ -881,6 +888,246 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
 
       {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={() => setOrbOpen(false)} />}
       {toolsOpen && <ToolsPicker title="Instalar no cliente" actionLabel="abrir/instalar" onPick={openToolOnClient} onClose={() => setToolsOpen(false)} />}
+      {gameMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} onExit={() => setGameMode(false)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MODO GAME — jogar no computador remoto pelo celular: tela em paisagem,
+// joystick virtual (WASD) + botões de ação configuráveis, mira por toque, e
+// indicadores de conexão (latência) e FPS. Prioriza a resposta rápida.
+// ---------------------------------------------------------------------------
+type GameCfg = { up: string; down: string; left: string; right: string; buttons: { label: string; key: string }[] };
+const DEFAULT_GAME_CFG: GameCfg = {
+  up: "w", down: "s", left: "a", right: "d",
+  buttons: [
+    { label: "Pular", key: "Space" },
+    { label: "Ação", key: "e" },
+    { label: "Correr", key: "Shift" },
+    { label: "Agachar", key: "Control" },
+  ],
+};
+
+function GameOverlay({
+  sendInput,
+  pcRef,
+  videoRef,
+  onExit,
+}: {
+  sendInput: (ev: object) => void;
+  pcRef: React.RefObject<RTCPeerConnection | null>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  onExit: () => void;
+}) {
+  const [cfg, setCfg] = useState<GameCfg>(() => {
+    try { const s = localStorage.getItem("remote:gameCfg"); if (s) return { ...DEFAULT_GAME_CFG, ...JSON.parse(s) }; } catch {}
+    return DEFAULT_GAME_CFG;
+  });
+  const [showCfg, setShowCfg] = useState(false);
+  const [ping, setPing] = useState<number | null>(null);
+  const [fps, setFps] = useState<number | null>(null);
+  const pressed = useRef<Set<string>>(new Set());
+  const joyRef = useRef<HTMLDivElement>(null);
+  const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const joyTouch = useRef<number | null>(null);
+  const aimTouch = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+
+  // Paisagem + tela cheia (best-effort).
+  useEffect(() => {
+    (async () => {
+      try { await document.documentElement.requestFullscreen?.(); } catch {}
+      try { await (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape"); } catch {}
+    })();
+    return () => {
+      try { (screen.orientation as unknown as { unlock?: () => void })?.unlock?.(); } catch {}
+      try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch {}
+      // solta qualquer tecla que ficou pressionada
+      for (const k of pressed.current) sendInput({ kind: "key", key: k, down: false });
+      pressed.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Latência (RTT) via estatísticas do WebRTC.
+  useEffect(() => {
+    const t = setInterval(async () => {
+      const pc = pcRef.current;
+      if (!pc) return;
+      try {
+        const stats = await pc.getStats();
+        let rtt: number | null = null;
+        stats.forEach((r) => {
+          if (r.type === "candidate-pair" && (r.state === "succeeded" || r.nominated) && typeof r.currentRoundTripTime === "number") {
+            rtt = Math.round(r.currentRoundTripTime * 1000);
+          }
+        });
+        setPing(rtt);
+      } catch {}
+    }, 1500);
+    return () => clearInterval(t);
+  }, [pcRef]);
+
+  // Contador de FPS do vídeo recebido (quando o navegador suporta).
+  useEffect(() => {
+    const v = videoRef.current as (HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }) | null;
+    if (!v || !v.requestVideoFrameCallback) return;
+    let frames = 0, raf = 0, last = performance.now();
+    const loop = () => {
+      frames++;
+      const now = performance.now();
+      if (now - last >= 1000) { setFps(frames); frames = 0; last = now; }
+      raf = v.requestVideoFrameCallback!(loop);
+    };
+    raf = v.requestVideoFrameCallback(loop);
+    return () => { try { (v as unknown as { cancelVideoFrameCallback?: (h: number) => void }).cancelVideoFrameCallback?.(raf); } catch {} };
+  }, [videoRef]);
+
+  function hold(key: string, down: boolean) {
+    if (down) { if (pressed.current.has(key)) return; pressed.current.add(key); }
+    else { if (!pressed.current.has(key)) return; pressed.current.delete(key); }
+    sendInput({ kind: "key", key, text: "", down });
+  }
+  // Aplica o vetor do joystick como um conjunto de teclas (WASD).
+  function applyJoystick(dx: number, dy: number, radius: number) {
+    const mag = Math.hypot(dx, dy);
+    const dead = radius * 0.28;
+    const want = new Set<string>();
+    if (mag > dead) {
+      if (dy < -dead) want.add(cfg.up);
+      if (dy > dead) want.add(cfg.down);
+      if (dx < -dead) want.add(cfg.left);
+      if (dx > dead) want.add(cfg.right);
+    }
+    for (const k of [cfg.up, cfg.down, cfg.left, cfg.right]) {
+      if (want.has(k)) hold(k, true); else hold(k, false);
+    }
+  }
+
+  function onJoyStart(e: React.TouchEvent) {
+    const t = e.changedTouches[0];
+    joyTouch.current = t.identifier;
+    moveJoy(t.clientX, t.clientY);
+  }
+  function moveJoy(cx: number, cy: number) {
+    const el = joyRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const radius = r.width / 2;
+    let dx = cx - (r.left + radius);
+    let dy = cy - (r.top + radius);
+    const mag = Math.hypot(dx, dy);
+    if (mag > radius) { dx = (dx / mag) * radius; dy = (dy / mag) * radius; }
+    setKnob({ x: dx, y: dy });
+    applyJoystick(dx, dy, radius);
+  }
+  function onJoyMove(e: React.TouchEvent) {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === joyTouch.current) moveJoy(t.clientX, t.clientY);
+  }
+  function onJoyEnd(e: React.TouchEvent) {
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === joyTouch.current) {
+      joyTouch.current = null;
+      setKnob({ x: 0, y: 0 });
+      for (const k of [cfg.up, cfg.down, cfg.left, cfg.right]) hold(k, false);
+    }
+  }
+
+  // Área de MIRA (lado direito): arrastar = mover o mouse; toque curto = clique.
+  function onAimStart(e: React.TouchEvent) {
+    const t = e.changedTouches[0];
+    aimTouch.current = { id: t.identifier, x: t.clientX, y: t.clientY, moved: false };
+  }
+  function onAimMove(e: React.TouchEvent) {
+    const a = aimTouch.current;
+    if (!a) return;
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === a.id) {
+      const dx = t.clientX - a.x, dy = t.clientY - a.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) a.moved = true;
+      sendInput({ kind: "move-rel", dx: dx * 1.6, dy: dy * 1.6 });
+      a.x = t.clientX; a.y = t.clientY;
+    }
+  }
+  function onAimEnd(e: React.TouchEvent) {
+    const a = aimTouch.current;
+    if (!a) return;
+    for (const t of Array.from(e.changedTouches)) if (t.identifier === a.id) {
+      if (!a.moved) sendInput({ kind: "click", button: 0 });
+      aimTouch.current = null;
+    }
+  }
+
+  function saveCfg(next: GameCfg) { setCfg(next); try { localStorage.setItem("remote:gameCfg", JSON.stringify(next)); } catch {} }
+
+  const pingColor = ping == null ? "#9ca3af" : ping < 60 ? "#10b981" : ping < 150 ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div className="fixed inset-0 z-[100] select-none touch-none" style={{ background: "transparent" }}>
+      {/* Área de MIRA cobre a tela toda (os controles ficam por cima) */}
+      <div className="absolute inset-0" onTouchStart={onAimStart} onTouchMove={onAimMove} onTouchEnd={onAimEnd} onTouchCancel={onAimEnd} />
+
+      {/* Barra superior: conexão, FPS, config, sair */}
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 backdrop-blur rounded-full px-4 py-1.5 text-white text-[11px] z-20">
+        <span className="flex items-center gap-1"><Wifi size={13} style={{ color: pingColor }} /> {ping == null ? "—" : `${ping}ms`}</span>
+        <span className="flex items-center gap-1"><Gauge size={13} className="text-fuchsia-300" /> {fps == null ? "—" : `${fps} fps`}</span>
+        <button onClick={() => setShowCfg((v) => !v)} className="flex items-center gap-1 cursor-pointer hover:text-fuchsia-300"><Settings size={13} /> Joystick</button>
+        <button onClick={onExit} className="flex items-center gap-1 cursor-pointer text-red-300 hover:text-red-200"><X size={13} /> Sair</button>
+      </div>
+
+      {/* Joystick (esquerda) */}
+      <div
+        ref={joyRef}
+        onTouchStart={onJoyStart}
+        onTouchMove={onJoyMove}
+        onTouchEnd={onJoyEnd}
+        onTouchCancel={onJoyEnd}
+        className="absolute bottom-8 left-8 w-36 h-36 rounded-full border-2 border-white/25 bg-black/25 backdrop-blur-sm z-20"
+      >
+        <div className="absolute w-16 h-16 rounded-full bg-white/30 border border-white/40" style={{ left: "50%", top: "50%", transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }} />
+      </div>
+
+      {/* Botões de ação (direita) */}
+      <div className="absolute bottom-8 right-8 grid grid-cols-2 gap-3 z-20">
+        {cfg.buttons.map((b, i) => (
+          <button
+            key={i}
+            onTouchStart={(e) => { e.preventDefault(); hold(b.key, true); }}
+            onTouchEnd={(e) => { e.preventDefault(); hold(b.key, false); }}
+            onTouchCancel={() => hold(b.key, false)}
+            className="w-20 h-20 rounded-full bg-fuchsia-600/70 border-2 border-white/30 text-white text-xs font-bold flex items-center justify-center active:bg-fuchsia-500/90"
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Config do joystick/botões */}
+      {showCfg && (
+        <div className="absolute inset-0 z-30 bg-black/70 flex items-center justify-center p-4" onClick={() => setShowCfg(false)}>
+          <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-4 space-y-3 max-h-[85vh] overflow-y-auto custom-scroll" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2"><Gamepad2 size={15} className="text-fuchsia-400" /> Personalizar controles</h3>
+              <button onClick={() => setShowCfg(false)} className="p-1 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer"><X size={16} /></button>
+            </div>
+            <p className="text-[11px] text-gray-400">Digite a tecla que cada direção/botão envia (ex.: w, a, s, d, Space, Shift, Control, e, Enter, ArrowUp).</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["up", "down", "left", "right"] as const).map((d) => (
+                <label key={d} className="text-[11px] text-gray-300">
+                  {d === "up" ? "Cima" : d === "down" ? "Baixo" : d === "left" ? "Esquerda" : "Direita"}
+                  <input value={cfg[d]} onChange={(e) => saveCfg({ ...cfg, [d]: e.target.value })} className="w-full mt-1 bg-black/30 border border-white/10 rounded px-2 py-1 text-white text-sm outline-none font-mono" />
+                </label>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 pt-1">Botões de ação:</p>
+            {cfg.buttons.map((b, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input value={b.label} onChange={(e) => { const bs = cfg.buttons.slice(); bs[i] = { ...bs[i], label: e.target.value }; saveCfg({ ...cfg, buttons: bs }); }} placeholder="Nome" className="flex-1 bg-black/30 border border-white/10 rounded px-2 py-1 text-white text-sm outline-none" />
+                <input value={b.key} onChange={(e) => { const bs = cfg.buttons.slice(); bs[i] = { ...bs[i], key: e.target.value }; saveCfg({ ...cfg, buttons: bs }); }} placeholder="Tecla" className="w-28 bg-black/30 border border-white/10 rounded px-2 py-1 text-white text-sm outline-none font-mono" />
+              </div>
+            ))}
+            <button onClick={() => saveCfg(DEFAULT_GAME_CFG)} className="text-[11px] text-gray-400 hover:text-white cursor-pointer">Restaurar padrão (WASD)</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -731,12 +731,20 @@ ipcMain.on("input", async (_e, ev) => {
 
 function mapKey(Key, name) {
   const map = {
-    Enter: Key.Enter, Backspace: Key.Backspace, Tab: Key.Tab, Escape: Key.Escape, " ": Key.Space,
+    Enter: Key.Enter, Backspace: Key.Backspace, Tab: Key.Tab, Escape: Key.Escape, Esc: Key.Escape,
+    " ": Key.Space, Space: Key.Space, Spacebar: Key.Space,
     ArrowLeft: Key.Left, ArrowRight: Key.Right, ArrowUp: Key.Up, ArrowDown: Key.Down,
     Delete: Key.Delete, Home: Key.Home, End: Key.End,
-    Control: Key.LeftControl, Shift: Key.LeftShift, Alt: Key.LeftAlt, Meta: Key.LeftSuper,
+    Control: Key.LeftControl, Ctrl: Key.LeftControl, Shift: Key.LeftShift, Alt: Key.LeftAlt, Meta: Key.LeftSuper,
   };
-  return map[name] ?? null;
+  if (map[name]) return map[name];
+  // Letras (WASD e afins) e dígitos — usado pelo modo GAME (segurar tecla).
+  if (typeof name === "string" && name.length === 1) {
+    const c = name.toLowerCase();
+    if (c >= "a" && c <= "z") return Key[name.toUpperCase()] ?? null;
+    if (c >= "0" && c <= "9") return Key["Num" + c] ?? null;
+  }
+  return null;
 }
 
 // Garante uma única instância rodando (evita duplicar quando abre de novo).
