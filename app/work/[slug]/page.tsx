@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Bot, Download, Eye, KeyRound, Send, X } from "lucide-react";
+import { Bot, Download, Eye, KeyRound, LogIn, LogOut, Send, User, X } from "lucide-react";
 
 type Info = { name: string; logo_url: string | null; theme_color: string; icon_color: string | null; download_url: string | null };
 type Msg = { role: "user" | "assistant"; text: string };
@@ -22,6 +22,10 @@ export default function WorkPage() {
   const [linked, setLinked] = useState(false);
   const [mode, setMode] = useState<"guiado" | "autonomo">("guiado");
   const [sessionId, setSessionId] = useState("");
+  // Login próprio (cliente.IA): guarda um token de sessão + nome de usuário.
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
+  const [showAuth, setShowAuth] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,7 +33,18 @@ export default function WorkPage() {
     try { sid = localStorage.getItem("work_sid") || ""; } catch {}
     if (!sid) { sid = Math.random().toString(36).slice(2) + Date.now().toString(36); try { localStorage.setItem("work_sid", sid); } catch {} }
     setSessionId(sid);
+    try { const t = localStorage.getItem("work_token"); const u = localStorage.getItem("work_user"); if (t) { setAuthToken(t); setUsername(u); } } catch {}
   }, []);
+
+  function onAuthed(token: string, user: string) {
+    setAuthToken(token); setUsername(user); setShowAuth(false);
+    try { localStorage.setItem("work_token", token); localStorage.setItem("work_user", user); } catch {}
+  }
+  async function logout() {
+    if (authToken) fetch("/api/work/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout", slug, work_token: authToken }) }).catch(() => {});
+    setAuthToken(null); setUsername(null);
+    try { localStorage.removeItem("work_token"); localStorage.removeItem("work_user"); } catch {}
+  }
 
   useEffect(() => {
     if (!slug) return;
@@ -149,6 +164,9 @@ export default function WorkPage() {
       if (data.url) {
         setLinked(true);
         setShowCode(false);
+        // Se a pessoa está logada, vincula a máquina à conta dela e renomeia
+        // para "usuário — máquina" (fica fácil de achar no acesso da empresa).
+        if (authToken) fetch("/api/work/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "link", slug, work_token: authToken, access_code: c }) }).catch(() => {});
         setMsgs((m) => [...m, { role: "assistant", text: `Pronto, conectei no seu computador${data.agent ? ` (${data.agent})` : ""}! Agora consigo ver sua tela. Me diga o que você quer fazer.` }]);
       } else {
         setMsgs((m) => [...m, { role: "assistant", text: data.error || "Não consegui conectar com esse código." }]);
@@ -195,6 +213,16 @@ export default function WorkPage() {
             <p className="font-bold truncate">{info?.name || "Workspace.IA"}</p>
             <p className="text-[11px] text-gray-400">Assistente • {linked ? "vendo sua tela" : "online"}</p>
           </div>
+          {username ? (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] text-gray-300 flex items-center gap-1"><User size={12} /> {username}</span>
+              <button onClick={logout} title="Sair" className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-400"><LogOut size={14} /></button>
+            </div>
+          ) : (
+            <button onClick={() => setShowAuth(true)} className="shrink-0 text-[11px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 cursor-pointer">
+              <LogIn size={13} /> Entrar
+            </button>
+          )}
         </header>
 
         {/* Mensagens */}
@@ -270,6 +298,56 @@ export default function WorkPage() {
         </div>
         <p className="text-[10px] text-gray-600 text-center pb-3">Assistente público. Não compartilhe senhas ou dados sensíveis.</p>
       </div>
+      {showAuth && <AuthModal slug={slug} accent={accent} onAuthed={onAuthed} onClose={() => setShowAuth(false)} />}
     </main>
+  );
+}
+
+// Login/cadastro do cliente.IA (e-mail + senha + nome de usuário).
+function AuthModal({ slug, accent, onAuthed, onClose }: { slug: string; accent: string; onAuthed: (t: string, u: string) => void; onClose: () => void }) {
+  const [tab, setTab] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [uname, setUname] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/work/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: tab, slug, email, password, username: uname }),
+      });
+      const data = await res.json();
+      if (data.token) onAuthed(data.token, data.username || email);
+      else setErr(data.error || "Não deu certo.");
+    } catch { setErr("Falha de conexão."); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-xs bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold">{tab === "login" ? "Entrar" : "Criar conta"}</h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+        </div>
+        <p className="text-[11px] text-gray-400">Entre para salvar seu histórico e vincular seu computador.</p>
+        {tab === "signup" && (
+          <input value={uname} onChange={(e) => setUname(e.target.value)} placeholder="Nome de usuário" className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        )}
+        <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="E-mail" className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Senha" onKeyDown={(e) => e.key === "Enter" && submit()} className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        {err && <p className="text-[11px] text-red-300">{err}</p>}
+        <button onClick={submit} disabled={busy || !email || !password} className="w-full py-2 rounded-lg text-white text-sm cursor-pointer disabled:opacity-50" style={{ background: accent }}>
+          {busy ? "…" : tab === "login" ? "Entrar" : "Criar conta"}
+        </button>
+        <button onClick={() => { setTab(tab === "login" ? "signup" : "login"); setErr(null); }} className="w-full text-[11px] text-gray-400 hover:text-white cursor-pointer">
+          {tab === "login" ? "Não tem conta? Criar uma" : "Já tem conta? Entrar"}
+        </button>
+      </div>
+    </div>
   );
 }
