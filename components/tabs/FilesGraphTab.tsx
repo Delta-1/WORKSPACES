@@ -140,6 +140,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   const viewRef = useRef(view);
   useEffect(() => { viewRef.current = view; }, [view]);
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  // Multitouch: dedos ativos + estado do "pinch" (zoom com dois dedos, natural).
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ dist: number; midX: number; midY: number; view: { scale: number; tx: number; ty: number } } | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const visibleIdsRef = useRef<Set<string>>(new Set());
   const downInfo = useRef<{ x: number; y: number; moved: boolean } | null>(null);
@@ -766,8 +769,35 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     });
   }
 
+  // Registra um dedo e, ao chegar no 2º, inicia o "pinch" (zoom com dois dedos):
+  // guarda a distância inicial e o ponto médio, cancelando arrasto/pan em curso.
+  function registerPointer(e: React.PointerEvent) {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 2) startPinch();
+  }
+  function startPinch() {
+    const el = containerRef.current;
+    const pts = [...pointersRef.current.values()];
+    if (!el || pts.length < 2) return;
+    const [a, b] = pts;
+    const rect = el.getBoundingClientRect();
+    pinchRef.current = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      midX: (a.x + b.x) / 2 - rect.left,
+      midY: (a.y + b.y) / 2 - rect.top,
+      view: { ...viewRef.current },
+    };
+    // Cancela qualquer arrasto/pan de um dedo só.
+    panRef.current = null;
+    dragStart.current = null;
+    fixedRef.current.clear();
+    setDragging(null);
+  }
+
   function onPointerDownNode(e: React.PointerEvent, id: string) {
     e.stopPropagation(); // não inicia o pan do fundo
+    registerPointer(e);
+    if (pointersRef.current.size >= 2) return; // 2 dedos = zoom, não arrasta o nó
     downInfo.current = { x: e.clientX, y: e.clientY, moved: false };
     const positions = new Map<string, { x: number; y: number }>();
     const subtree = collectSubtree(id);
@@ -786,6 +816,26 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    // Atualiza a posição deste dedo (se estava registrado).
+    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // ZOOM COM DOIS DEDOS (pinch), natural, em direção ao ponto entre os dedos —
+    // e move junto (dois dedos também arrastam). Igual app de desenho.
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const el = containerRef.current;
+      const pts = [...pointersRef.current.values()];
+      if (!el || pts.length < 2) return;
+      const [a, b] = pts;
+      const rect = el.getBoundingClientRect();
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const midX = (a.x + b.x) / 2 - rect.left;
+      const midY = (a.y + b.y) / 2 - rect.top;
+      const p = pinchRef.current;
+      const scale = Math.max(0.15, Math.min(4, p.view.scale * (dist / p.dist)));
+      const worldX = (p.midX - p.view.tx) / p.view.scale;
+      const worldY = (p.midY - p.view.ty) / p.view.scale;
+      setView({ scale, tx: midX - worldX * scale, ty: midY - worldY * scale });
+      return;
+    }
     // Arrastar o FUNDO = pan (mover a câmera pelo universo).
     if (panRef.current) {
       const p = panRef.current;
@@ -809,6 +859,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   // Pan: arrastar em qualquer lugar do fundo (fora de um nó).
   function onBackgroundPointerDown(e: React.PointerEvent) {
+    registerPointer(e);
+    if (pointersRef.current.size >= 2) return; // 2 dedos = zoom, não faz pan
     if (dragging) return;
     panRef.current = { x: e.clientX, y: e.clientY, tx: viewRef.current.tx, ty: viewRef.current.ty };
     setSelected(null);
@@ -832,7 +884,13 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     setView({ tx: 0, ty: 0, scale: 1 });
   }
 
-  function onPointerUp() {
+  function onPointerUp(e?: React.PointerEvent) {
+    // Tira o dedo que levantou; se sobrar menos de 2, encerra o pinch. Se ainda
+    // houver 1 dedo, ele NÃO vira arrasto (evita "pulo" ao soltar um dedo).
+    if (e) pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size >= 1 && !panRef.current && !dragging) return;
+
     if (panRef.current) { panRef.current = null; return; }
     if (!dragging) return;
     const clickedId = dragging;
@@ -946,7 +1004,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           onPointerDown={onBackgroundPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onPointerLeave={(e) => { if (e.pointerType === "mouse") onPointerUp(e); }}
           onWheel={onWheelZoom}
           className="w-full h-full overflow-hidden relative touch-none cursor-grab active:cursor-grabbing"
         >
