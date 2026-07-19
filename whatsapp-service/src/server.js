@@ -2076,15 +2076,35 @@ async function sendMessage(numberId, to, text, senderId, media) {
   const cid = number?.company_id ?? null;
   const contact = await upsertContact(phone, null, cid, jid);
   if (contact) {
-    const { conversation } = await findOrCreateOpenConversation(contact.id, numberId, number?.sector_id ?? null, cid);
-    await logMessage(conversation.id, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
-    // Um humano respondeu (senderId) → "Sendo atendido" (não mexe se já fechado).
-    if (senderId && conversation.status !== "fechado") {
-      await supabase
+    // Registra na conversa mais recente do contato. Só REABRE uma conversa fechada
+    // quando quem enviou foi um HUMANO (senderId). Mensagens do sistema/robô (ex.:
+    // encerramento por inatividade, senderId nulo) NÃO reabrem — senão o sweep
+    // fechava, mandava, reabria e mandava de novo num loop infinito.
+    const { data: convo } = await supabase
+      .from("conversations")
+      .select("id,status")
+      .eq("contact_id", contact.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let conversationId = convo?.id ?? null;
+    if (!conversationId) {
+      const { data: created } = await supabase
         .from("conversations")
-        .update({ status: "atendendo", assignee_id: senderId })
-        .eq("id", conversation.id)
-        .neq("status", "fechado");
+        .insert({ contact_id: contact.id, status: "atendendo", number_id: numberId, sector_id: number?.sector_id ?? null, company_id: cid })
+        .select("id")
+        .single();
+      conversationId = created?.id ?? null;
+    }
+    if (conversationId) {
+      await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
+      // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
+      if (senderId) {
+        await supabase
+          .from("conversations")
+          .update({ status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true })
+          .eq("id", conversationId);
+      }
     }
   }
 }
