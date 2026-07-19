@@ -410,6 +410,7 @@ export default function ConfigTab({
               </div>
 
               <ReleasePublisher />
+              <WorkspaceIaSection />
             </div>
           )}
 
@@ -604,6 +605,66 @@ function ReleasePublisher() {
       </div>
       <p className="text-[10px] text-gray-500">Você <b>não precisa</b> definir número de versão. Cada "Publicar" marca a data/hora e as máquinas se atualizam a partir dela.</p>
       {msg && <p className={`text-[11px] ${msg.startsWith("✓") ? "text-emerald-400" : "text-gray-400"}`}>{msg}</p>}
+    </div>
+  );
+}
+
+// Workspace.IA — a IA PÚBLICA da empresa: um link que qualquer pessoa abre (sem
+// login) para conversar e ser ajudada a mexer no computador. Aqui você liga/
+// desliga e copia o link para compartilhar.
+function WorkspaceIaSection() {
+  const [slug, setSlug] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("company_settings").select("work_slug, work_enabled").limit(1).maybeSingle().then(({ data }) => {
+      if (data) { setSlug(data.work_slug ?? null); setEnabled(!!data.work_enabled); }
+    });
+  }, []);
+
+  const link = slug && typeof window !== "undefined" ? `${window.location.origin}/work/${slug}` : "";
+
+  async function toggle() {
+    if (!supabase || saving) return;
+    setSaving(true);
+    const next = !enabled;
+    setEnabled(next);
+    const { data: { user } } = await supabase.auth.getUser();
+    let cid: string | null = null;
+    if (user) { const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle(); cid = p?.company_id ?? null; }
+    let q = supabase.from("company_settings").update({ work_enabled: next });
+    q = cid ? q.eq("company_id", cid) : q.not("id", "is", null);
+    await q;
+    setSaving(false);
+  }
+
+  function copy() {
+    if (!link) return;
+    navigator.clipboard?.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="pt-3 border-t border-white/10 space-y-3">
+      <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wider">Workspace.IA (link público)</p>
+      <p className="text-[11px] text-gray-400">
+        Uma IA pública da sua empresa: você compartilha o link e <b>qualquer pessoa</b> (sem login) conversa e é ajudada a mexer no
+        computador — inclusive instalando o acesso remoto e sendo guiada passo a passo. Ela <b>não</b> mostra o painel nem dados internos.
+      </p>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={enabled} onChange={toggle} disabled={saving} className="accent-indigo-500" />
+        {enabled ? "Ligado — o link está ativo" : "Desligado — o link não responde"}
+      </label>
+      {enabled && link && (
+        <div className="flex items-center gap-2">
+          <input readOnly value={link} className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none font-mono" onFocus={(e) => e.currentTarget.select()} />
+          <button onClick={copy} className="text-xs px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer whitespace-nowrap">{copied ? "Copiado!" : "Copiar link"}</button>
+        </div>
+      )}
     </div>
   );
 }
