@@ -318,3 +318,15 @@ export type InternalMessage = {
   text: string;
   at: string;
 };
+
+// Ferramenta/aplicativo cadastrado (loja de ferramentas): link para instalar/abrir
+// no computador do cliente (via WhatsApp ou pelo menu do acesso remoto).
+export type Tool = {
+  id: string;
+  company_id: string | null;
+  name: string;
+  description: string | null;
+  icon_url: string | null;
+  url: string;
+  created_at?: string;
+};

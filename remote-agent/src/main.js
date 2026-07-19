@@ -3,7 +3,7 @@
 // - O pareamento (agentId + accessCode) é digitado pelo usuário no 1º uso e
 //   salvo em userData/pairing.json (não precisa mexer em arquivo manualmente).
 // - Injeta mouse/teclado recebidos do operador usando nut.js.
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage, clipboard } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage, clipboard, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -635,6 +635,13 @@ ipcMain.on("input", async (_e, ev) => {
       }
       await mouse.setPosition(new Point(tx, ty));
     };
+    if (ev.kind === "open-url") {
+      // Abre um link (ferramenta/app) no navegador padrão do cliente — usado pelo
+      // menu de Ferramentas do acesso remoto para instalar rápido.
+      const u = String(ev.url || "");
+      if (/^https?:\/\//i.test(u)) shell.openExternal(u);
+      return;
+    }
     if (ev.kind === "move") {
       // Orb autônomo pede smooth; o mouse manual (tempo real) continua instantâneo.
       if (ev.smooth) await glideTo(absX(ev.x), absY(ev.y));

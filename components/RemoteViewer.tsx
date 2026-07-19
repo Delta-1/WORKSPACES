@@ -16,12 +16,15 @@ import {
   ListTree,
   Monitor as MonitorIcon,
   MousePointerClick,
+  Package,
   Server,
   Settings2,
   Upload,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import ToolsPicker from "./ToolsPicker";
+import type { Tool } from "@/lib/types";
 import Orb from "@/components/Orb";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
@@ -72,6 +75,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   // Sensibilidade do mouse (trackpad) e do scroll — personalizável.
   const [showSettings, setShowSettings] = useState(false);
   const [orbOpen, setOrbOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [mouseSens, setMouseSens] = useState(1);
   const [scrollSens, setScrollSens] = useState(1);
   useEffect(() => {
@@ -325,6 +329,12 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     sendInput({ kind: "combo", name });
   }
   // Mostra a bolinha assistente na tela do cliente (enfileira um job pro agente).
+  // Menu de Ferramentas: abre o link do app no navegador do cliente (instala rápido).
+  function openToolOnClient(t: Tool) {
+    setToolsOpen(false);
+    sendInput({ kind: "open-url", url: t.url });
+  }
+
   async function showClientAssistant() {
     if (!supabase) return;
     await supabase.rpc("enqueue_agent_job", { p_agent_id: agent.id, p_kind: "show_orb" });
@@ -780,6 +790,9 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
             <button onClick={showClientAssistant} title="Mostrar a bolinha assistente na tela do cliente" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <Bot size={14} /> Assistente ao cliente
             </button>
+            <button onClick={() => setToolsOpen(true)} title="Instalar uma ferramenta/app na máquina do cliente" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
+              <Package size={14} /> Ferramentas
+            </button>
           </div>
           <input
             ref={kbRef}
@@ -832,6 +845,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       )}
 
       {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={() => setOrbOpen(false)} />}
+      {toolsOpen && <ToolsPicker title="Instalar no cliente" actionLabel="abrir/instalar" onPick={openToolOnClient} onClose={() => setToolsOpen(false)} />}
     </div>
   );
 }

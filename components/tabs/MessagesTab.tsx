@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 import RemoteViewer from "@/components/RemoteViewer";
 
@@ -63,6 +64,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
   const [listMenu, setListMenu] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [reports, setReports] = useState<ContactReport[]>([]);
   const [accessAgent, setAccessAgent] = useState<RemoteAgent | null>(null);
@@ -557,6 +559,29 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     })();
   }
 
+  // Manda o link de uma ferramenta/aplicativo pelo WhatsApp (com bolha otimista).
+  function sendToolLink(t: Tool) {
+    setShowTools(false);
+    if (!selConv?.contacts) return;
+    const text = `📦 ${t.name}${t.description ? `\n${t.description}` : ""}\n${t.url}`;
+    const to = selConv.contacts.jid || selConv.contacts.phone;
+    const numberId = selConv.number_id;
+    const temp: WhatsappMessageRow = {
+      id: `temp-${Date.now()}`, conversation_id: selConv.id, direction: "out", text,
+      media_type: null, media_url: null, media_name: null, media_mime: null, sender_id: profile?.id ?? null, at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, temp]);
+    scrollBottom();
+    (async () => {
+      try {
+        const headers = await authHeaders();
+        const res = await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ to, text, senderId: profile?.id, numberId }) });
+        const data = await res.json();
+        if (!data.success) alert(data.message ?? "Erro ao enviar.");
+      } catch { alert("Erro ao enviar a ferramenta."); }
+    })();
+  }
+
   async function onPickFile(file: File) {
     if (!selConv?.contacts) return;
     setSending(true);
@@ -934,8 +959,11 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               {selConv && (
                 <>
                   <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.currentTarget.value = ""; }} />
-                  <button onClick={() => fileRef.current?.click()} disabled={sending} className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50">
+                  <button onClick={() => fileRef.current?.click()} disabled={sending} className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar imagem, vídeo ou arquivo">
                     <Paperclip size={18} />
+                  </button>
+                  <button onClick={() => setShowTools(true)} disabled={sending} className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar um aplicativo/ferramenta">
+                    <Package size={18} />
                   </button>
                   <button onClick={toggleRecord} disabled={sending} className={`p-2.5 rounded-lg cursor-pointer disabled:opacity-50 ${recording ? "bg-red-600 text-white animate-pulse" : "hover:bg-white/10 text-gray-300"}`}>
                     {recording ? <Square size={18} /> : <Mic size={18} />}
@@ -1013,6 +1041,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
       {accessAgent && <RemoteViewer agent={accessAgent} profile={profile} onClose={() => setAccessAgent(null)} />}
 
+      {showTools && <ToolsPicker title="Enviar aplicativo" actionLabel="enviar" onPick={sendToolLink} onClose={() => setShowTools(false)} />}
       {showLog && selConv?.contacts && (
         <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" onClick={() => setShowLog(false)}>
           <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>

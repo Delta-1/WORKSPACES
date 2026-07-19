@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Download, FolderTree, Image as ImageIcon, MonitorDown, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { Bell, Bot, Building2, Download, FolderTree, Image as ImageIcon, MonitorDown, Package, Palette, Server, Sliders, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
 import ChatbotSection from "./ChatbotSection";
 import ServersSection from "./ServersSection";
+import ToolsManager from "../ToolsManager";
 
 type Corner = CompanySettingsRow["tv_logo_corner"];
 
@@ -28,11 +29,12 @@ const SITE_STYLES: { id: string; name: string; desc: string; swatch: string }[] 
   { id: "paper", name: "Paper", desc: "Claro e limpo (documento)", swatch: "#ffffff" },
 ];
 
-type SectionId = "empresa" | "aparencia" | "instalacao" | "servidores" | "ia" | "chatbot" | "notificacoes";
+type SectionId = "empresa" | "aparencia" | "instalacao" | "ferramentas" | "servidores" | "ia" | "chatbot" | "notificacoes";
 const SECTIONS: { id: SectionId; label: string; icon: typeof Building2 }[] = [
   { id: "empresa", label: "Empresa", icon: Building2 },
   { id: "aparencia", label: "Aparência", icon: Palette },
   { id: "instalacao", label: "Instalação Acesso Remoto", icon: MonitorDown },
+  { id: "ferramentas", label: "Download de Ferramentas", icon: Package },
   { id: "servidores", label: "Servidores", icon: Server },
   { id: "ia", label: "Inteligência Artificial", icon: Sparkles },
   { id: "chatbot", label: "Chatbot", icon: Bot },
@@ -414,6 +416,7 @@ export default function ConfigTab({
             </div>
           )}
 
+          {active === "ferramentas" && <div className="max-w-lg"><ToolsManager /></div>}
           {active === "servidores" && <div className="max-w-lg"><ServersSection /></div>}
           {active === "ia" && <div className="max-w-lg"><AiConfigSection /></div>}
           {active === "chatbot" && <div className="max-w-lg"><ChatbotSection /></div>}
