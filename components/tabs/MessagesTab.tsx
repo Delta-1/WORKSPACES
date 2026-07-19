@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
 import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
@@ -662,11 +662,18 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   }
 
   const thread = selConv ? messages : selColleague ? internal : [];
+  // No CELULAR (estilo Discord): ao abrir uma conversa, esconde os rails de
+  // grupos/contatos e foca no chat; a setinha no topo do chat traz eles de volta.
+  const hasSel = !!(selConv || selColleagueId);
+  function backToList() {
+    setSelConvId(null); selConvRef.current = null;
+    setSelColleagueId(null); selColRef.current = null;
+  }
 
   return (
     <div className="h-full flex overflow-hidden rounded-2xl liquid-glass">
       {/* Rail de servidores (grupos ficam separados aqui) */}
-      <div className="w-16 shrink-0 bg-black/30 flex flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll">
+      <div className={`w-16 shrink-0 bg-black/30 flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
           <MessageSquare size={20} />
         </ServerIcon>
@@ -708,7 +715,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {/* Coluna de canais/contatos */}
-      <div className="w-64 shrink-0 flex flex-col overflow-hidden border-r border-white/10 bg-black/10">
+      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
@@ -832,7 +839,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {/* Chat */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-[#0b0f16]/40">
+      <div className={`flex-1 flex-col overflow-hidden bg-[#0b0f16]/40 ${hasSel ? "flex" : "hidden md:flex"}`}>
         {!selConv && !selColleague ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
             <MessageSquare size={40} className="opacity-30" />
@@ -841,6 +848,10 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
         ) : (
           <>
             <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2.5 shrink-0">
+              {/* Voltar (só no celular): mostra de novo as barras de grupos/contatos */}
+              <button onClick={backToList} title="Voltar para as conversas" className="md:hidden p-1 -ml-1 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer shrink-0">
+                <ArrowLeft size={18} />
+              </button>
               <button
                 onClick={() => selConv && setShowProfile(true)}
                 disabled={!selConv}
