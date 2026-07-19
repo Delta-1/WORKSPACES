@@ -288,7 +288,10 @@ export default function Home() {
   const [superAdmin, setSuperAdmin] = useState(false);
   useEffect(() => {
     if (!supabase) return;
-    supabase.rpc("is_super_admin").then(({ data }) => setSuperAdmin(!!data));
+    supabase.rpc("is_super_admin").then(({ data }) => {
+      setSuperAdmin(!!data);
+      if (data) supabase!.rpc("ensure_hub"); // garante a casa HUB do admin geral
+    });
   }, []);
 
   // Plano da empresa: quais ferramentas estão ligadas (null = todas).
@@ -299,9 +302,11 @@ export default function Home() {
       .then(({ data }) => setEnabledFeatures((data?.enabled_features as FeatureId[]) ?? null));
   }, [profile?.company_id]);
 
+  // O painel "Empresas" só aparece dentro do HUB (a casa do Administrador Geral).
+  const inHub = superAdmin && company.name === "HUB";
   const visibleApps: AppDef[] = [
     ...APPS.filter((a) => a.roles.includes(role) && (a.id === "planos" || appEnabled(a.id, enabledFeatures))),
-    ...(superAdmin ? [{ id: "empresas", label: "Empresas", icon: Building2, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
+    ...(inHub ? [{ id: "empresas", label: "Empresas", icon: Building2, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
   ];
 
   // Barra de acesso rápido personalizável (salva por navegador).
@@ -441,7 +446,7 @@ export default function Home() {
         {tab === "financeiro" && <FinanceTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "clientes_ia" && <ClientsIaTab profile={profile} />}
-        {tab === "empresas" && superAdmin && <AdminCompaniesTab />}
+        {tab === "empresas" && inHub && <AdminCompaniesTab />}
         {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
