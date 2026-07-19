@@ -378,16 +378,17 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     if (a.kind === "clickat" && a.x != null && a.y != null) {
       // Clique num ponto da tela (coordenadas 0..1 que a IA viu no print).
-      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)) });
-      await wait(150);
+      // smooth: o cursor DESLIZA até o ponto (parece humano) e é bem mais preciso.
+      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
+      await wait(360);
       sendInput({ kind: "click", button: 0 });
       return "cliquei no ponto";
     }
     if (a.kind === "doubleclickat" && a.x != null && a.y != null) {
-      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)) });
-      await wait(150);
+      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
+      await wait(360);
       sendInput({ kind: "click", button: 0 });
-      await wait(80);
+      await wait(90);
       sendInput({ kind: "click", button: 0 });
       return "dei duplo clique";
     }
@@ -419,7 +420,8 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   function captureScreen(): { mediaType: string; base64: string } | null {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return null;
-    const scale = Math.min(1, 1200 / v.videoWidth);
+    // Print maior e mais nítido → a IA enxerga ícones/rótulos e mira melhor.
+    const scale = Math.min(1, 1600 / v.videoWidth);
     const c = document.createElement("canvas");
     c.width = Math.round(v.videoWidth * scale);
     c.height = Math.round(v.videoHeight * scale);
@@ -427,7 +429,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
     if (!ctx) return null;
     ctx.drawImage(v, 0, 0, c.width, c.height);
     try {
-      return { mediaType: "image/jpeg", base64: c.toDataURL("image/jpeg", 0.6).split(",")[1] };
+      return { mediaType: "image/jpeg", base64: c.toDataURL("image/jpeg", 0.82).split(",")[1] };
     } catch {
       return null; // tela protegida (DRM) — sem captura
     }

@@ -60,21 +60,22 @@ export default function Orb({
   }, [slot]);
 
   const system = onControl
-    ? `Você é o ${name}, copiloto de voz estilo JARVIS que CONTROLA a máquina remota "${contextLabel || ""}" de forma autônoma. ` +
-      `Seja BREVE e falado. ENTENDA a intenção e AJA na máquina emitindo comandos entre «» na sua resposta (o sistema executa e você narra o que fez):\n` +
-      `• «digitar: TEXTO» — digita o texto no campo em foco.\n` +
-      `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, copy, paste, save, selectall, home).\n` +
-      `• «clique» — clica com o botão esquerdo onde o cursor está.\n` +
-      `• «abrir: APP» — abre um programa pelo nome (ex.: notepad, chrome).\n` +
-      `• «clicar: x,y» — UM clique num ponto; x e y são frações de 0 a 1 (x=esquerda→direita, y=cima→baixo) do CENTRO do elemento.\n` +
-      `• «duploclique: x,y» — DOIS cliques rápidos nesse ponto.\n` +
-      `VOCÊ VÊ A TELA: em cada mensagem vai junto um print atual da máquina remota. OLHE o print e aja.\n` +
-      `REGRA IMPORTANTE PARA ABRIR PROGRAMAS: um ícone na ÁREA DE TRABALHO abre com «duploclique» (um clique só seleciona, NÃO abre!). ` +
-      `Ex.: "abre o Google Chrome" → ache o ícone do Chrome no print e use «duploclique: x,y». ` +
-      `Ícone na BARRA DE TAREFAS ou item do MENU INICIAR abre com um «clicar». ` +
-      `Se o programa NÃO estiver visível na tela, use «tecla: home» (abre o menu iniciar), depois «digitar: nome» e «tecla: enter». ` +
-      `Para baixar de um link: peça o link, então «abrir: chrome» (ou clique no navegador), clique na barra de endereço, «digitar: LINK» e «tecla: enter». ` +
-      `Encadeie vários comandos numa resposta. Fale curtinho o que vai fazer e emita os comandos. Ao ouvir que vão finalizar, despeça-se em uma frase.`
+    ? `Você é o ${name}, copiloto de voz estilo JARVIS que CONTROLA a máquina remota "${contextLabel || ""}" de forma autônoma e PRECISA. ` +
+      `Seja BREVE e falado. ENTENDA a intenção e AJA na máquina emitindo comandos entre «» (o sistema executa e você narra):\n` +
+      `• «digitar: TEXTO» — digita o texto no campo que está EM FOCO.\n` +
+      `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, esc, copy, paste, save, selectall, home).\n` +
+      `• «clique» — clica onde o cursor já está.\n` +
+      `• «abrir: APP» — abre um programa pelo nome via menu (ex.: chrome, notepad, cmd).\n` +
+      `• «clicar: x,y» — UM clique num ponto; x e y são frações de 0 a 1 (x=esquerda→direita, y=cima→baixo) do CENTRO EXATO do elemento.\n` +
+      `• «duploclique: x,y» — DOIS cliques nesse ponto.\n` +
+      `\nCOMO ACERTAR (MUITO IMPORTANTE):\n` +
+      `1) VOCÊ VÊ A TELA: em cada mensagem vem um print ATUAL da máquina. Olhe com atenção, identifique o elemento certo (leia os rótulos/ícones) e mire no CENTRO dele. Não chute — se dois ícones parecem próximos, escolha o que tem o rótulo/logo correto.\n` +
+      `2) TRABALHE EM PASSOS: faça UM passo por vez (no máximo 2 comandos ligados, ex.: clicar num campo E já digitar). Depois da ação eu te mando um NOVO print — confira se deu certo e continue. Se o passo falhou (nada mudou / abriu o errado), CORRIJA no próximo passo.\n` +
+      `3) COMPLETE A TAREFA INTEIRA: não pare no meio. Ex.: "pesquisa X no Google" = clicar na barra de pesquisa → «digitar: X» → «tecla: enter». Clicar no campo e parar NÃO resolve.\n` +
+      `4) ABRIR PROGRAMAS: ícone na ÁREA DE TRABALHO abre com «duploclique» (um clique só seleciona!). Ícone na BARRA DE TAREFAS ou item do MENU INICIAR abre com um «clicar». Se o app não estiver visível, «abrir: nome».\n` +
+      `5) INSTALAR ALGO (ex.: "instala o Minecraft"): abra o navegador padrão, vá ao SITE OFICIAL do programa (digite o endereço oficial na barra e enter), baixe o instalador oficial e execute. Se houver versões/edições diferentes, PERGUNTE qual antes.\n` +
+      `\nQUANDO PERGUNTAR (não adivinhe): se houver DOIS OU MAIS itens com nome parecido/idêntico (ex.: três coisas com "Google" no nome), ou se você NÃO encontrar o ícone/nome no print, PERGUNTE qual a pessoa quer e NÃO emita comando nessa vez — espere a resposta.\n` +
+      `\nQuando a tarefa estiver 100% concluída, diga uma frase curta e termine com «fim». Fale curtinho o que está fazendo a cada passo. Ao ouvir que vão finalizar, despeça-se em uma frase com «fim».`
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
       `arquivos, tarefas, clientes, mural, atendimentos e envio no WhatsApp. Seja BREVE e falado, ENTENDA a intenção, ` +
       `guarde o que já foi dito e responda com CONFIANÇA e clareza. Ao ouvir que a pessoa vai encerrar, despeça-se em uma frase.`;
@@ -127,14 +128,15 @@ export default function Orb({
 
   // Extrai os comandos «…» da resposta, executa cada um na máquina remota
   // (via onControl) e devolve o texto limpo pra falar/exibir.
-  async function runControlCommands(reply: string): Promise<string> {
-    if (!onControl) return reply;
+  async function runControlCommands(reply: string): Promise<{ text: string; count: number }> {
+    if (!onControl) return { text: reply, count: 0 };
     const re = /«\s*([^»]+?)\s*»/g;
     const cmds: { kind: string; text?: string; name?: string; x?: number; y?: number }[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(reply)) !== null) {
       const raw = m[1].trim();
       const low = raw.toLowerCase();
+      if (low === "fim") continue; // marcador de fim — não é comando
       if (low.startsWith("digitar:")) cmds.push({ kind: "type", text: raw.slice(raw.indexOf(":") + 1).trim() });
       else if (low.startsWith("tecla:")) cmds.push({ kind: "key", name: low.slice(low.indexOf(":") + 1).trim() });
       else if (low.startsWith("abrir:")) cmds.push({ kind: "open", text: raw.slice(raw.indexOf(":") + 1).trim() });
@@ -148,34 +150,45 @@ export default function Orb({
     for (const c of cmds) {
       try { await onControl(c); } catch { /* segue */ }
     }
-    // Remove os comandos do texto exibido/falado.
-    return reply.replace(re, "").replace(/\s{2,}/g, " ").trim() || "Feito.";
+    // Remove os comandos e o marcador «fim» do texto exibido/falado.
+    const text = reply.replace(re, "").replace(/\s{2,}/g, " ").trim() || "Feito.";
+    return { text, count: cmds.length };
   }
 
   async function ask(text: string) {
     if (!text.trim()) return;
-    const next: Msg[] = [...msgs, { role: "user", text }];
-    setMsgs(next);
+    let convo: Msg[] = [...msgs, { role: "user", text }];
+    setMsgs(convo);
     setBusy(true);
     try {
-      const headers = await authHeaders();
-      // Visão: no acesso remoto, manda junto o print atual da tela para a IA
-      // "enxergar" e decidir onde clicar.
-      const shot = onControl && getScreenshot ? getScreenshot() : null;
-      const turns = next.map((m) => ({ role: m.role, text: m.text }));
-      if (shot && turns.length) (turns[turns.length - 1] as { image?: { mediaType: string; base64: string } }).image = shot;
-      const res = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ history: turns, system, tools: true, agentId }),
-      });
-      const data = await res.json();
-      let reply = data.reply || "Não entendi, pode repetir?";
-      // Modo autônomo: executa os comandos «…» que a IA emitiu na máquina remota
-      // e remove-os do texto que aparece/é falado.
-      if (onControl) reply = await runControlCommands(reply);
-      setMsgs((m) => [...m, { role: "assistant", text: reply }]);
-      if (voiceOn) speak(reply);
+      // Modo autônomo (acesso remoto): loop passo-a-passo — age, VÊ o resultado
+      // num print novo e continua até terminar («fim») ou parar p/ perguntar.
+      // Modo assessor comum: uma resposta só.
+      const maxSteps = onControl ? 8 : 1;
+      for (let step = 0; step < maxSteps; step++) {
+        const headers = await authHeaders();
+        // Visão: manda o print ATUAL da tela para a IA "enxergar" e decidir.
+        const shot = onControl && getScreenshot ? getScreenshot() : null;
+        const turns = convo.map((m) => ({ role: m.role, text: m.text })) as { role: string; text: string; image?: { mediaType: string; base64: string } }[];
+        if (shot && turns.length) turns[turns.length - 1].image = shot;
+        const res = await fetch("/api/ai/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({ history: turns, system, tools: true, agentId }),
+        });
+        const data = await res.json();
+        const raw: string = data.reply || (step === 0 ? "Não entendi, pode repetir?" : "");
+        let reply = raw;
+        let count = 0;
+        if (onControl) { const r = await runControlCommands(raw); reply = r.text; count = r.count; }
+        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); if (voiceOn) speak(reply); }
+        // Para o loop quando: não é modo controle; a IA não executou nenhum
+        // comando (está falando ou perguntando algo e esperando você); ou marcou «fim».
+        if (!onControl || count === 0 || /«?\s*fim\s*»?/i.test(raw)) break;
+        // Deixa a tela reagir e alimenta o próximo passo com um print novo.
+        await new Promise((r) => setTimeout(r, 1100));
+        convo = [...convo, { role: "user", text: "(feito — aqui está a tela agora. Confira o resultado e continue a tarefa; se já terminou, responda com «fim».)" }];
+      }
     } catch {
       setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema para responder agora." }]);
     } finally {

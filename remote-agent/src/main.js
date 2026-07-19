@@ -578,8 +578,25 @@ ipcMain.on("input", async (_e, ev) => {
     const b = disp.bounds;
     const absX = (nx) => Math.round(b.x + nx * b.width);
     const absY = (ny) => Math.round(b.y + ny * b.height);
+    // Movimento suave (humano): desliza o cursor até o alvo em vários passos, com
+    // desaceleração no fim. Deixa o clique do Orb mais natural e mais preciso.
+    const glideTo = async (tx, ty) => {
+      let cur;
+      try { cur = await mouse.getPosition(); } catch { cur = { x: tx, y: ty }; }
+      const dist = Math.hypot(tx - cur.x, ty - cur.y);
+      const steps = Math.max(6, Math.min(30, Math.round(dist / 35)));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const e = 1 - Math.pow(1 - t, 3); // ease-out
+        await mouse.setPosition(new Point(Math.round(cur.x + (tx - cur.x) * e), Math.round(cur.y + (ty - cur.y) * e)));
+        await new Promise((r) => setTimeout(r, 6));
+      }
+      await mouse.setPosition(new Point(tx, ty));
+    };
     if (ev.kind === "move") {
-      await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
+      // Orb autônomo pede smooth; o mouse manual (tempo real) continua instantâneo.
+      if (ev.smooth) await glideTo(absX(ev.x), absY(ev.y));
+      else await mouse.setPosition(new Point(absX(ev.x), absY(ev.y)));
     } else if (ev.kind === "move-rel") {
       // Movimento relativo (trackpad do celular): desloca o cursor atual.
       const cur = await mouse.getPosition();
@@ -618,6 +635,9 @@ ipcMain.on("input", async (_e, ev) => {
       } else if (ev.name === "tab") {
         await keyboard.pressKey(Key.Tab);
         await keyboard.releaseKey(Key.Tab);
+      } else if (ev.name === "esc" || ev.name === "escape") {
+        await keyboard.pressKey(Key.Escape);
+        await keyboard.releaseKey(Key.Escape);
       } else if (ev.name === "selectall") {
         await keyboard.pressKey(Key.LeftControl, Key.A);
         await keyboard.releaseKey(Key.LeftControl, Key.A);
