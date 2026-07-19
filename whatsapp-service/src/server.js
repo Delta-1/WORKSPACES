@@ -1025,12 +1025,36 @@ const COPILOT_TOOLS = [
       "Lista os SERVIDORES/computadores da empresa (nome, online/offline, e a pasta do grafo de cada um). Use para saber quais máquinas existem e o que cada uma guarda.",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "list_agents",
+    description: "Lista os OUTROS agentes/bots da empresa (nome e função). Use antes de perguntar a um deles.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "ask_agent",
+    description:
+      "Pergunta a OUTRO agente/bot da empresa (pelo nome) e recebe a resposta dele. Use para consultar um especialista — ex.: perguntar ao bot Financeiro, ou repassar uma dúvida a outro atendente. Assim os bots conversam entre si.",
+    input_schema: { type: "object", properties: { agent: { type: "string", description: "nome do agente/bot" }, message: { type: "string" } }, required: ["agent", "message"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
 async function copilotAction(companyId, name, input) {
   input = input || {};
   try {
+    if (name === "list_agents") {
+      const { data } = await supabase.from("chatbots").select("name,persona,slot").eq("company_id", companyId).order("name");
+      return (data ?? []).filter((b) => b.slot !== "internal").map((b) => ({ name: b.name, funcao: b.persona || "" }));
+    }
+    if (name === "ask_agent") {
+      // ECOSSISTEMA: um bot pergunta a outro bot da empresa e devolve a resposta.
+      const { data: bots } = await supabase.from("chatbots").select("*").eq("company_id", companyId);
+      const q = String(input.agent || "").toLowerCase();
+      const target = (bots || []).find((b) => (b.name || "").toLowerCase().includes(q));
+      if (!target) return { ok: false, message: `Não achei um agente chamado "${input.agent}".` };
+      const reply = await runChatbotReply(target, String(input.message || ""), [], "ai", companyId);
+      return { ok: true, agent: target.name, reply: reply || "(o agente não respondeu)" };
+    }
     if (name === "list_sectors") {
       const { data } = await supabase.from("sectors").select("id,name").eq("company_id", companyId).order("name");
       return data ?? [];
