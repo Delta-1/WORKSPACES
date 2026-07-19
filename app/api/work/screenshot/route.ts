@@ -48,9 +48,9 @@ export async function POST(request: Request) {
       .single();
     if (error || !job) return NextResponse.json({ error: "Não consegui pedir o print." }, { status: 500 });
 
-    // Aguarda o agente concluir (result_url) por até ~22s.
-    for (let i = 0; i < 15; i++) {
-      await sleep(1500);
+    // Aguarda o agente concluir (result_url). Poll rápido para dar fluidez.
+    for (let i = 0; i < 22; i++) {
+      await sleep(900);
       const { data: cur } = await supabase.from("agent_jobs").select("status, result_url, error").eq("id", job.id).maybeSingle();
       if (cur?.result_url) return NextResponse.json({ url: cur.result_url, agent: agent.name });
       if (cur?.status === "error") return NextResponse.json({ error: cur.error || "Falhou no computador." }, { status: 502 });

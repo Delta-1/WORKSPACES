@@ -75,14 +75,18 @@ export default function WorkPage() {
       if (low === "fim") continue;
       const after = raw.slice(raw.indexOf(":") + 1);
       if (low.startsWith("apontar:") || low.startsWith("duploapontar:")) {
-        const [coords, label] = after.split("|");
+        const [coords, label, colorRaw] = after.split("|");
         const nums = coords.split(",").map((s) => parseFloat(s.trim()));
         if (nums.length >= 2 && nums.every((n) => Number.isFinite(n))) {
           const dbl = low.startsWith("duplo");
           const x = nums[0] > 1 ? nums[0] / 100 : nums[0];
           const y = nums[1] > 1 ? nums[1] / 100 : nums[1];
           if (mode === "autonomo") { await act({ action: dbl ? "doubleclickat" : "clickat", x, y }); acted = true; }
-          else await act({ action: dbl ? "doubleclickat" : "clickat", x, y, color: "vermelho", label: (label || "").trim() || "clique aqui" });
+          else {
+            // amarelo = "olhe/leia aqui"; vermelho = "clique aqui" (padrão).
+            const color = /amarel|yellow|olh|leia|ve(ja)?/i.test(colorRaw || "") ? "amarelo" : "vermelho";
+            await act({ action: dbl ? "doubleclickat" : "clickat", x, y, color, label: (label || "").trim() || "clique aqui" });
+          }
         }
       } else if (mode === "autonomo" && low.startsWith("digitar:")) { await act({ action: "type", text: after.trim() }); acted = true; }
       else if (mode === "autonomo" && low.startsWith("abrir:")) { await act({ action: "open", text: after.trim() }); acted = true; }
@@ -107,7 +111,7 @@ export default function WorkPage() {
         const res = await fetch("/api/work/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug, session_id: sessionId, text: step === 0 ? text : "(feito — aqui está a tela agora, continue; se terminou responda «fim»)", history: convo.slice(-10), image: img, has_access: linked, mode }),
+          body: JSON.stringify({ slug, session_id: sessionId, text: step === 0 ? text : "(feito — aqui está a tela agora, continue; se terminou responda «fim»)", history: convo.slice(-10), image: img, has_access: linked, mode, access_code: linked ? code.trim() : undefined }),
         });
         const data = await res.json();
         const raw: string = data.answer || data.error || "Não consegui responder.";
@@ -117,7 +121,7 @@ export default function WorkPage() {
         convo = [...convo, { role: "assistant", text: shown }];
         setMsgs(convo);
         if (!linked || mode !== "autonomo" || !acted || /«?\s*fim\s*»?/i.test(raw)) break;
-        await new Promise((r) => setTimeout(r, 1300));
+        await new Promise((r) => setTimeout(r, 800));
         img = await grabScreenshot();
         if (!img) break;
       }
@@ -177,8 +181,8 @@ export default function WorkPage() {
   }
 
   return (
-    <main className="flex-1 flex flex-col items-center bg-gradient-to-b from-[#0b0f16] to-black text-white min-h-screen">
-      <div className="w-full max-w-2xl flex-1 flex flex-col px-4">
+    <main className="fixed inset-0 flex flex-col items-center bg-gradient-to-b from-[#0b0f16] to-black text-white">
+      <div className="w-full max-w-2xl flex-1 min-h-0 flex flex-col px-4">
         {/* Cabeçalho */}
         <header className="flex items-center gap-3 py-4 border-b border-white/10">
           {info?.logo_url ? (
@@ -194,7 +198,7 @@ export default function WorkPage() {
         </header>
 
         {/* Mensagens */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto py-4 space-y-3">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto py-4 space-y-3">
           {msgs.map((m, i) => (
             <div key={i} className={m.role === "user" ? "text-right" : ""}>
               <span
@@ -205,7 +209,7 @@ export default function WorkPage() {
               </span>
             </div>
           ))}
-          {busy && <p className="text-[12px] text-gray-500 italic">digitando…</p>}
+          {busy && <p className="text-[12px] text-gray-500 italic">pensando…</p>}
         </div>
 
         {/* Ações: instalar acesso + conectar código + ver a tela */}

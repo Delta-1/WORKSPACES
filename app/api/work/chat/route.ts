@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,66 @@ type Body = {
   image?: { mediaType: string; base64: string } | null;
   has_access?: boolean;
   mode?: "guiado" | "autonomo";
+  access_code?: string;
 };
+
+// A pessoa que baixou o agente e colou o código vira automaticamente um
+// CLIENTE.IA da empresa (base de computadores para suporte). Também espelha o
+// histórico da conversa num .md dentro da pasta do acesso (no grafo/servidor).
+async function registerIaClientAndHistory(
+  supabase: SupabaseClient,
+  companyId: string | null,
+  code: string,
+  sessionId: string,
+) {
+  try {
+    const { data: agent } = await supabase
+      .from("remote_agents")
+      .select("id, company_id, name, client_id, graph_folder_id")
+      .eq("access_code", code)
+      .maybeSingle();
+    if (!agent || agent.company_id !== companyId) return;
+
+    // 1) Registra como cliente.IA (uma vez), vinculando ao computador.
+    let clientId = agent.client_id as string | null;
+    let folderId = (agent.graph_folder_id as string | null) || null;
+    if (!clientId) {
+      const { data: folder } = await supabase
+        .from("files")
+        .insert({ name: `Cliente.IA: ${agent.name || "computador"}`, type: "folder", parent_id: null, company_id: companyId })
+        .select("id")
+        .single();
+      folderId = folder?.id ?? folderId;
+      const { data: client } = await supabase
+        .from("clients")
+        .insert({ company_id: companyId, name: agent.name || "Cliente.IA", source: "ia", notes: "Registrado automaticamente via Workspace.IA", folder_id: folderId })
+        .select("id")
+        .single();
+      clientId = client?.id ?? null;
+      if (clientId) await supabase.from("remote_agents").update({ client_id: clientId, graph_folder_id: folderId }).eq("id", agent.id);
+    }
+    if (!folderId) return;
+
+    // 2) Espelha o histórico do chat público num .md na pasta do acesso.
+    const { data: msgs } = await supabase
+      .from("work_messages")
+      .select("role, text, created_at")
+      .eq("company_id", companyId)
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: true })
+      .limit(200);
+    const body = (msgs || [])
+      .map((m) => `**${m.role === "user" ? "Cliente" : "IA"}** (${new Date(m.created_at as string).toLocaleString("pt-BR")}):\n${m.text}`)
+      .join("\n\n");
+    const content = `# Histórico Workspace.IA — sessão ${sessionId}\n\n${body}`.slice(0, 100000);
+    const name = `historico_workspace_ia_${sessionId}.md`;
+    const { data: existing } = await supabase.from("files").select("id").eq("parent_id", folderId).eq("name", name).maybeSingle();
+    if (existing?.id) await supabase.from("files").update({ text_content: content }).eq("id", existing.id);
+    else await supabase.from("files").insert({ name, type: "file", parent_id: folderId, company_id: companyId, text_content: content, mime: "text/markdown" });
+  } catch {
+    /* best-effort — não atrapalha a resposta */
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -68,12 +127,12 @@ export async function POST(request: Request) {
 
     const system =
       `Você é o Workspace.IA de "${company.name || "Workspace"}", um assistente PÚBLICO que ajuda qualquer pessoa (sem login). ` +
-      `Seja prático, gentil e direto, em português. Ajude a pessoa a resolver o que ela precisa no computador dela: ` +
+      `Seja prático, gentil, direto e RÁPIDO, em português — pense o passo a passo e já execute, sem enrolar nem repetir. Ajude a pessoa a resolver o que ela precisa no computador dela: ` +
       `procurar/instalar programas, achar coisas, resolver erros — sempre explicando PASSO A PASSO, numerado e simples. ` +
       `Para instalar algo, oriente a ir ao SITE OFICIAL do programa e baixar a versão oficial; se houver edições diferentes, pergunte qual. ` +
       (body.has_access
         ? `A pessoa CONECTOU o acesso remoto e você VÊ A TELA dela (o print vem junto). Você marca/age na tela emitindo comandos entre «» (o sistema executa):\n` +
-          `• «apontar: x,y | rótulo» — marca UM ponto (x,y são frações de 0 a 1 do centro do elemento) com um rótulo curto.\n` +
+          `• «apontar: x,y | rótulo | cor» — marca UM ponto (x,y são frações de 0 a 1 do centro do elemento) com um rótulo curto. A cor é opcional: use "amarelo" para "olhe/leia aqui" e "vermelho" (padrão) para "clique aqui".\n` +
           `• «duploapontar: x,y | rótulo» — ponto que precisa de DOIS cliques (ícone da área de trabalho).\n` +
           (body.mode === "autonomo"
             ? `• «digitar: TEXTO» — digita no campo em foco. • «abrir: APP» — abre um programa. • «tecla: NOME» — enter/tab/esc.\n` +
@@ -127,6 +186,9 @@ export async function POST(request: Request) {
       { company_id: company.company_id, session_id: sid, role: "user", text: text.slice(0, 4000) },
       { company_id: company.company_id, session_id: sid, role: "assistant", text: answer.slice(0, 4000) },
     ]);
+    // Se veio o código do acesso, registra o cliente.IA e salva o histórico.
+    const code = (body.access_code || "").trim();
+    if (code) await registerIaClientAndHistory(supabase, company.company_id, code, sid);
 
     return NextResponse.json({ answer });
   } catch (e) {
