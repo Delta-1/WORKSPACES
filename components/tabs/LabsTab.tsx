@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, BrainCircuit, FlaskConical, GitBranch, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
@@ -97,6 +97,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [editing, setEditing] = useState<Partial<Agent> | null>(null);
+  const [teaching, setTeaching] = useState<Agent | null>(null);
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
 
   const load = useCallback(async () => {
@@ -187,7 +188,8 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
                 </div>
               </div>
               {canManage && (
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => setTeaching(ag)} className="text-[11px] text-emerald-300 hover:text-white cursor-pointer flex items-center gap-0.5" title="Treinar: conversar e ensinar o agente"><BrainCircuit size={12} /> treinar</button>
                   <button onClick={() => setEditing(ag)} className="text-[11px] text-indigo-300 hover:text-white cursor-pointer">editar</button>
                   {!ag.slot && <button onClick={() => remove(ag.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={13} /></button>}
                 </div>
@@ -218,6 +220,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {editing && <AgentEditor agent={editing} profile={profile} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {teaching && <TeachModal agent={teaching} onClose={() => setTeaching(null)} />}
     </div>
   );
 }
@@ -448,6 +451,57 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           onSaved={(flow) => set({ flow })}
         />
       )}
+    </div>
+  );
+}
+
+// TREINAR o agente conversando: ele responde no personagem, faz perguntas e o que
+// é ensinado fica salvo na memória dele (pasta do grafo).
+function TeachModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const [msgs, setMsgs] = useState<{ role: "user" | "assistant"; text: string }[]>([
+    { role: "assistant", text: `Oi! Sou o ${agent.name}. Me ensine como fazer as coisas — eu vou perguntando o que não entender e guardando na minha memória. Pode começar.` },
+  ]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })); }, [msgs, busy]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next = [...msgs, { role: "user" as const, text }];
+    setMsgs(next); setInput(""); setBusy(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/labs/teach", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ agentId: agent.id, message: text, history: msgs.slice(-12) }) });
+      const data = await res.json();
+      setMsgs((m) => [...m, { role: "assistant", text: data.reply || data.error || "…" }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema. Tenta de novo?" }]);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-lg h-[80vh] flex flex-col bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <h3 className="text-sm font-bold flex items-center gap-2"><BrainCircuit size={15} className="text-emerald-400" /> Treinar {agent.name}</h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+        </div>
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-3 space-y-2">
+          {msgs.map((m, i) => (
+            <div key={i} className={m.role === "user" ? "text-right" : ""}>
+              <span className={`inline-block rounded-2xl px-3 py-1.5 text-xs max-w-[85%] whitespace-pre-wrap text-left ${m.role === "user" ? "bg-emerald-600 text-white" : "bg-white/10"}`}>{m.text}</span>
+            </div>
+          ))}
+          {busy && <p className="text-[11px] text-gray-500 italic">pensando…</p>}
+        </div>
+        <div className="p-2 border-t border-white/10 flex items-center gap-2">
+          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Ensine algo ao agente…" className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+          <button onClick={send} disabled={busy || !input.trim()} className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"><Save size={15} /></button>
+        </div>
+        <p className="text-[10px] text-gray-500 px-3 pb-2 -mt-1">Tudo que você ensina fica salvo em <b>treinamento.md</b> na memória do agente (aparece no grafo).</p>
+      </div>
     </div>
   );
 }
