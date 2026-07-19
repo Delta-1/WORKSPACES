@@ -21,7 +21,7 @@ const GRAVITY = 0.035; // atração suave para o centro
 const FRICTION = 0.7; // amortecimento (quanto menor, mais "parado")
 const V_CLAMP = 18; // limite de velocidade (menor = mais calmo, sem tremer)
 const ALPHA_DECAY = 0.94; // esfria mais rápido → estabiliza logo
-const ALPHA_MIN = 0.06; // para de mexer mais cedo (nada de tremer eterno)
+const ALPHA_MIN = 0.08; // para de mexer mais cedo (nada de tremer eterno)
 const F_CLAMP = 120; // teto da força por nó (evita "explosões"/tremores)
 
 function computeMissingPositions(nodes: FileNodeRow[]): FileNodeRow[] {
@@ -172,7 +172,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }, [expanded]);
   useEffect(() => {
     visibleIdsRef.current = visibleIds;
-    kick(0.5); // re-acomoda ao expandir/colapsar
+    kick(0.4); // re-acomoda de leve ao expandir/colapsar (filhos já entram no vazio)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleIds]);
 
@@ -627,19 +627,51 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     return ids;
   }
 
-  // Ao abrir uma pasta, posiciona os filhos diretos num anel limpo ao redor
-  // dela (velocidade zero). Assim eles não "saltam" de posições antigas e o
-  // grafo assenta certinho, sem tremer.
+  // Ao abrir uma pasta, os filhos NÃO ficam em volta empurrando os vizinhos: a
+  // gente acha a DIREÇÃO mais VAZIA em torno da pasta (o "quadrante" com menos
+  // arquivos por perto) e abre os filhos num ARCO ali, com velocidade zero. Assim
+  // não colidem com o que já existe e o grafo não fica tremendo/piscando.
   function seedRing(folderId: string) {
     const parent = nodesRef.current.find((n) => n.id === folderId);
     if (!parent) return;
     const kids = nodesRef.current.filter((n) => n.parent_id === folderId);
     if (kids.length === 0) return;
-    const radius = LINK_LEN + kids.length * 6;
-    const base = Math.random() * Math.PI * 2;
+
+    // Vizinhos VISÍVEIS por perto (sem contar a própria pasta e seus filhos).
+    const vis = visibleIdsRef.current;
+    const kidIds = new Set(kids.map((k) => k.id));
+    const neighbors = nodesRef.current.filter(
+      (n) => n.id !== parent.id && !kidIds.has(n.id) && vis.has(n.id) &&
+        Math.hypot(n.pos_x - parent.pos_x, n.pos_y - parent.pos_y) < 900,
+    );
+
+    // Testa 24 direções e escolhe a de MENOR ocupação (vizinho perto e alinhado
+    // àquela direção "pesa" mais). É o "abre onde não tem muita coisa".
+    const SECTORS = 24;
+    let bestAngle = -Math.PI / 2; // padrão: para cima
+    let bestScore = Infinity;
+    for (let s = 0; s < SECTORS; s++) {
+      const ang = (s / SECTORS) * Math.PI * 2;
+      let score = 0;
+      for (const nb of neighbors) {
+        const dx = nb.pos_x - parent.pos_x;
+        const dy = nb.pos_y - parent.pos_y;
+        const dist = Math.hypot(dx, dy) || 1;
+        let diff = Math.abs(Math.atan2(dy, dx) - ang);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        score += Math.max(0, 1 - diff / (Math.PI / 2)) * (600 / dist);
+      }
+      if (score < bestScore) { bestScore = score; bestAngle = ang; }
+    }
+
+    // Abre num arco centrado na direção vazia (não em volta toda).
+    const radius = LINK_LEN + kids.length * 8;
+    const arc = Math.min(Math.PI * 1.6, Math.PI / 4 + kids.length * 0.3);
+    const start = bestAngle - arc / 2;
+    const step = kids.length > 1 ? arc / (kids.length - 1) : 0;
     const kidSet = new Map<string, { x: number; y: number }>();
     kids.forEach((k, i) => {
-      const a = base + (i / kids.length) * Math.PI * 2;
+      const a = kids.length === 1 ? bestAngle : start + step * i;
       kidSet.set(k.id, { x: parent.pos_x + Math.cos(a) * radius, y: parent.pos_y + Math.sin(a) * radius });
     });
     const next = nodesRef.current.map((n) => {
