@@ -1,4 +1,19 @@
-# Workspace Multi-Empresa
+# Workspace — tudo da sua empresa em um lugar só
+
+**Workspace** junta, num app só, o que a empresa usa no dia a dia: atendimento por
+**WhatsApp** com robôs de IA, **acesso remoto** ao computador do cliente (com um
+assistente que resolve sozinho), **tarefas**, **arquivos**, **financeiro** e um
+**link público de IA** que ajuda qualquer pessoa a mexer no próprio PC. É
+multiempresa e marca branca: cada empresa tem a própria logo, dados e agentes.
+
+> 📒 **Quer saber tudo que já foi feito e como usar?**
+> Leia as **[Notas de Atualização](./nota-de-atualizacao/README.md)** — a história
+> do projeto, todas as ferramentas, o que cada uma resolve e um tutorial rápido,
+> em linguagem simples.
+
+---
+
+## Detalhes técnicos
 
 Plataforma de workspace multiempresa com copiloto de IA interno, WhatsApp nativo (via QR Code) e visualização de arquivos em grafo.
 
