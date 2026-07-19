@@ -65,6 +65,15 @@ lança uma despesa e pede ajuda pra IA — sem sair da tela.
 
 ## 🆕 As atualizações mais recentes (o que acabou de entrar)
 
+### 🤝 IA contínua + bots conversando entre si
+- **IA contínua** (opção no agente): um agente com **número próprio** que atende
+  para sempre — **não fica anunciando "vou encerrar"**, fecha em silêncio e
+  **lembra das conversas antigas** do contato. Resolve o robô "queimando neurônio
+  à toa" e o spam de encerramento.
+- **Ecossistema de bots**: um bot pode **perguntar a outro bot** da empresa
+  (ferramentas `list_agents` / `ask_agent`) — ex.: "pergunta pro bot Financeiro" e
+  ele consulta o especialista e devolve a resposta unificada.
+
 ### 🤖 Atendimento por WhatsApp mais inteligente
 - **Fim do loop chato:** quando o bot decide encerrar ou passar pra um humano,
   ele **realmente** encerra/transfere (antes ficava repetindo "vou encerrar").
