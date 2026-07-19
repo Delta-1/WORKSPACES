@@ -311,6 +311,7 @@ export default function ConfigTab({
                 <p className="text-[10px] text-gray-500 mt-1">Muda toda a cara do site: fundo, superfícies e clima. A cor tema continua valendo por cima.</p>
               </div>
               <GraphStyleField />
+              <GameModeField />
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cor tema do site</label>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -707,6 +708,49 @@ function GraphStyleField() {
         ))}
       </div>
       <p className="text-[10px] text-gray-500 mt-1">Toque num estilo — já salva sozinho. A aba <b>Arquivos</b> muda na hora.</p>
+    </div>
+  );
+}
+
+// Modo Game — só faz sentido numa conta HOME (casa). Liga o botão "Game" no
+// acesso remoto (jogar no PC pelo celular). Numa empresa nem aparece.
+function GameModeField() {
+  const [isHome, setIsHome] = useState<boolean | null>(null);
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setIsHome(false); return; }
+      const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+      if (!p?.company_id) { setIsHome(false); return; }
+      const { data: c } = await supabase.from("companies").select("company_type").eq("id", p.company_id).maybeSingle();
+      setIsHome(c?.company_type === "Casa");
+      const { data: cs } = await supabase.from("company_settings").select("game_enabled").eq("company_id", p.company_id).maybeSingle();
+      setEnabled(!!cs?.game_enabled);
+    })();
+  }, []);
+
+  async function toggle() {
+    if (!supabase) return;
+    const next = !enabled;
+    setEnabled(next);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+    if (p?.company_id) await supabase.from("company_settings").update({ game_enabled: next }).eq("company_id", p.company_id);
+  }
+
+  if (!isHome) return null; // só aparece na conta Casa
+  return (
+    <div className="pt-1">
+      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">🎮 Modo Game</label>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={enabled} onChange={toggle} className="accent-fuchsia-500" />
+        {enabled ? "Ligado — o botão Game aparece no acesso remoto" : "Desligado"}
+      </label>
+      <p className="text-[10px] text-gray-500 mt-1">Jogar no computador de casa pelo celular (tela cheia, controle estilo PlayStation). Só na conta Casa.</p>
     </div>
   );
 }
