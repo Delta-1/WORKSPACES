@@ -46,6 +46,7 @@ export default function PlansTab() {
   }
 
   return (
+    <div className="h-full overflow-y-auto custom-scroll">
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
       <h2 className="text-lg font-bold flex items-center gap-2 mb-1"><Wallet size={18} className="text-emerald-400" /> Planos</h2>
       <p className="text-[12px] text-gray-400 mb-4">Monte o plano da sua empresa: ligue só as ferramentas que você quer usar. O valor é mensal.</p>
@@ -102,6 +103,7 @@ export default function PlansTab() {
         </button>
       </div>
       <p className="text-[10px] text-gray-500 mt-2">Ao salvar, o app passa a mostrar só as ferramentas ligadas. A cobrança (Mercado Pago) será ativada em breve — por enquanto seu acesso segue liberado.</p>
+    </div>
     </div>
   );
 }

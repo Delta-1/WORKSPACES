@@ -306,7 +306,11 @@ export default function Home() {
   // O painel "Empresas" só aparece dentro do HUB (a casa do Administrador Geral).
   const inHub = superAdmin && company.name === "HUB";
   const visibleApps: AppDef[] = [
-    ...APPS.filter((a) => a.roles.includes(role) && (a.id === "planos" || appEnabled(a.id, enabledFeatures))),
+    ...APPS.filter((a) =>
+      a.roles.includes(role) &&
+      (a.id !== "clientes_ia" || superAdmin) && // Clientes.IA é exclusivo do Administrador Geral
+      (a.id === "planos" || appEnabled(a.id, enabledFeatures))
+    ),
     ...(inHub ? [{ id: "empresas", label: "Empresas", icon: Building2, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
   ];
 
@@ -461,7 +465,7 @@ export default function Home() {
         {tab === "funcionarios" && <EmployeesTab profile={profile} />}
         {tab === "financeiro" && <FinanceTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} />}
-        {tab === "clientes_ia" && <ClientsIaTab profile={profile} />}
+        {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "empresas" && inHub && <AdminCompaniesTab />}
         {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
