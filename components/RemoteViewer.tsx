@@ -424,6 +424,13 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
   // controle. Retorna uma confirmação curta pro Orb narrar.
   async function orbControl(a: { kind: string; text?: string; name?: string; x?: number; y?: number }): Promise<string> {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    if (a.kind === "moveat" && a.x != null && a.y != null) {
+      // SÓ move o cursor (não clica). A IA usa isto para mirar e conferir no próximo
+      // print se o cursor caiu no elemento certo, antes de clicar.
+      sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
+      await wait(200);
+      return "movi o cursor até o ponto (sem clicar)";
+    }
     if (a.kind === "clickat" && a.x != null && a.y != null) {
       // Clique num ponto da tela (coordenadas 0..1 que a IA viu no print).
       // smooth: o cursor DESLIZA até o ponto (parece humano) e é bem mais preciso.
