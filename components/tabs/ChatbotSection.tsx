@@ -20,6 +20,8 @@ export default function ChatbotSection() {
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
   const [files, setFiles] = useState<FileNodeRow[]>([]);
+  const [voices, setVoices] = useState<{ id: string; name: string; voice_id: string }[]>([]);
+  const [customVoice, setCustomVoice] = useState(false); // "Outro (ID próprio)" selecionado
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -39,6 +41,11 @@ export default function ChatbotSection() {
 
   useEffect(() => {
     load();
+    // Vozes globais cadastradas pelo Administrador Geral (disponíveis p/ todas as empresas).
+    if (supabase) {
+      supabase.from("global_voices").select("id,name,voice_id").order("name")
+        .then(({ data }) => setVoices((data as { id: string; name: string; voice_id: string }[]) ?? []));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -262,14 +269,29 @@ export default function ChatbotSection() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              Voice ID (opcional)
+              Voz
             </label>
-            <input
-              value={bot.elevenlabs_voice_id ?? ""}
-              onChange={(e) => patch({ elevenlabs_voice_id: e.target.value || null })}
-              placeholder="21m00Tcm4TlvDq8ikWAM"
-              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
-            />
+            <select
+              value={customVoice || (bot.elevenlabs_voice_id && !voices.some((v) => v.voice_id === bot.elevenlabs_voice_id)) ? "__custom__" : (bot.elevenlabs_voice_id ?? "")}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "__custom__") { setCustomVoice(true); }
+                else { setCustomVoice(false); patch({ elevenlabs_voice_id: val || null }); }
+              }}
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
+            >
+              <option value="">Padrão do sistema</option>
+              {voices.map((v) => <option key={v.id} value={v.voice_id}>{v.name}</option>)}
+              <option value="__custom__">Outro (ID próprio)…</option>
+            </select>
+            {(customVoice || (bot.elevenlabs_voice_id && !voices.some((v) => v.voice_id === bot.elevenlabs_voice_id))) && (
+              <input
+                value={bot.elevenlabs_voice_id ?? ""}
+                onChange={(e) => patch({ elevenlabs_voice_id: e.target.value || null })}
+                placeholder="21m00Tcm4TlvDq8ikWAM"
+                className="w-full mt-2 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none"
+              />
+            )}
           </div>
         </div>
         <p className="text-[11px] text-gray-500">
