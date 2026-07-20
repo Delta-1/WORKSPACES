@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, File as FileIcon, Folder, FolderPlus, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, File as FileIcon, Folder, FolderPlus, LocateFixed, Link2, Maximize2, Minus, Pencil, Plus, Search, Server, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
 import { logAction } from "@/lib/activity-log";
@@ -896,8 +896,19 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       return { scale, tx: px - (px - v.tx) * k, ty: py - (py - v.ty) * k };
     });
   }
+  // Centraliza a câmera no MEIO dos arquivos (útil quando a pessoa se perde
+  // arrastando). Coloca o centro dos nós visíveis no meio da tela, zoom 100%.
   function resetView() {
-    setView({ tx: 0, ty: 0, scale: 1 });
+    const el = containerRef.current;
+    const W = el?.clientWidth ?? 900;
+    const H = el?.clientHeight ?? 600;
+    const all = nodesRef.current;
+    const vis = all.filter((n) => (visibleIdsRef.current.size === 0 || visibleIdsRef.current.has(n.id)) && n.pos_x != null && n.pos_y != null);
+    const pts = vis.length ? vis : all.filter((n) => n.pos_x != null && n.pos_y != null);
+    if (!pts.length) { setView({ tx: W / 2 - CENTER_X, ty: H / 2 - CENTER_Y, scale: 1 }); return; }
+    const cx = pts.reduce((s, n) => s + (n.pos_x as number), 0) / pts.length;
+    const cy = pts.reduce((s, n) => s + (n.pos_y as number), 0) / pts.length;
+    setView({ tx: W / 2 - cx, ty: H / 2 - cy, scale: 1 });
   }
 
   function onPointerUp(e?: React.PointerEvent) {
@@ -1130,7 +1141,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           <div className="absolute bottom-4 left-4 flex flex-col gap-1.5 z-10" onPointerDown={(e) => e.stopPropagation()}>
             <button onClick={() => setView((v) => ({ ...v, scale: Math.min(4, v.scale * 1.2) }))} title="Aproximar" className="w-8 h-8 rounded-lg liquid-glass flex items-center justify-center cursor-pointer hover:bg-white/10"><Plus size={14} /></button>
             <button onClick={() => setView((v) => ({ ...v, scale: Math.max(0.15, v.scale / 1.2) }))} title="Afastar" className="w-8 h-8 rounded-lg liquid-glass flex items-center justify-center cursor-pointer hover:bg-white/10"><Minus size={14} /></button>
-            <button onClick={resetView} title="Centralizar (100%)" className="w-8 h-8 rounded-lg liquid-glass flex items-center justify-center text-[9px] font-bold cursor-pointer hover:bg-white/10">{Math.round(view.scale * 100)}%</button>
+            <button onClick={resetView} title="Voltar pro meio dos arquivos" className="w-8 h-8 rounded-lg liquid-glass flex items-center justify-center cursor-pointer hover:bg-white/10 text-emerald-300"><LocateFixed size={15} /></button>
+            <button onClick={() => setView((v) => ({ ...v, scale: 1 }))} title="Zoom 100%" className="w-8 h-8 rounded-lg liquid-glass flex items-center justify-center text-[9px] font-bold cursor-pointer hover:bg-white/10">{Math.round(view.scale * 100)}%</button>
           </div>
         </div>
 

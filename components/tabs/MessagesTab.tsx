@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Check, Download, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, Download, Eye, EyeOff, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
 import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
@@ -95,6 +95,15 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
 
   const [selConvId, setSelConvId] = useState<string | null>(null);
   const [selColleagueId, setSelColleagueId] = useState<string | null>(null);
+  // Conversas escondidas (some da lista, estilo "arquivar/DM"). Guardado no aparelho.
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("msg:hidden") || "[]")); } catch { return new Set(); }
+  });
+  const [showHidden, setShowHidden] = useState(false);
+  function saveHidden(s: Set<string>) {
+    setHidden(new Set(s));
+    try { localStorage.setItem("msg:hidden", JSON.stringify([...s])); } catch { /* ignore */ }
+  }
   const [messages, setMessages] = useState<WhatsappMessageRow[]>([]);
   const [internal, setInternal] = useState<InternalMessage[]>([]);
   const [input, setInput] = useState("");
@@ -260,6 +269,27 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id);
     setMessages([]);
     loadConversations();
+  }
+
+  // Apaga a conversa DE VEZ (mensagens + a própria conversa) — some da lista.
+  async function deleteConversation() {
+    setChatMenu(false);
+    if (!supabase || !selConv) return;
+    if (!confirm(`Apagar a conversa com ${contactLabel(selConv.contacts)} e todas as mensagens? Não dá pra desfazer.`)) return;
+    await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
+    await supabase.from("conversations").delete().eq("id", selConv.id);
+    setMessages([]);
+    setSelConvId(null);
+    loadConversations();
+  }
+
+  // Esconde/mostra a conversa na lista (não apaga nada) — para separar/limpar.
+  function hideConversation() {
+    setChatMenu(false);
+    if (!selConv) return;
+    const s = new Set(hidden);
+    if (s.has(selConv.id)) { s.delete(selConv.id); } else { s.add(selConv.id); setSelConvId(null); }
+    saveHidden(s);
   }
 
   // Backup de TODAS as conversas de uma vez (um .txt com tudo).
@@ -638,6 +668,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const visibleConvs = useMemo(() => {
     const q = query.toLowerCase();
     return conversations.filter((c) => {
+      if (!showHidden && hidden.has(c.id)) return false; // escondidas somem da lista
       if (activeNumberId) {
         if (c.number_id !== activeNumberId) return false;
       } else if (server !== "whatsapp" && server !== "equipe" && c.group_id !== server) {
@@ -645,7 +676,9 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
       }
       return !q || contactLabel(c.contacts).toLowerCase().includes(q);
     });
-  }, [conversations, query, server, activeNumberId]);
+  }, [conversations, query, server, activeNumberId, hidden, showHidden]);
+
+  const hiddenCount = useMemo(() => conversations.filter((c) => hidden.has(c.id)).length, [conversations, hidden]);
 
   const currentGroupName = activeNumberId
     ? numbers.find((n) => n.id === activeNumberId)?.label ?? "Número"
@@ -797,6 +830,11 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                 : "Nenhuma conversa neste grupo. Passe o mouse numa conversa (no WhatsApp) e escolha este grupo."}
             </p>
           )}
+          {hiddenCount > 0 && (
+            <button onClick={() => setShowHidden((v) => !v)} className="w-full text-left text-[11px] text-gray-400 hover:text-gray-200 px-3 py-1.5 flex items-center gap-1.5 cursor-pointer">
+              {showHidden ? <Eye size={12} /> : <EyeOff size={12} />} {showHidden ? "Ocultar escondidas" : `Escondidas (${hiddenCount})`}
+            </button>
+          )}
           {server !== "equipe" &&
             visibleConvs.map((c) => (
               <div key={c.id} className={`group flex items-center gap-2 px-2 mx-1 rounded-lg hover:bg-white/5 ${selConvId === c.id ? "bg-emerald-950/30" : ""}`}>
@@ -939,8 +977,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                           <button onClick={saveConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Download size={13} className="text-emerald-400" /> Salvar conversa
                           </button>
-                          <button onClick={clearConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-red-300">
-                            <Trash2 size={13} /> Limpar conversa
+                          <button onClick={hideConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            {selConv && hidden.has(selConv.id) ? <><Eye size={13} className="text-gray-300" /> Mostrar na lista</> : <><EyeOff size={13} className="text-gray-300" /> Esconder da lista</>}
+                          </button>
+                          <button onClick={clearConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-amber-300">
+                            <Trash2 size={13} /> Limpar mensagens
+                          </button>
+                          <button onClick={deleteConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-red-400">
+                            <Trash2 size={13} /> Apagar conversa
                           </button>
                         </div>
                       </>
