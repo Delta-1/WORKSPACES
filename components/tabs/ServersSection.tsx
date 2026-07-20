@@ -48,6 +48,15 @@ export default function ServersSection() {
     load();
   }
 
+  // Muda a pasta/local (server_root) do servidor direto aqui na lista.
+  async function editRoot(s: RemoteAgent) {
+    if (!supabase) return;
+    const val = prompt(`Pasta/local do servidor "${s.name}" (onde ele guarda os arquivos):`, s.server_root ?? "");
+    if (val === null) return;
+    await supabase.from("remote_agents").update({ server_root: val.trim() || null }).eq("id", s.id);
+    load();
+  }
+
   useEffect(() => {
     load();
     if (!supabase) return;
@@ -107,11 +116,9 @@ export default function ServersSection() {
                   <p className="text-[11px] text-gray-500 truncate flex items-center gap-1">
                     <FolderTree size={11} /> {s.graph_folder_id ? folders.get(s.graph_folder_id) ?? "pasta do servidor" : "criando pasta…"}
                   </p>
-                  {s.server_root && (
-                    <p className="text-[10px] text-gray-600 truncate font-mono" title={s.server_root}>
-                      📁 {s.server_root}
-                    </p>
-                  )}
+                  <button onClick={() => editRoot(s)} title="Mudar a pasta/local do servidor" className="text-[10px] text-gray-500 hover:text-sky-300 truncate font-mono flex items-center gap-1 cursor-pointer max-w-full">
+                    <Pencil size={9} className="shrink-0" /> <span className="truncate">📁 {s.server_root || "definir pasta/local…"}</span>
+                  </button>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
