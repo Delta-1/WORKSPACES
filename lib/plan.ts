@@ -5,7 +5,7 @@
 export type FeatureId = "mensagens" | "remoto" | "labs" | "financeiro" | "clientes" | "automacao";
 
 export const FEATURES: { id: FeatureId; label: string; desc: string; price: number }[] = [
-  { id: "mensagens", label: "WhatsApp / Mensagens", desc: "Atendimento por WhatsApp com bots e etiquetas", price: 0 /* por contatos */ },
+  { id: "mensagens", label: "WhatsApp / Mensagens", desc: "Atendimento por WhatsApp com bots e etiquetas", price: 0 /* por número registrado */ },
   { id: "remoto", label: "Acesso Remoto", desc: "Ver e controlar computadores à distância", price: 40 },
   { id: "labs", label: "Agentes de IA + Copiloto", desc: "Criar robôs de IA e o copiloto interno", price: 50 },
   { id: "financeiro", label: "Financeiro", desc: "Controle de contas da empresa e de casa", price: 20 },
@@ -26,15 +26,16 @@ export const APP_FEATURE: Record<string, FeatureId> = {
   automacao: "automacao",
 };
 
-// Plano recomendado (já vem marcado).
+// Plano recomendado (já vem marcado). O WhatsApp vem com 3 números por padrão.
 export const RECOMMENDED: FeatureId[] = ["mensagens", "remoto", "labs"];
-export const RECOMMENDED_WA_LIMIT = 30;
+export const RECOMMENDED_WA_LIMIT = 3; // números de WhatsApp (linhas/QR) inclusos
+export const WA_PRICE_PER_NUMBER = 10; // R$ por número registrado
 
-// Preço do WhatsApp: R$10 por cada 10 contatos (mín. R$10). Ilimitado (limite 0)
-// custa R$100/mês (WhatsApp e números ilimitados).
-export function whatsappPrice(limit: number): number {
-  if (!limit || limit <= 0) return 100; // ilimitado
-  return Math.max(10, Math.ceil(limit / 10) * 10);
+// Preço do WhatsApp: R$10 por NÚMERO registrado (linha/conexão via QR Code).
+// Ex.: 3 números = R$30. "Número registrado" é a linha de WhatsApp que aparece
+// dentro do Workspace — não é o contato de um cliente.
+export function whatsappPrice(numbers: number): number {
+  return Math.max(1, Math.floor(numbers)) * WA_PRICE_PER_NUMBER;
 }
 
 // Valor mensal total do plano.

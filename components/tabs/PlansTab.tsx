@@ -24,9 +24,9 @@ export default function PlansTab() {
       const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
       if (!p?.company_id) return;
       setCompanyId(p.company_id);
-      const { data: cs } = await supabase.from("company_settings").select("enabled_features, wa_contact_limit, plan_kind").eq("company_id", p.company_id).maybeSingle();
+      const { data: cs } = await supabase.from("company_settings").select("enabled_features, wa_number_limit, plan_kind").eq("company_id", p.company_id).maybeSingle();
       if (cs?.enabled_features) setFeatures(cs.enabled_features as FeatureId[]);
-      if (cs?.wa_contact_limit != null) setWaLimit(cs.wa_contact_limit);
+      if (cs?.wa_number_limit != null) setWaLimit(cs.wa_number_limit);
       if (cs?.plan_kind === "personalizado" || cs?.plan_kind === "recomendado") setKind(cs.plan_kind);
       const { data: c } = await supabase.from("companies").select("subscription_status, license_until").eq("id", p.company_id).maybeSingle();
       if (c) setStatus(c.subscription_status || null);
@@ -40,7 +40,7 @@ export default function PlansTab() {
 
   async function save() {
     if (!supabase || !companyId) return;
-    await supabase.from("company_settings").update({ enabled_features: features, wa_contact_limit: waLimit, plan_kind: kind, monthly_price: price }).eq("company_id", companyId);
+    await supabase.from("company_settings").update({ enabled_features: features, wa_number_limit: waLimit, plan_kind: kind, monthly_price: price }).eq("company_id", companyId);
     setSaved(true);
     setTimeout(() => { window.location.reload(); }, 700); // recarrega pra aplicar as abas
   }
@@ -81,12 +81,11 @@ export default function PlansTab() {
             </label>
             {f.id === "mensagens" && has("mensagens") && (
               <div className="mt-2 pl-7 flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] text-gray-400">Contatos:</span>
+                <span className="text-[11px] text-gray-400">Números de WhatsApp:</span>
                 <select value={waLimit} onChange={(e) => { setKind("personalizado"); setWaLimit(Number(e.target.value)); }} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-xs outline-none">
-                  {[10, 20, 30, 50, 100, 200, 500].map((n) => <option key={n} value={n}>{n} contatos — R$ {whatsappPrice(n)}</option>)}
-                  <option value={0}>Ilimitado (números ilimitados) — R$ 100</option>
+                  {[1, 2, 3, 4, 5, 6, 8, 10, 15, 20].map((n) => <option key={n} value={n}>{n} {n === 1 ? "número" : "números"} — R$ {whatsappPrice(n)}</option>)}
                 </select>
-                <span className="text-[10px] text-gray-500">R$10 a cada 10 contatos • ilimitado R$100</span>
+                <span className="text-[10px] text-gray-500">R$10 por número registrado (linha conectada por QR) • 3 inclusos</span>
               </div>
             )}
           </div>
