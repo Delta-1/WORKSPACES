@@ -17,6 +17,24 @@ const ROLE_STYLE: Record<Role, string> = {
   funcionario: "bg-white/10 text-gray-300 border-white/15",
 };
 
+// Ferramentas que o dono pode liberar/bloquear por pessoa (id igual ao das abas).
+const EDITABLE_TOOLS: { id: string; label: string }[] = [
+  { id: "mensagens", label: "Mensagens" },
+  { id: "atendimentos", label: "Atendimentos" },
+  { id: "chat", label: "Copiloto IA" },
+  { id: "arquivos", label: "Arquivos" },
+  { id: "mural", label: "Mural" },
+  { id: "kanban", label: "Kanban" },
+  { id: "calendario", label: "Calendário" },
+  { id: "organograma", label: "Organograma" },
+  { id: "financeiro", label: "Financeiro" },
+  { id: "clientes", label: "Clientes" },
+  { id: "remoto", label: "Acesso Remoto" },
+  { id: "automacao", label: "Automação" },
+  { id: "labs", label: "Labs" },
+  { id: "funcionarios", label: "Funcionários" },
+];
+
 export default function EmployeesTab({ profile }: { profile: Profile | null }) {
   const [people, setPeople] = useState<Profile[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
@@ -61,19 +79,19 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
     return (p.full_name ?? "").toLowerCase().includes(q) || p.email.toLowerCase().includes(q);
   });
 
-  async function saveEdit(role: Role, sectorId: string | null, financeAccess: boolean) {
+  async function saveEdit(role: Role, sectorId: string | null, financeAccess: boolean, toolAccess: Record<string, boolean> | null) {
     if (!supabase || !editing) return;
     setSaving(true);
     const { error } = await supabase
       .from("profiles")
-      .update({ role, sector_id: sectorId, finance_access: financeAccess })
+      .update({ role, sector_id: sectorId, finance_access: financeAccess, tool_access: toolAccess })
       .eq("id", editing.id);
     setSaving(false);
     if (error) {
       alert("Não foi possível salvar: " + error.message);
       return;
     }
-    setPeople((prev) => prev.map((p) => (p.id === editing.id ? { ...p, role, sector_id: sectorId, finance_access: financeAccess } : p)));
+    setPeople((prev) => prev.map((p) => (p.id === editing.id ? { ...p, role, sector_id: sectorId, finance_access: financeAccess, tool_access: toolAccess } : p)));
     setEditing(null);
   }
 
@@ -178,11 +196,15 @@ function EditModal({
   sectors: Sector[];
   saving: boolean;
   onClose: () => void;
-  onSave: (role: Role, sectorId: string | null, financeAccess: boolean) => void;
+  onSave: (role: Role, sectorId: string | null, financeAccess: boolean, toolAccess: Record<string, boolean> | null) => void;
 }) {
   const [role, setRole] = useState<Role>((person.role ?? "funcionario") as Role);
   const [sectorId, setSectorId] = useState<string | null>(person.sector_id);
   const [financeAccess, setFinanceAccess] = useState<boolean>(Boolean(person.finance_access));
+  // Permissão por ferramenta: null = usa o padrão do cargo. Objeto = escolha manual.
+  const [customTools, setCustomTools] = useState<boolean>(person.tool_access != null);
+  const [tools, setTools] = useState<Record<string, boolean>>(() => (person.tool_access as Record<string, boolean>) ?? {});
+  const toggleTool = (id: string) => setTools((t) => ({ ...t, [id]: !t[id] }));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
@@ -249,6 +271,25 @@ function EditModal({
           </span>
         </label>
 
+        {/* Permissão por ferramenta (cargo estilo Discord): o dono libera o que cada um usa. */}
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="checkbox" checked={customTools} onChange={(e) => setCustomTools(e.target.checked)} className="accent-emerald-500" />
+            <b>Escolher ferramentas manualmente</b>
+          </label>
+          <p className="text-[10px] text-gray-500 mt-0.5">Desmarcado = usa o padrão do cargo. Marcado = só as ferramentas ligadas abaixo aparecem para esta pessoa.</p>
+          {customTools && (
+            <div className="grid grid-cols-2 gap-1.5 mt-2">
+              {EDITABLE_TOOLS.map((t) => (
+                <label key={t.id} className="flex items-center gap-1.5 text-[11px] cursor-pointer rounded px-2 py-1 hover:bg-white/5">
+                  <input type="checkbox" checked={!!tools[t.id]} onChange={() => toggleTool(t.id)} className="accent-emerald-500" />
+                  {t.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={onClose}
@@ -257,7 +298,7 @@ function EditModal({
             Cancelar
           </button>
           <button
-            onClick={() => onSave(role, sectorId, financeAccess)}
+            onClick={() => onSave(role, sectorId, financeAccess, customTools ? tools : null)}
             disabled={saving}
             className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
           >

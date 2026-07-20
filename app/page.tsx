@@ -315,11 +315,16 @@ export default function Home() {
   // QUALQUER ambiente (não depende mais de estar numa casa chamada "HUB").
   const visibleApps: AppDef[] = [
     ...(superAdmin ? [{ id: "visaoadm", label: "VisãoADM", icon: Crown, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
-    ...APPS.filter((a) =>
-      a.roles.includes(role) &&
-      (a.id !== "clientes_ia" || superAdmin) && // Clientes.IA é exclusivo do Administrador Geral
-      (a.id === "planos" || appEnabled(a.id, enabledFeatures))
-    ),
+    ...APPS.filter((a) => {
+      if (a.id === "clientes_ia" && !superAdmin) return false; // exclusivo do Admin Geral
+      // Permissão por ferramenta (definida em Funcionários): override do cargo.
+      const ta = profile?.tool_access as Record<string, boolean> | null | undefined;
+      const hasOverride = ta && Object.prototype.hasOwnProperty.call(ta, a.id);
+      if (hasOverride && ta![a.id] === false) return false;             // bloqueado p/ esta pessoa
+      const roleOk = a.roles.includes(role) || (hasOverride && ta![a.id] === true); // liberado supera o cargo
+      const featOk = a.id === "planos" || appEnabled(a.id, enabledFeatures); // empresa precisa ter a ferramenta
+      return roleOk && featOk;
+    }),
     ...(showGame ? [{ id: "game", label: "Game", icon: Gamepad2, accent: "bg-fuchsia-900/60", roles: [] as Role[] }] : []),
   ];
 
