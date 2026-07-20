@@ -9,7 +9,7 @@ import type { Profile, RemoteAgent } from "@/lib/types";
 
 function isOnline(a: RemoteAgent) {
   if (a.status !== "online" || !a.last_seen) return false;
-  return Date.now() - new Date(a.last_seen).getTime() < 60000;
+  return Date.now() - new Date(a.last_seen).getTime() < 120000;
 }
 
 export default function RemoteAccessTab({ profile }: { profile: Profile | null }) {
