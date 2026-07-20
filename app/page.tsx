@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users, Wallet } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users, Wallet } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -27,6 +27,7 @@ import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
 import VisaoAdmTab from "@/components/tabs/VisaoAdmTab";
 import GameTab from "@/components/tabs/GameTab";
+import GodsEyeTab from "@/components/tabs/GodsEyeTab";
 import PlansTab from "@/components/tabs/PlansTab";
 import { appEnabled, type FeatureId } from "@/lib/plan";
 import FinanceTab from "@/components/tabs/FinanceTab";
@@ -314,7 +315,10 @@ export default function Home() {
   // VisãoADM é a central do Administrador Geral: aparece para o super admin em
   // QUALQUER ambiente (não depende mais de estar numa casa chamada "HUB").
   const visibleApps: AppDef[] = [
-    ...(superAdmin ? [{ id: "visaoadm", label: "VisãoADM", icon: Crown, accent: "bg-amber-900/60", roles: [] as Role[] }] : []),
+    ...(superAdmin ? [
+      { id: "visaoadm", label: "VisãoADM", icon: Crown, accent: "bg-amber-900/60", roles: [] as Role[] },
+      { id: "godseye", label: "God's Eye", icon: Eye, accent: "bg-red-900/60", roles: [] as Role[] },
+    ] : []),
     ...APPS.filter((a) => {
       if (a.id === "clientes_ia" && !superAdmin) return false; // exclusivo do Admin Geral
       // Permissão por ferramenta (definida em Funcionários): override do cargo.
@@ -481,6 +485,7 @@ export default function Home() {
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}
+        {tab === "godseye" && superAdmin && <GodsEyeTab />}
         {tab === "game" && showGame && <GameTab profile={profile} />}
         {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}

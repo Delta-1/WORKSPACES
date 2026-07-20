@@ -85,7 +85,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
   const [fs, setFs] = useState(false); // tela cheia (qualquer acesso, não só game)
-  const [muted, setMuted] = useState(true); // escutar o áudio do sistema/ambiente do cliente
+  const [volume, setVolume] = useState(1); // áudio LIGADO por padrão; botão só ajusta o volume
+  useEffect(() => { if (videoRef.current) videoRef.current.volume = volume; }, [volume]);
   const [homeGame, setHomeGame] = useState(false); // Modo Game só na conta Casa e ligado nas configs
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
@@ -708,7 +709,6 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
             ref={videoRef}
             autoPlay
             playsInline
-            muted={muted}
             className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "max-w-full max-h-full"} ${isTouch ? "" : "cursor-none"}`}
             onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
             onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
@@ -856,9 +856,10 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
                 <Gamepad2 size={14} /> Game
               </button>
             )}
-            <button onClick={() => setMuted((m) => !m)} title={muted ? "Escutar o áudio do sistema/ambiente" : "Silenciar"} className={`flex items-center gap-1 text-xs px-3 py-2 rounded-lg cursor-pointer ${muted ? "bg-white/10 hover:bg-white/20" : "bg-emerald-600 text-white"}`}>
-              {muted ? <VolumeX size={14} /> : <Volume2 size={14} />} {muted ? "Escutar" : "Ouvindo"}
-            </button>
+            <div className="flex items-center gap-1.5 text-xs bg-white/10 px-2.5 py-2 rounded-lg" title="Volume do áudio do cliente">
+              <button onClick={() => setVolume((v) => (v > 0 ? 0 : 1))} className="cursor-pointer">{volume > 0 ? <Volume2 size={14} /> : <VolumeX size={14} />}</button>
+              <input type="range" min={0} max={1} step={0.05} value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-16 accent-emerald-500 cursor-pointer" />
+            </div>
             <button onClick={() => setFs(true)} title="Tela cheia" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <Maximize2 size={14} /> Tela cheia
             </button>
