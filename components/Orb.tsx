@@ -46,24 +46,33 @@ export default function Orb({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiceOn, setVoiceOn] = useState(false);
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(true); // padrão = BOLA (não abre o chat)
   const recRef = useRef<Rec | null>(null);
   const activeRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [agentId, setAgentId] = useState<string | null>(null);
 
-  // Legenda estilo vídeo: aparece embaixo quando a IA (modo controle) explica algo,
-  // e pode ser arrastada para qualquer lugar (posição salva no aparelho).
+  // Legenda estilo vídeo: aparece quando a IA (modo controle) explica algo, e pode
+  // ser arrastada para qualquer lugar (posição salva). Posição SEMPRE explícita
+  // (left/top) — sem translate — para o "pegar e arrastar" bater certo no celular.
   const [caption, setCaption] = useState("");
   const [capPos, setCapPos] = useState<{ x: number; y: number } | null>(() => {
     try { const s = localStorage.getItem("orb:capPos"); return s ? JSON.parse(s) : null; } catch { return null; }
   });
+  const capPosRef = useRef(capPos);
+  useEffect(() => { capPosRef.current = capPos; }, [capPos]);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capDrag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  // Posição inicial: rodapé, um pouco à esquerda do centro (sem translate).
+  useEffect(() => {
+    if (!capPos && typeof window !== "undefined") {
+      setCapPos({ x: Math.max(8, window.innerWidth / 2 - 130), y: window.innerHeight - 150 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function showCaption(t: string) {
     setCaption(t);
     if (capTimer.current) clearTimeout(capTimer.current);
-    // Fica na tela por um tempo proporcional ao tamanho da fala.
     capTimer.current = setTimeout(() => setCaption(""), Math.min(20000, 4000 + t.length * 70));
   }
   function onCapDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -76,11 +85,11 @@ export default function Orb({
     if (!capDrag.current) return;
     capDrag.current.moved = true;
     const x = Math.max(4, Math.min(window.innerWidth - 40, e.clientX - capDrag.current.dx));
-    const y = Math.max(4, Math.min(window.innerHeight - 20, e.clientY - capDrag.current.dy));
+    const y = Math.max(4, Math.min(window.innerHeight - 24, e.clientY - capDrag.current.dy));
     setCapPos({ x, y });
   }
   function onCapUp() {
-    if (capDrag.current?.moved && capPos) { try { localStorage.setItem("orb:capPos", JSON.stringify(capPos)); } catch { /* ignore */ } }
+    if (capDrag.current?.moved && capPosRef.current) { try { localStorage.setItem("orb:capPos", JSON.stringify(capPosRef.current)); } catch { /* ignore */ } }
     capDrag.current = null;
   }
   const captionEl = onControl && caption ? (
@@ -88,13 +97,25 @@ export default function Orb({
       onPointerDown={onCapDown}
       onPointerMove={onCapMove}
       onPointerUp={onCapUp}
-      style={capPos ? { left: capPos.x, top: capPos.y, bottom: "auto", transform: "none" } : undefined}
-      className="fixed z-[99] left-1/2 bottom-24 -translate-x-1/2 max-w-[80vw] px-4 py-2 rounded-xl bg-black/75 backdrop-blur-sm border border-white/15 text-white text-center text-[15px] leading-snug shadow-2xl cursor-move select-none touch-none"
+      style={{ left: capPos?.x ?? 20, top: capPos?.y ?? 20 }}
+      className="fixed z-[99] max-w-[80vw] px-4 py-2 rounded-xl bg-black/75 backdrop-blur-sm border border-white/15 text-white text-center text-[15px] leading-snug shadow-2xl cursor-move select-none touch-none"
     >
       {caption}
-      <span className="block text-[9px] text-white/40 mt-0.5">arraste para mover a legenda</span>
+      <span className="block text-[9px] text-white/40 mt-0.5">✥ arraste para mover</span>
     </div>
   ) : null;
+
+  // Estados da BOLA: falando (pulsa), ouvindo (após clicar) e o texto flutuante
+  // que aparece ao lado da bola (sem balão) — vibe tecnológica.
+  const [speaking, setSpeaking] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [floatText, setFloatText] = useState("");
+  const floatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function showFloat(t: string) {
+    setFloatText(t);
+    if (floatTimer.current) clearTimeout(floatTimer.current);
+    floatTimer.current = setTimeout(() => setFloatText(""), Math.min(12000, 3000 + t.length * 60));
+  }
   useEffect(() => {
     if (!supabase) return;
     supabase.from("chatbots").select("id,name").eq("slot", slot).maybeSingle().then(({ data }) => {
@@ -143,9 +164,11 @@ export default function Orb({
   // Pausa a escuta enquanto fala (para o Orb não ouvir a própria voz) e retoma depois.
   async function speak(text: string) {
     speakingRef.current = true;
+    setSpeaking(true);
     try { recRef.current?.stop(); } catch { /* ignore */ }
     const resume = () => {
       speakingRef.current = false;
+      setSpeaking(false);
       if (activeRef.current) { try { recRef.current?.start(); } catch { /* ignore */ } }
     };
     try {
@@ -226,7 +249,7 @@ export default function Orb({
         let reply = raw;
         let count = 0;
         if (onControl) { const r = await runControlCommands(raw); reply = r.text; count = r.count; }
-        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
+        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
         // Para o loop quando: não é modo controle; a IA não executou nenhum
         // comando (está falando ou perguntando algo e esperando você); ou marcou «fim».
         if (!onControl || count === 0 || /«?\s*fim\s*»?/i.test(raw)) break;
@@ -248,36 +271,49 @@ export default function Orb({
   }
 
   function handleTranscript(t: string) {
-    // Frase de encerramento → se despede e desliga.
-    if (/(finaliz|encerr|deslig|tchau orb|é isso orb|pode sair orb|obrigado orb)/i.test(t)) {
+    showFloat(t); // mostra o que você falou flutuando ao lado da bola
+    // Fechar por voz: "tchau", "bye", "bye bye" (com ou sem "orb").
+    if (/\b(tchau|bye ?bye|bye|adeus)\b/i.test(t) || /(finaliz|encerr|deslig|é isso orb|pode sair orb|obrigado orb)/i.test(t)) {
       farewellAndClose();
       return;
     }
     ask(t);
   }
 
-  function startVoice() {
+  function makeRec(onFinal: (t: string) => void, auto: boolean): Rec | null {
     const w = window as unknown as { webkitSpeechRecognition?: new () => Rec; SpeechRecognition?: new () => Rec };
     const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-    if (!Ctor) {
-      alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome.");
-      return;
-    }
+    if (!Ctor) { alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome."); return null; }
     const rec = new Ctor();
     rec.lang = "pt-BR";
-    rec.continuous = false; // uma fala por vez é mais confiável; reinicia sozinho
+    rec.continuous = false;
     rec.interimResults = false;
-    rec.onresult = (e) => {
-      const t = e.results[e.results.length - 1][0].transcript?.trim();
-      if (t) handleTranscript(t); // mostra no chat como sua mensagem e responde
-    };
+    rec.onresult = (e) => { const t = e.results[e.results.length - 1][0].transcript?.trim(); if (t) onFinal(t); };
     rec.onend = () => {
-      // Reinicia a escuta (menos quando o Orb está falando, p/ não se ouvir).
-      if (activeRef.current && !speakingRef.current) {
+      setListening(false);
+      // No modo "sempre ativo" (controle remoto) reinicia; no push-to-talk não.
+      if (auto && activeRef.current && !speakingRef.current) {
         setTimeout(() => { try { rec.start(); } catch { /* ignore */ } }, 250);
       }
     };
-    rec.onerror = () => {};
+    rec.onerror = () => setListening(false);
+    return rec;
+  }
+
+  // Push-to-talk: clicar na bola escuta UMA fala (sem ficar ligando/desligando o
+  // mic o tempo todo — corta o barulho de "escutando/parou" no celular).
+  function listenOnce() {
+    if (speakingRef.current) { try { audioRef.current?.pause(); } catch {} }
+    const rec = makeRec((t) => handleTranscript(t), false);
+    if (!rec) return;
+    recRef.current = rec;
+    setListening(true);
+    try { rec.start(); } catch { setListening(false); }
+  }
+
+  function startVoice() {
+    const rec = makeRec((t) => handleTranscript(t), true);
+    if (!rec) return;
     recRef.current = rec;
     activeRef.current = true;
     try { rec.start(); } catch { /* ignore */ }
@@ -290,25 +326,43 @@ export default function Orb({
     try { recRef.current?.stop(); } catch { /* ignore */ }
     recRef.current = null;
     setVoiceOn(false);
+    setListening(false);
     setMinimized(false);
   }
   useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
-  // Ao ser chamado por atalho (tecla "v"), já entra ouvindo.
-  useEffect(() => { if (autoVoice) startVoice(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // Ao abrir (atalho "v" ou controle remoto), começa como BOLA parada — a pessoa
+  // clica na bola para falar (não fica com o mic sempre ligado).
+  useEffect(() => { if (autoVoice) { setMinimized(true); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  // Modo bolinha flutuante (voz ativa e minimizado) — vibe JARVIS.
+  // Modo BOLA (padrão): bolinha pulsante estilo ChatGPT. O texto aparece
+  // FLUTUANDO ao lado da bola (sem balão). Toca na bola para ela te ouvir.
   if (minimized) {
     return (
       <>
         {captionEl}
-        <button
-          onClick={() => setMinimized(false)}
-          title={`${name} ouvindo — toque para abrir o chat`}
-          className="fixed bottom-5 right-5 z-[95] w-16 h-16 rounded-full cursor-pointer orb-float flex items-center justify-center"
-        >
-          <span className="absolute inset-0 rounded-full orb-glow" />
-          <Volume2 size={22} className="text-white relative z-10" />
-        </button>
+        <div className="fixed bottom-6 right-6 z-[95] flex flex-col items-end gap-2 max-w-[78vw]">
+          {floatText && (
+            <div className="orb-floattext text-right text-white text-[15px] leading-snug font-medium pr-1 max-w-full">
+              {floatText}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setMinimized(false)} title="Abrir o chat" className="w-8 h-8 rounded-full bg-black/40 border border-white/10 text-gray-300 hover:bg-white/10 flex items-center justify-center cursor-pointer">
+              <Bot size={15} />
+            </button>
+            <button onClick={farewellAndClose} title="Fechar (ou diga 'tchau')" className="w-8 h-8 rounded-full bg-black/40 border border-white/10 text-gray-300 hover:bg-red-500/30 flex items-center justify-center cursor-pointer">
+              <X size={15} />
+            </button>
+            <button
+              onClick={listenOnce}
+              title={listening ? "Ouvindo…" : "Toque para falar"}
+              className={`relative w-16 h-16 rounded-full cursor-pointer flex items-center justify-center ${speaking ? "orb-speaking" : listening ? "orb-listening" : "orb-float"}`}
+            >
+              <span className="absolute inset-0 rounded-full orb-glow" />
+              {listening ? <Mic size={22} className="text-white relative z-10 animate-pulse" /> : <Volume2 size={22} className="text-white relative z-10" />}
+            </button>
+          </div>
+        </div>
       </>
     );
   }
