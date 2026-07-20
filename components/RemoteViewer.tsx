@@ -37,7 +37,7 @@ type Entry = { name: string; isDir: boolean; size: number; full?: string };
 type Quality = "alta" | "media" | "baixa";
 type Progress = { label: string; pct: number } | null;
 
-export default function RemoteViewer({ agent, profile, onClose }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void }) {
+export default function RemoteViewer({ agent, profile, onClose, initialGame }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void; initialGame?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -79,7 +79,7 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
   const [showSettings, setShowSettings] = useState(false);
   const [orbOpen, setOrbOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [gameMode, setGameMode] = useState(false);
+  const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
   const [homeGame, setHomeGame] = useState(false); // Modo Game só na conta Casa e ligado nas configs
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
