@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderTree, Server } from "lucide-react";
+import { Check, FolderTree, Pencil, Server, Unplug, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { RemoteAgent } from "@/lib/types";
 
@@ -12,6 +12,8 @@ function isOnline(a: RemoteAgent) {
 export default function ServersSection() {
   const [servers, setServers] = useState<RemoteAgent[]>([]);
   const [folders, setFolders] = useState<Map<string, string>>(new Map());
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -29,6 +31,22 @@ export default function ServersSection() {
       setFolders(new Map());
     }
   }, []);
+
+  async function saveName(id: string) {
+    if (!supabase || !editName.trim()) { setEditId(null); return; }
+    await supabase.from("remote_agents").update({ name: editName.trim() }).eq("id", id);
+    setEditId(null);
+    load();
+  }
+
+  // "Desconectar" = tira o servidor (is_server=false). Os arquivos/sincronização
+  // ficam salvos; a máquina volta a ser um computador comum no Acesso Remoto.
+  async function disconnect(s: RemoteAgent) {
+    if (!supabase) return;
+    if (!confirm(`Desconectar "${s.name}" como servidor?\n\nOs arquivos já sincronizados continuam salvos — isso só para a sincronização e devolve a máquina para computador comum.`)) return;
+    await supabase.from("remote_agents").update({ is_server: false }).eq("id", s.id);
+    load();
+  }
 
   useEffect(() => {
     load();
@@ -68,7 +86,24 @@ export default function ServersSection() {
                   <Server size={16} />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate">{s.name}</p>
+                  {editId === s.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        value={editName}
+                        autoFocus
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveName(s.id); if (e.key === "Escape") setEditId(null); }}
+                        className="bg-black/30 border border-white/10 rounded px-2 py-1 text-sm outline-none w-40"
+                      />
+                      <button onClick={() => saveName(s.id)} className="text-emerald-400 hover:text-emerald-300 cursor-pointer p-1"><Check size={14} /></button>
+                      <button onClick={() => setEditId(null)} className="text-gray-500 hover:text-gray-300 cursor-pointer p-1"><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <p className="text-sm font-semibold truncate flex items-center gap-1.5">
+                      {s.name}
+                      <button onClick={() => { setEditId(s.id); setEditName(s.name); }} title="Renomear servidor" className="text-gray-500 hover:text-sky-300 cursor-pointer shrink-0"><Pencil size={12} /></button>
+                    </p>
+                  )}
                   <p className="text-[11px] text-gray-500 truncate flex items-center gap-1">
                     <FolderTree size={11} /> {s.graph_folder_id ? folders.get(s.graph_folder_id) ?? "pasta do servidor" : "criando pasta…"}
                   </p>
@@ -79,9 +114,14 @@ export default function ServersSection() {
                   )}
                 </div>
               </div>
-              <span className={`text-[11px] shrink-0 ${isOnline(s) ? "text-emerald-400" : "text-gray-500"}`}>
-                {isOnline(s) ? "Online" : "Offline"}
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={`text-[11px] ${isOnline(s) ? "text-emerald-400" : "text-gray-500"}`}>
+                  {isOnline(s) ? "Online" : "Offline"}
+                </span>
+                <button onClick={() => disconnect(s)} title="Desconectar servidor (mantém os arquivos)" className="text-gray-500 hover:text-red-400 cursor-pointer p-1">
+                  <Unplug size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
