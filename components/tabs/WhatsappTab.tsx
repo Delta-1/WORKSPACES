@@ -30,22 +30,26 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
   const [live, setLive] = useState<LiveState | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [connectingLong, setConnectingLong] = useState(false);
+  const [numberLimit, setNumberLimit] = useState<number>(3); // números de WhatsApp do plano
+  const [showUpgrade, setShowUpgrade] = useState(false); // aviso "atualize o plano p/ mais números"
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadAll = useCallback(async () => {
     if (!supabase) return;
-    const [n, s, c, p, a] = await Promise.all([
+    const [n, s, c, p, a, cs] = await Promise.all([
       supabase.from("whatsapp_numbers").select("*").order("created_at"),
       supabase.from("sectors").select("*").order("name"),
       supabase.from("chatbots").select("*").order("created_at"),
       supabase.from("profiles").select("*").order("full_name"),
       supabase.from("whatsapp_number_access").select("*"),
+      supabase.from("company_settings").select("wa_number_limit").maybeSingle(),
     ]);
     if (n.data) setNumbers(n.data as WhatsappNumber[]);
     if (s.data) setSectors(s.data as Sector[]);
     if (c.data) setChatbots(c.data as Chatbot[]);
     if (p.data) setColleagues(p.data as Profile[]);
     if (a.data) setAccess(a.data as WhatsappNumberAccess[]);
+    if (cs.data?.wa_number_limit != null) setNumberLimit(cs.data.wa_number_limit as number);
   }, []);
 
   useEffect(() => {
@@ -75,6 +79,12 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
 
   async function addNumber() {
     if (!supabase || !newLabel.trim()) return;
+    // Trava por plano: R$10 por número registrado. Ao bater o limite, o gestor
+    // precisa atualizar o plano (aba Planos) para registrar mais números.
+    if (numbers.length >= numberLimit) {
+      setShowUpgrade(true);
+      return;
+    }
     const { data } = await supabase.from("whatsapp_numbers").insert({ label: newLabel.trim() }).select("*").single();
     setNewLabel("");
     await loadAll();
@@ -178,24 +188,51 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
           })}
         </div>
         {isGestor && (
-          <div className="p-3 border-t border-white/10 flex gap-2">
-            <input
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addNumber()}
-              placeholder="Ex: Vendas"
-              className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none"
-            />
-            <button
-              onClick={addNumber}
-              disabled={!newLabel.trim()}
-              className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
-            >
-              <Plus size={16} />
-            </button>
+          <div className="p-3 border-t border-white/10">
+            <div className="flex gap-2">
+              <input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addNumber()}
+                placeholder="Ex: Vendas"
+                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none"
+              />
+              <button
+                onClick={addNumber}
+                disabled={!newLabel.trim()}
+                className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-500 mt-1.5">
+              {numbers.length} de {numberLimit} {numberLimit === 1 ? "número" : "números"} registrados
+              {numbers.length >= numberLimit && " — limite do plano atingido"}
+            </p>
           </div>
         )}
       </div>
+
+      {showUpgrade && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" onClick={() => setShowUpgrade(false)}>
+          <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-amber-950/50 flex items-center justify-center mx-auto mb-3">
+              <QrCode size={22} className="text-amber-300" />
+            </div>
+            <h3 className="text-base font-bold mb-1">Limite de números atingido</h3>
+            <p className="text-[13px] text-gray-400 mb-4">
+              Seu plano permite registrar <b>{numberLimit}</b> {numberLimit === 1 ? "número" : "números"} de WhatsApp.
+              Para registrar mais, atualize seu plano — cada número registrado custa <b>R$10/mês</b>.
+            </p>
+            <button
+              onClick={() => setShowUpgrade(false)}
+              className="text-sm px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer w-full"
+            >
+              Entendi — vou em Planos
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Detalhe do número selecionado */}
       <div className="liquid-glass rounded-2xl overflow-y-auto custom-scroll">
