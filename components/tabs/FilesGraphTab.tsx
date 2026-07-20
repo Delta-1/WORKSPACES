@@ -121,8 +121,11 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   useEffect(() => {
     // Preferência deste aparelho primeiro (instantâneo), depois confirma no banco.
     try { const ls = localStorage.getItem("graph_style"); if (ls === "obsidian" || ls === "arvore" || ls === "diretorio") setGraphStyle(ls); } catch {}
-    if (supabase) {
-      supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
+    // IMPORTANTE: filtra pela EMPRESA DO USUÁRIO. Sem o filtro, o limit(1) podia
+    // devolver a linha de OUTRA empresa (a policy de leitura é aberta) e o estilo
+    // salvo "voltava" sozinho — era o bug do "não salva".
+    if (supabase && profile?.company_id) {
+      supabase.from("company_settings").select("graph_style").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
         const s = data?.graph_style;
         if (s === "obsidian" || s === "arvore" || s === "diretorio") setGraphStyle(s);
       });
@@ -134,7 +137,18 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     };
     window.addEventListener("graph-style", onStyle);
     return () => window.removeEventListener("graph-style", onStyle);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.company_id]);
+
+  // Trocar o estilo DIRETO no grafo (sem ir em Configurações) e salvar de verdade.
+  async function changeStyle(s: "obsidian" | "arvore" | "diretorio") {
+    setGraphStyle(s);
+    try { localStorage.setItem("graph_style", s); } catch {}
+    try { window.dispatchEvent(new CustomEvent("graph-style", { detail: s })); } catch {}
+    if (!supabase || !profile?.company_id) return;
+    const { error } = await supabase.from("company_settings").update({ graph_style: s }).eq("company_id", profile.company_id);
+    if (error) alert("Não consegui salvar o estilo: " + error.message);
+  }
   // Canvas infinito estilo Miro: pan (arrastar fundo) + zoom (roda do mouse).
   const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
   const viewRef = useRef(view);
@@ -919,7 +933,20 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
         <h3 className="text-lg font-bold flex items-center gap-2">
           <Folder className="text-emerald-400" size={20} /> Arquivos em Grafo
         </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Estilo do grafo direto aqui (sem ir em Configurações) — salva na empresa. */}
+          <div className="liquid-glass rounded-lg flex items-center p-0.5" title="Estilo do grafo">
+            {([["obsidian", "🕸️", "Obsidian (nuvem)"], ["arvore", "🌳", "Árvore (RPG)"], ["diretorio", "🗂️", "Diretório (lista)"]] as const).map(([id, emoji, label]) => (
+              <button
+                key={id}
+                onClick={() => changeStyle(id)}
+                title={label}
+                className={`px-2 py-1.5 rounded-md text-sm cursor-pointer ${graphStyle === id ? "bg-emerald-500/25" : "hover:bg-white/10 opacity-60"}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
           <div className="liquid-glass rounded-lg flex items-center gap-2 px-3 py-1.5">
             <Search size={14} className="text-gray-400" />
             <input

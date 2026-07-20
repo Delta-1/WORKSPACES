@@ -669,9 +669,16 @@ function GraphStyleField() {
     // Prioriza o que já está salvo NESTE aparelho (instantâneo), depois o banco.
     try { const ls = localStorage.getItem("graph_style"); if (ls) { setStyle(ls); setSavedStyle(ls); } } catch {}
     if (!supabase) return;
-    supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
+    // Filtra pela empresa do usuário — sem isso o limit(1) lia a linha de OUTRA
+    // empresa (a leitura é aberta) e o estilo salvo "voltava" sozinho.
+    (async () => {
+      const { data: { user } } = await supabase!.auth.getUser();
+      if (!user) return;
+      const { data: p } = await supabase!.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+      if (!p?.company_id) return;
+      const { data } = await supabase!.from("company_settings").select("graph_style").eq("company_id", p.company_id).maybeSingle();
       if (data?.graph_style) { setStyle(data.graph_style); setSavedStyle(data.graph_style); }
-    });
+    })();
   }, []);
 
   // Selecionar só pré-visualiza (troca a aba Arquivos na hora neste aparelho).
