@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, FlaskConical, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users, Wallet } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users, Wallet } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -26,6 +26,7 @@ import ClientsTab from "@/components/tabs/ClientsTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
 import VisaoAdmTab from "@/components/tabs/VisaoAdmTab";
+import GameTab from "@/components/tabs/GameTab";
 import PlansTab from "@/components/tabs/PlansTab";
 import { appEnabled, type FeatureId } from "@/lib/plan";
 import FinanceTab from "@/components/tabs/FinanceTab";
@@ -297,11 +298,18 @@ export default function Home() {
 
   // Plano da empresa: quais ferramentas estão ligadas (null = todas).
   const [enabledFeatures, setEnabledFeatures] = useState<FeatureId[] | null>(null);
+  const [gameEnabled, setGameEnabled] = useState(false); // Modo Game ligado nas Configurações
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
-    supabase.from("company_settings").select("enabled_features").eq("company_id", profile.company_id).maybeSingle()
-      .then(({ data }) => setEnabledFeatures((data?.enabled_features as FeatureId[]) ?? null));
+    supabase.from("company_settings").select("enabled_features, game_enabled").eq("company_id", profile.company_id).maybeSingle()
+      .then(({ data }) => {
+        setEnabledFeatures((data?.enabled_features as FeatureId[]) ?? null);
+        setGameEnabled(!!data?.game_enabled);
+      });
   }, [profile?.company_id]);
+
+  // App "Game" (ícone de controle): só em conta Casa e com o Modo Game ligado.
+  const showGame = myCompany?.company_type === "Casa" && gameEnabled;
 
   // VisãoADM é a central do Administrador Geral: aparece para o super admin em
   // QUALQUER ambiente (não depende mais de estar numa casa chamada "HUB").
@@ -312,6 +320,7 @@ export default function Home() {
       (a.id !== "clientes_ia" || superAdmin) && // Clientes.IA é exclusivo do Administrador Geral
       (a.id === "planos" || appEnabled(a.id, enabledFeatures))
     ),
+    ...(showGame ? [{ id: "game", label: "Game", icon: Gamepad2, accent: "bg-fuchsia-900/60", roles: [] as Role[] }] : []),
   ];
 
   // Barra de acesso rápido personalizável (salva por navegador).
@@ -467,6 +476,7 @@ export default function Home() {
         {tab === "clientes" && <ClientsTab profile={profile} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}
+        {tab === "game" && showGame && <GameTab profile={profile} />}
         {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
