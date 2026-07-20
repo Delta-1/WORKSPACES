@@ -225,7 +225,7 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
                   ) : errored ? (
                     <span className="text-red-400">✕ Erro{run?.error || r.last_error ? `: ${(run?.error || r.last_error || "").slice(0, 60)}` : ""}</span>
                   ) : done ? (
-                    <span className="text-emerald-400">✓ Concluído{r.last_run_at ? ` em ${new Date(r.last_run_at).toLocaleString("pt-BR")}` : ""}</span>
+                    <span className="text-emerald-400">✓ Concluído em {new Date(run?.created_at ?? r.last_run_at ?? Date.now()).toLocaleString("pt-BR")}</span>
                   ) : (
                     <span className="text-gray-500">Aguardando primeira coleta…</span>
                   )}

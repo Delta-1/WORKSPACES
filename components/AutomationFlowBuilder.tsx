@@ -30,13 +30,14 @@ export default function AutomationFlowBuilder({
   const [repeat, setRepeat] = useState(true);
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [sourcePath, setSourcePath] = useState("");
+  const [extraPaths, setExtraPaths] = useState<string[]>([]); // mais pastas/arquivos da mesma máquina
   const [dest, setDest] = useState(() => servers[0]?.id ?? "");
   const [scope, setScope] = useState<"one" | "all" | "some">("one");
   const [someIds, setSomeIds] = useState<string[]>([]);
   const [destPath, setDestPath] = useState("");
   const [graphFolderId, setGraphFolderId] = useState("");
   const [stage, setStage] = useState<Stage>("gatilho");
-  const [picking, setPicking] = useState<"source" | "dest" | null>(null);
+  const [picking, setPicking] = useState<"source" | "dest" | number | null>(null); // number = índice em extraPaths
   const [saving, setSaving] = useState(false);
 
   const factor = unit === "dias" ? 1440 : unit === "horas" ? 60 : 1;
@@ -59,10 +60,13 @@ export default function AutomationFlowBuilder({
   async function save() {
     if (!supabase || !name.trim() || !agentId || !sourcePath.trim() || !destValid) return;
     setSaving(true);
-    const { error } = await supabase.from("automation_routines").insert({
-      name: name.trim(),
+    // Várias pastas de origem = uma rotina por pasta (o agente processa cada uma
+    // normalmente; todas com o mesmo gatilho e destino).
+    const paths = [sourcePath.trim(), ...extraPaths.map((p) => p.trim()).filter(Boolean)];
+    const rows = paths.map((p, i) => ({
+      name: paths.length > 1 ? `${name.trim()} (${i + 1}/${paths.length})` : name.trim(),
       agent_id: agentId,
-      source_path: sourcePath.trim(),
+      source_path: p,
       interval_minutes: Math.max(1, Math.round(every * factor)),
       to_drive: false,
       repeat,
@@ -75,7 +79,8 @@ export default function AutomationFlowBuilder({
       graph_folder_id: graphFolderId || null,
       created_by: createdBy,
       next_run_at: new Date().toISOString(),
-    });
+    }));
+    const { error } = await supabase.from("automation_routines").insert(rows);
     setSaving(false);
     if (error) {
       alert("Erro: " + error.message);
@@ -126,7 +131,7 @@ export default function AutomationFlowBuilder({
             />
             {stageCard("gatilho", <Clock size={16} className="text-white" />, "Gatilho", `a cada ${every} ${unit}`, "bg-amber-600/70")}
             <div className="flex justify-center text-gray-600"><ArrowDown size={16} /></div>
-            {stageCard("origem", <Monitor size={16} className="text-white" />, "Pegar (origem)", `${originName}${sourcePath ? " · " + sourcePath.split(/[\\/]/).pop() : ""}`, "bg-emerald-600/70")}
+            {stageCard("origem", <Monitor size={16} className="text-white" />, "Pegar (origem)", `${originName}${sourcePath ? " · " + sourcePath.split(/[\\/]/).pop() : ""}${extraPaths.filter((p) => p.trim()).length ? ` +${extraPaths.filter((p) => p.trim()).length} pasta(s)` : ""}`, "bg-emerald-600/70")}
             <div className="flex justify-center text-gray-600"><ArrowDown size={16} /></div>
             {stageCard("destino", <Server size={16} className="text-white" />, "Colocar (destino)", destSummary, "bg-sky-600/70")}
           </div>
@@ -179,6 +184,24 @@ export default function AutomationFlowBuilder({
                     <FolderSearch size={14} /> Escolher
                   </button>
                 </div>
+                {/* Mais pastas da mesma máquina (vira uma rotina por pasta) */}
+                {extraPaths.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={p} onChange={(e) => setExtraPaths((cur) => cur.map((x, j) => (j === i ? e.target.value : x)))} placeholder={`Pasta/arquivo ${i + 2}`} className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none" />
+                    <button onClick={() => setPicking(i)} disabled={!agentId} className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg cursor-pointer disabled:opacity-40 shrink-0">
+                      <FolderSearch size={14} />
+                    </button>
+                    <button onClick={() => setExtraPaths((cur) => cur.filter((_, j) => j !== i))} title="Tirar esta pasta" className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button onClick={() => setExtraPaths((cur) => [...cur, ""])} className="text-[11px] text-emerald-300 hover:text-emerald-200 cursor-pointer">
+                  + Quer adicionar mais uma pasta? Clique aqui
+                </button>
+                {extraPaths.filter((p) => p.trim()).length > 0 && (
+                  <p className="text-[10px] text-gray-500">Cada pasta vira uma rotina própria (ex.: “{name.trim() || "Nome"} (1/{1 + extraPaths.filter((p) => p.trim()).length})”), todas com o mesmo gatilho e destino.</p>
+                )}
               </div>
             )}
 
@@ -260,6 +283,9 @@ export default function AutomationFlowBuilder({
 
       {picking === "source" && agentId && (
         <AgentFolderPicker agentId={agentId} onClose={() => setPicking(null)} onPick={(p) => { setSourcePath(p); setPicking(null); }} />
+      )}
+      {typeof picking === "number" && agentId && (
+        <AgentFolderPicker agentId={agentId} onClose={() => setPicking(null)} onPick={(p) => { const idx = picking; setExtraPaths((cur) => cur.map((x, j) => (j === idx ? p : x))); setPicking(null); }} />
       )}
       {picking === "dest" && pickAgent && (
         <AgentFolderPicker agentId={pickAgent} onClose={() => setPicking(null)} onPick={(p) => { setDestPath(p); setPicking(null); }} />
