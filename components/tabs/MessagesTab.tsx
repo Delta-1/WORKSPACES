@@ -58,6 +58,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [query, setQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
+  const [showMore, setShowMore] = useState(false); // celular: menu "+" (emoji/anexo/app)
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
@@ -952,9 +953,9 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
               {thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
             </div>
 
-            <div className="p-3 border-t border-white/10 flex items-center gap-2 shrink-0 relative pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div className="p-2 md:p-3 border-t border-white/10 flex items-center gap-1.5 md:gap-2 shrink-0 relative pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               {showEmoji && (
-                <div className="absolute bottom-full left-2 mb-2 w-72 max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
+                <div className="absolute bottom-full left-2 mb-2 w-72 max-w-[calc(100vw-1.5rem)] max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
                   {EMOJIS.map((e) => (
                     <button
                       key={e}
@@ -966,34 +967,67 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                   ))}
                 </div>
               )}
-              <button onClick={() => setShowEmoji((v) => !v)} className={`p-2.5 rounded-lg cursor-pointer ${showEmoji ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}>
+
+              {/* Anexo (input escondido) — compartilhado por celular e desktop */}
+              {selConv && (
+                <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.currentTarget.value = ""; }} />
+              )}
+
+              {/* CELULAR: um "+" agrupa emoji / anexo / app (barra limpa) */}
+              <div className="relative md:hidden">
+                <button
+                  onClick={() => { setShowMore((v) => !v); setShowEmoji(false); }}
+                  className={`p-2.5 rounded-full cursor-pointer shrink-0 ${showMore ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}
+                  title="Mais"
+                >
+                  <Plus size={22} className={`transition-transform ${showMore ? "rotate-45" : ""}`} />
+                </button>
+                {showMore && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setShowMore(false)} />
+                    <div className="absolute bottom-full left-0 mb-2 w-44 bg-[#111826] border border-white/10 rounded-2xl p-1.5 shadow-2xl z-40 flex flex-col gap-0.5">
+                      <button onClick={() => { setShowMore(false); setShowEmoji(true); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-sm text-gray-200 cursor-pointer"><Smile size={17} className="text-amber-300" /> Emoji</button>
+                      {selConv && <button onClick={() => { setShowMore(false); fileRef.current?.click(); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-sm text-gray-200 cursor-pointer"><Paperclip size={17} className="text-sky-300" /> Anexo</button>}
+                      {selConv && <button onClick={() => { setShowMore(false); setShowTools(true); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-sm text-gray-200 cursor-pointer"><Package size={17} className="text-fuchsia-300" /> App</button>}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* DESKTOP: botões inline */}
+              <button onClick={() => setShowEmoji((v) => !v)} className={`hidden md:inline-flex p-2.5 rounded-lg cursor-pointer ${showEmoji ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}>
                 <Smile size={18} />
               </button>
               {selConv && (
                 <>
-                  <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.currentTarget.value = ""; }} />
-                  <button onClick={() => fileRef.current?.click()} disabled={sending} className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar imagem, vídeo ou arquivo">
+                  <button onClick={() => fileRef.current?.click()} disabled={sending} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar imagem, vídeo ou arquivo">
                     <Paperclip size={18} />
                   </button>
-                  <button onClick={() => setShowTools(true)} disabled={sending} className="p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar um aplicativo/ferramenta">
+                  <button onClick={() => setShowTools(true)} disabled={sending} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar um aplicativo/ferramenta">
                     <Package size={18} />
-                  </button>
-                  <button onClick={toggleRecord} disabled={sending} className={`p-2.5 rounded-lg cursor-pointer disabled:opacity-50 ${recording ? "bg-red-600 text-white animate-pulse" : "hover:bg-white/10 text-gray-300"}`}>
-                    {recording ? <Square size={18} /> : <Mic size={18} />}
                   </button>
                 </>
               )}
+
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
                 placeholder={recording ? "Gravando áudio..." : "Mensagem..."}
                 disabled={recording}
-                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none disabled:opacity-60"
+                className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-sm outline-none disabled:opacity-60"
               />
-              <button onClick={send} disabled={sending || !input.trim()} className="p-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
-                <Send size={16} />
-              </button>
+
+              {/* Microfone quando não há texto; Enviar quando há texto */}
+              {selConv && !input.trim() ? (
+                <button onClick={toggleRecord} disabled={sending} className={`p-2.5 rounded-full cursor-pointer disabled:opacity-50 shrink-0 ${recording ? "bg-red-600 text-white animate-pulse" : "bg-white/10 hover:bg-white/20 text-gray-200"}`}>
+                  {recording ? <Square size={18} /> : <Mic size={18} />}
+                </button>
+              ) : (
+                <button onClick={send} disabled={sending || !input.trim()} className="p-2.5 rounded-full md:rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0">
+                  <Send size={18} />
+                </button>
+              )}
             </div>
           </>
         )}

@@ -24,6 +24,13 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#10b981",
+  // Comporta-se como app: sem zoom por pinça/duplo-toque e sem zoom automático ao
+  // focar campos no celular. viewportFit=cover respeita as áreas seguras (notch).
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

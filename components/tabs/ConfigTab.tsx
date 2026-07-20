@@ -660,33 +660,50 @@ const GRAPH_STYLES: { id: string; name: string; desc: string; emoji: string }[] 
 ];
 function GraphStyleField() {
   const [style, setStyle] = useState<string>("obsidian");
+  const [savedStyle, setSavedStyle] = useState<string>("obsidian"); // o que está no banco
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Prioriza o que já está salvo NESTE aparelho (instantâneo), depois o banco.
-    try { const ls = localStorage.getItem("graph_style"); if (ls) setStyle(ls); } catch {}
+    try { const ls = localStorage.getItem("graph_style"); if (ls) { setStyle(ls); setSavedStyle(ls); } } catch {}
     if (!supabase) return;
     supabase.from("company_settings").select("graph_style").limit(1).maybeSingle().then(({ data }) => {
-      if (data?.graph_style) setStyle(data.graph_style);
+      if (data?.graph_style) { setStyle(data.graph_style); setSavedStyle(data.graph_style); }
     });
   }, []);
 
-  async function pick(id: string) {
+  // Selecionar só pré-visualiza (troca a aba Arquivos na hora neste aparelho).
+  function pick(id: string) {
     setStyle(id);
-    // 1) Salva JÁ no aparelho e avisa a aba Arquivos (troca na hora, sem reabrir).
+    setError(null);
     try { localStorage.setItem("graph_style", id); } catch {}
     try { window.dispatchEvent(new CustomEvent("graph-style", { detail: id })); } catch {}
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1600);
-    // 2) Salva no banco (pra valer em qualquer aparelho da empresa).
-    if (!supabase) return;
+  }
+
+  // Salvar de verdade no banco (vale para qualquer aparelho da empresa).
+  async function save() {
+    if (!supabase || saving) return;
+    setSaving(true);
+    setError(null);
     const { data: { user } } = await supabase.auth.getUser();
     let cid: string | null = null;
     if (user) { const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle(); cid = p?.company_id ?? null; }
-    let q = supabase.from("company_settings").update({ graph_style: id });
-    q = cid ? q.eq("company_id", cid) : q.not("id", "is", null);
-    await q;
+    if (!cid) { setError("Não encontrei sua empresa para salvar."); setSaving(false); return; }
+    const { error: err, count } = await supabase
+      .from("company_settings")
+      .update({ graph_style: style }, { count: "exact" })
+      .eq("company_id", cid);
+    setSaving(false);
+    if (err) { setError("Erro ao salvar: " + err.message); return; }
+    if (!count) { setError("Nada foi salvo (sem permissão ou empresa sem configuração)."); return; }
+    setSavedStyle(style);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
   }
+
+  const dirty = style !== savedStyle;
 
   return (
     <div>
@@ -707,7 +724,17 @@ function GraphStyleField() {
           </button>
         ))}
       </div>
-      <p className="text-[10px] text-gray-500 mt-1">Toque num estilo — já salva sozinho. A aba <b>Arquivos</b> muda na hora.</p>
+      {error && <p className="text-[11px] text-red-400 mt-2">{error}</p>}
+      <div className="flex items-center gap-2 mt-2">
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"
+        >
+          {saving ? "Salvando…" : dirty ? "Salvar alterações" : "Salvo"}
+        </button>
+        <span className="text-[10px] text-gray-500">A aba <b>Arquivos</b> muda na hora; o botão salva para todos os aparelhos.</span>
+      </div>
     </div>
   );
 }
