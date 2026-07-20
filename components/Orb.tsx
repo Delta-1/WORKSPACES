@@ -51,6 +51,50 @@ export default function Orb({
   const activeRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [agentId, setAgentId] = useState<string | null>(null);
+
+  // Legenda estilo vídeo: aparece embaixo quando a IA (modo controle) explica algo,
+  // e pode ser arrastada para qualquer lugar (posição salva no aparelho).
+  const [caption, setCaption] = useState("");
+  const [capPos, setCapPos] = useState<{ x: number; y: number } | null>(() => {
+    try { const s = localStorage.getItem("orb:capPos"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
+  const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capDrag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  function showCaption(t: string) {
+    setCaption(t);
+    if (capTimer.current) clearTimeout(capTimer.current);
+    // Fica na tela por um tempo proporcional ao tamanho da fala.
+    capTimer.current = setTimeout(() => setCaption(""), Math.min(20000, 4000 + t.length * 70));
+  }
+  function onCapDown(e: React.PointerEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const r = el.getBoundingClientRect();
+    capDrag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+  }
+  function onCapMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!capDrag.current) return;
+    capDrag.current.moved = true;
+    const x = Math.max(4, Math.min(window.innerWidth - 40, e.clientX - capDrag.current.dx));
+    const y = Math.max(4, Math.min(window.innerHeight - 20, e.clientY - capDrag.current.dy));
+    setCapPos({ x, y });
+  }
+  function onCapUp() {
+    if (capDrag.current?.moved && capPos) { try { localStorage.setItem("orb:capPos", JSON.stringify(capPos)); } catch { /* ignore */ } }
+    capDrag.current = null;
+  }
+  const captionEl = onControl && caption ? (
+    <div
+      onPointerDown={onCapDown}
+      onPointerMove={onCapMove}
+      onPointerUp={onCapUp}
+      style={capPos ? { left: capPos.x, top: capPos.y, bottom: "auto", transform: "none" } : undefined}
+      className="fixed z-[99] left-1/2 bottom-24 -translate-x-1/2 max-w-[80vw] px-4 py-2 rounded-xl bg-black/75 backdrop-blur-sm border border-white/15 text-white text-center text-[15px] leading-snug shadow-2xl cursor-move select-none touch-none"
+    >
+      {caption}
+      <span className="block text-[9px] text-white/40 mt-0.5">arraste para mover a legenda</span>
+    </div>
+  ) : null;
   useEffect(() => {
     if (!supabase) return;
     supabase.from("chatbots").select("id,name").eq("slot", slot).maybeSingle().then(({ data }) => {
@@ -182,7 +226,7 @@ export default function Orb({
         let reply = raw;
         let count = 0;
         if (onControl) { const r = await runControlCommands(raw); reply = r.text; count = r.count; }
-        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); if (voiceOn) speak(reply); }
+        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
         // Para o loop quando: não é modo controle; a IA não executou nenhum
         // comando (está falando ou perguntando algo e esperando você); ou marcou «fim».
         if (!onControl || count === 0 || /«?\s*fim\s*»?/i.test(raw)) break;
@@ -255,18 +299,23 @@ export default function Orb({
   // Modo bolinha flutuante (voz ativa e minimizado) — vibe JARVIS.
   if (minimized) {
     return (
-      <button
-        onClick={() => setMinimized(false)}
-        title={`${name} ouvindo — toque para abrir o chat`}
-        className="fixed bottom-5 right-5 z-[95] w-16 h-16 rounded-full cursor-pointer orb-float flex items-center justify-center"
-      >
-        <span className="absolute inset-0 rounded-full orb-glow" />
-        <Volume2 size={22} className="text-white relative z-10" />
-      </button>
+      <>
+        {captionEl}
+        <button
+          onClick={() => setMinimized(false)}
+          title={`${name} ouvindo — toque para abrir o chat`}
+          className="fixed bottom-5 right-5 z-[95] w-16 h-16 rounded-full cursor-pointer orb-float flex items-center justify-center"
+        >
+          <span className="absolute inset-0 rounded-full orb-glow" />
+          <Volume2 size={22} className="text-white relative z-10" />
+        </button>
+      </>
     );
   }
 
   return (
+    <>
+    {captionEl}
     <div className="fixed bottom-5 right-5 z-[95] w-[320px] max-w-[92vw] bg-[#0b0f16]/95 backdrop-blur border border-indigo-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-indigo-950/40">
         <span className="text-sm font-bold flex items-center gap-2">
@@ -306,5 +355,6 @@ export default function Orb({
         </button>
       </div>
     </div>
+    </>
   );
 }
