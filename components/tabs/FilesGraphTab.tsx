@@ -436,13 +436,15 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     kick(0.6);
   }
 
+  // Recarrega os arquivos quando muda o ambiente ativo (empresa/casa) do usuário,
+  // para não ficar mostrando o grafo do ambiente anterior (ou vazio) depois da troca.
   useEffect(() => {
     load();
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [profile?.company_id]);
 
   // Atualização ao vivo do grafo: qualquer arquivo/pasta novo (upload, automação,
   // servidor) ou ligação aparece na hora, sem precisar recarregar.
