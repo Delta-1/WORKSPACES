@@ -15,6 +15,7 @@ export default function PlansTab() {
   const [kind, setKind] = useState<"recomendado" | "personalizado">("recomendado");
   const [saved, setSaved] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [savedPrice, setSavedPrice] = useState<number | null>(null); // valor já contratado (p/ detectar troca)
 
   useEffect(() => {
     if (!supabase) return;
@@ -25,9 +26,12 @@ export default function PlansTab() {
       if (!p?.company_id) return;
       setCompanyId(p.company_id);
       const { data: cs } = await supabase.from("company_settings").select("enabled_features, wa_number_limit, plan_kind").eq("company_id", p.company_id).maybeSingle();
+      const feats = (cs?.enabled_features as FeatureId[] | null) ?? RECOMMENDED;
+      const waNum = cs?.wa_number_limit ?? RECOMMENDED_WA_LIMIT;
       if (cs?.enabled_features) setFeatures(cs.enabled_features as FeatureId[]);
       if (cs?.wa_number_limit != null) setWaLimit(cs.wa_number_limit);
       if (cs?.plan_kind === "personalizado" || cs?.plan_kind === "recomendado") setKind(cs.plan_kind);
+      setSavedPrice(planPrice(feats, waNum)); // valor atualmente contratado
       const { data: c } = await supabase.from("companies").select("subscription_status, license_until").eq("id", p.company_id).maybeSingle();
       if (c) setStatus(c.subscription_status || null);
     })();
@@ -42,6 +46,22 @@ export default function PlansTab() {
     if (!supabase || !companyId) return;
     await supabase.from("company_settings").update({ enabled_features: features, wa_number_limit: waLimit, plan_kind: kind, monthly_price: price }).eq("company_id", companyId);
     setSaved(true);
+
+    // Se o VALOR mudou e a empresa paga no cartão, cancela a assinatura atual e
+    // cria uma nova com o novo valor (o servidor decide; no Pix não faz nada).
+    if (savedPrice !== null && price !== savedPrice) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/billing/change-plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+          body: JSON.stringify({ amount: price, companyId, companyName: undefined }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data?.url) { window.location.href = data.url as string; return; } // reautoriza o cartão
+      } catch { /* segue o fluxo normal mesmo se a troca falhar */ }
+    }
+    setSavedPrice(price);
     setTimeout(() => { window.location.reload(); }, 700); // recarrega pra aplicar as abas
   }
 

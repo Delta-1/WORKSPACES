@@ -92,6 +92,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    // Pagamento avulso (Pix): aprovado → renova +35 dias e limpa o Pix pendente;
+    // recusado → marca como atrasado. (authorized_payment já foi tratado acima.)
+    if (type.includes("payment")) {
+      const pay = await mpGet(`/v1/payments/${id}`, token);
+      if (!pay) return NextResponse.json({ ok: true });
+      const companyId = await findCompanyId(svc, { externalRef: pay.external_reference });
+      if (!companyId) return NextResponse.json({ ok: true });
+      const status = String(pay.status || "");
+      if (status === "approved") {
+        await applyToCompany(svc, companyId, { subscription_status: "active", license_until: inDays(MONTH_GRACE_DAYS), pix_qr_code: null, pix_ticket_url: null, mp_last_payment_id: String(pay.id ?? "") }, `pix:${status}`);
+      } else if (status === "rejected" || status === "cancelled") {
+        await applyToCompany(svc, companyId, { subscription_status: "past_due" }, `pix:${status}`);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: true });
