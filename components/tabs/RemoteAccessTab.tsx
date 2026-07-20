@@ -29,10 +29,11 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
-  // Um dispositivo só é "servidor" para a empresa que o criou. Empresas que só
-  // têm acesso (compartilhado, via código) o veem como computador comum — e
-  // podem, se quiserem, defini-lo como servidor da PRÓPRIA empresa depois.
-  const ownsAgent = (a: RemoteAgent) => !!companyId && a.company_id === companyId;
+  const [serverPassword, setServerPassword] = useState("1qaz2wsx"); // senha "root" da empresa
+  // Esta empresa pode marcar a máquina como servidor? Sim se for DELA, ou se a
+  // máquina ainda não tem dono (company_id nulo — máquina antiga/avulsa). Máquinas
+  // de OUTRA empresa (só compartilhadas por código) não — lá é computador comum.
+  const ownsAgent = (a: RemoteAgent) => !!companyId && (a.company_id === companyId || a.company_id == null);
   const thumbBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
 
   // Atualiza as prévias ao vivo a cada 6s (o agente sobe um print nesse ritmo).
@@ -46,6 +47,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     // Dispositivos que a empresa possui OU tem acesso pelo código (compartilhados).
     const { data } = await supabase.rpc("my_remote_agents");
     if (data) setAgents(data as RemoteAgent[]);
+    const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", companyId).maybeSingle();
+    if (cs?.server_password) setServerPassword(cs.server_password);
   }, [companyId]);
 
   useEffect(() => {
@@ -100,7 +103,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   // makeServer=false: tira o servidor. Pastas liberadas valem sempre (allowlist).
   async function confirmServerChange(makeServer: boolean) {
     if (!supabase || !pwFor) return;
-    if (pwInput !== "1qaz2wsx") {
+    if (pwInput !== serverPassword) {
       setPwError(true);
       return;
     }
@@ -110,8 +113,12 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       graph_folder_id?: string;
       server_root?: string | null;
       shared_paths: string[] | null;
+      company_id?: string;
     } = { is_server: makeServer, shared_paths: shared.length ? shared : null };
     if (makeServer) patch.server_root = rootInput.trim() || null;
+    // Máquina sem dono (company_id nulo) → vira desta empresa ao ser marcada como
+    // servidor (senão ela não apareceria como servidor de ninguém).
+    if (makeServer && pwFor.company_id == null && companyId) patch.company_id = companyId;
     if (makeServer && !pwFor.graph_folder_id) {
       const { data: folder } = await supabase
         .from("files")
@@ -120,7 +127,14 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
         .single();
       if (folder) patch.graph_folder_id = folder.id;
     }
-    await supabase.from("remote_agents").update(patch).eq("id", pwFor.id);
+    const { error, count } = await supabase
+      .from("remote_agents")
+      .update(patch, { count: "exact" })
+      .eq("id", pwFor.id);
+    if (error || !count) {
+      alert(error ? "Não consegui salvar: " + error.message : "Não foi possível marcar como servidor (sem permissão nesta máquina).");
+      return;
+    }
     setPwFor(null);
     setPwInput("");
     load();

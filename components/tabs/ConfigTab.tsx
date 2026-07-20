@@ -420,7 +420,7 @@ export default function ConfigTab({
           )}
 
           {active === "ferramentas" && <div className="max-w-lg"><ToolsManager /></div>}
-          {active === "servidores" && <div className="max-w-lg"><ServersSection /></div>}
+          {active === "servidores" && <div className="max-w-lg space-y-4"><ServersSection /><ServerPasswordField /></div>}
           {active === "ia" && <div className="max-w-lg"><AiConfigSection /></div>}
           {active === "chatbot" && <div className="max-w-lg"><ChatbotSection /></div>}
 
@@ -742,6 +742,55 @@ function GraphStyleField() {
         </button>
         <span className="text-[10px] text-gray-500">A aba <b>Arquivos</b> muda na hora; o botão salva para todos os aparelhos.</span>
       </div>
+    </div>
+  );
+}
+
+// Senha "root" para marcar/tirar servidor. Padrão inicial 1qaz2wsx. Para trocar,
+// é preciso informar a senha antiga.
+function ServerPasswordField() {
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!supabase || saving) return;
+    setMsg(null);
+    if (!newPw.trim()) { setMsg({ ok: false, text: "Digite a nova senha." }); return; }
+    if (newPw !== confirmPw) { setMsg({ ok: false, text: "A confirmação não bate com a nova senha." }); return; }
+    setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: p } = user ? await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle() : { data: null };
+    const cid = p?.company_id ?? null;
+    if (!cid) { setSaving(false); setMsg({ ok: false, text: "Empresa não encontrada." }); return; }
+    const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", cid).maybeSingle();
+    const current = cs?.server_password || "1qaz2wsx";
+    if (oldPw !== current) { setSaving(false); setMsg({ ok: false, text: "Senha antiga incorreta." }); return; }
+    const { error, count } = await supabase.from("company_settings").update({ server_password: newPw.trim() }, { count: "exact" }).eq("company_id", cid);
+    setSaving(false);
+    if (error || !count) { setMsg({ ok: false, text: error ? "Erro: " + error.message : "Não consegui salvar." }); return; }
+    setMsg({ ok: true, text: "Senha do servidor atualizada." });
+    setOldPw(""); setNewPw(""); setConfirmPw("");
+  }
+
+  return (
+    <div className="liquid-glass rounded-2xl p-5 space-y-3">
+      <div>
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">🔑 Senha do servidor (root)</h3>
+        <p className="text-[11px] text-gray-500 mt-1">
+          É a senha pedida ao marcar ou tirar uma máquina como servidor no Acesso Remoto. Começa como <b>1qaz2wsx</b>.
+          Para trocar, informe a senha atual.
+        </p>
+      </div>
+      <input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder="Senha atual" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+      <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Nova senha" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+      <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirmar nova senha" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+      {msg && <p className={`text-[11px] ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>}
+      <button onClick={save} disabled={saving} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
+        {saving ? "Salvando…" : "Trocar senha"}
+      </button>
     </div>
   );
 }
