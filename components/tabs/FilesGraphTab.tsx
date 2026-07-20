@@ -393,23 +393,39 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     }
     const sortByName = (a: PositionedNode, b: PositionedNode) =>
       (a.type === b.type ? 0 : a.type === "folder" ? -1 : 1) || a.name.localeCompare(b.name);
-    const COL = 92, ROW = 120;
+    const COL = 92, ROW = 130, SUBROW = 66;
     const pos = new Map<string, { x: number; y: number }>();
     let leaf = 0;
+    const isLeaf = (n: PositionedNode) => (kidsOf.get(n.id)?.length ?? 0) === 0;
+    // Empacota vários ARQUIVOS soltos numa GRADE (várias sub-linhas), em vez de
+    // uma linha reta enorme. Assim já vem "amontoado", sem precisar bagunçar.
+    const gridPack = (items: PositionedNode[], baseDepth: number): number => {
+      const cols = Math.max(1, Math.min(6, Math.ceil(Math.sqrt(items.length))));
+      const start = leaf;
+      items.forEach((k, i) => {
+        const col = i % cols, row = Math.floor(i / cols);
+        pos.set(k.id, { x: (start + col) * COL, y: baseDepth * ROW + row * SUBROW });
+      });
+      leaf = start + cols + 0.6; // um respiro entre grupos
+      return (start + (cols - 1) / 2) * COL;
+    };
     const walk = (node: PositionedNode, depth: number): number => {
       const kids = (kidsOf.get(node.id) ?? []).slice().sort(sortByName);
-      let x: number;
-      if (kids.length === 0) { x = leaf * COL; leaf += 1; }
-      else {
-        const xs = kids.map((c) => walk(c, depth + 1));
-        x = (xs[0] + xs[xs.length - 1]) / 2;
-      }
+      if (kids.length === 0) { const x = leaf * COL; leaf += 1; pos.set(node.id, { x, y: depth * ROW }); return x; }
+      const xs: number[] = [];
+      // Subpastas descem como galhos; arquivos soltos viram grade compacta.
+      for (const f of kids.filter((k) => !isLeaf(k))) xs.push(walk(f, depth + 1));
+      const leafKids = kids.filter(isLeaf);
+      if (leafKids.length) xs.push(gridPack(leafKids, depth + 1));
+      const x = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : leaf * COL;
       pos.set(node.id, { x, y: depth * ROW });
       return x;
     };
     const roots = (all.filter((n) => vis.has(n.id) && (n.parent_id === null || !vis.has(n.parent_id))))
       .slice().sort(sortByName);
-    for (const r of roots) { walk(r, 0); leaf += 1; }
+    for (const r of roots.filter((r) => !isLeaf(r))) { walk(r, 0); leaf += 1; }
+    const leafRoots = roots.filter(isLeaf);
+    if (leafRoots.length) gridPack(leafRoots, 0); // arquivos soltos na raiz também em grade
     // Centraliza no meio do mundo.
     const xsAll = [...pos.values()].map((p) => p.x);
     const midX = xsAll.length ? (Math.min(...xsAll) + Math.max(...xsAll)) / 2 : 0;

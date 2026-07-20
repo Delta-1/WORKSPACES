@@ -6,6 +6,10 @@ import {
   Bot,
   ClipboardPaste,
   Download,
+  Maximize2,
+  Minimize2,
+  Volume2,
+  VolumeX,
   File as FileIcon,
   Folder,
   FolderOpen,
@@ -80,6 +84,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
   const [orbOpen, setOrbOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
+  const [fs, setFs] = useState(false); // tela cheia (qualquer acesso, não só game)
+  const [muted, setMuted] = useState(true); // escutar o áudio do sistema/ambiente do cliente
   const [homeGame, setHomeGame] = useState(false); // Modo Game só na conta Casa e ligado nas configs
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
@@ -702,7 +708,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
             ref={videoRef}
             autoPlay
             playsInline
-            className={`${gameMode ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "max-w-full max-h-full"} ${isTouch ? "" : "cursor-none"}`}
+            muted={muted}
+            className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "max-w-full max-h-full"} ${isTouch ? "" : "cursor-none"}`}
             onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
             onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
             onMouseUp={(e) => !isTouch && sendInput({ kind: "up", button: e.button, ...norm(e) })}
@@ -849,6 +856,12 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
                 <Gamepad2 size={14} /> Game
               </button>
             )}
+            <button onClick={() => setMuted((m) => !m)} title={muted ? "Escutar o áudio do sistema/ambiente" : "Silenciar"} className={`flex items-center gap-1 text-xs px-3 py-2 rounded-lg cursor-pointer ${muted ? "bg-white/10 hover:bg-white/20" : "bg-emerald-600 text-white"}`}>
+              {muted ? <VolumeX size={14} /> : <Volume2 size={14} />} {muted ? "Escutar" : "Ouvindo"}
+            </button>
+            <button onClick={() => setFs(true)} title="Tela cheia" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
+              <Maximize2 size={14} /> Tela cheia
+            </button>
             <button onClick={() => combo("home")} title="Tecla casa (menu iniciar)" className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg cursor-pointer">
               <Home size={14} /> Início
             </button>
@@ -930,6 +943,11 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
 
       {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={() => setOrbOpen(false)} />}
       {toolsOpen && <ToolsPicker title="Instalar no cliente" actionLabel="abrir/instalar" onPick={openToolOnClient} onClose={() => setToolsOpen(false)} />}
+      {fs && !gameMode && (
+        <button onClick={() => setFs(false)} title="Sair da tela cheia" className="fixed top-4 right-4 z-[97] flex items-center gap-1 text-xs bg-black/60 hover:bg-black/80 text-white px-3 py-2 rounded-lg cursor-pointer backdrop-blur">
+          <Minimize2 size={14} /> Sair da tela cheia
+        </button>
+      )}
       {gameMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} onExit={() => setGameMode(false)} />}
     </div>
   );
