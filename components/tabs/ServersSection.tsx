@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase-client";
 import type { RemoteAgent } from "@/lib/types";
 
 function isOnline(a: RemoteAgent) {
-  return a.status === "online" && !!a.last_seen && Date.now() - new Date(a.last_seen).getTime() < 60000;
+  return a.status === "online" && !!a.last_seen && Date.now() - new Date(a.last_seen).getTime() < 120000;
 }
 
 export default function ServersSection() {

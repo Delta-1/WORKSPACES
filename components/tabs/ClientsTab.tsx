@@ -13,7 +13,7 @@ const DEFAULT_CLIENT_SUBFOLDERS = ["Documentos", "Contratos", "Artes", "Aplicati
 
 function isOnline(a: RemoteAgent) {
   if (a.status !== "online" || !a.last_seen) return false;
-  return Date.now() - new Date(a.last_seen).getTime() < 60000;
+  return Date.now() - new Date(a.last_seen).getTime() < 120000;
 }
 
 // Reduz uma imagem (logo do cliente) para um quadrado pequeno em dataURL.

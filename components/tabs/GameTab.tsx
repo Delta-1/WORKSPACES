@@ -7,7 +7,7 @@ import RemoteViewer from "@/components/RemoteViewer";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
 function isOnline(a: RemoteAgent) {
-  return a.status === "online" && !!a.last_seen && Date.now() - new Date(a.last_seen).getTime() < 60000;
+  return a.status === "online" && !!a.last_seen && Date.now() - new Date(a.last_seen).getTime() < 120000;
 }
 
 // APP GAME — biblioteca de "logins de jogo": as máquinas (PCs) que você registrou

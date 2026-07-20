@@ -885,9 +885,10 @@ async function checkForUpdate(cfg, manual = false) {
       if (manual) dialog.showMessageBox({ type: "warning", title: "Atualização", message: "Há uma nova versão, mas sem link para o seu sistema ainda." });
       return;
     }
+    // SEM confirmação modal: o showMessageBoxSync travava a máquina (e o acesso
+    // remoto) esperando o clique. Agora atualiza direto — só avisa sem bloquear.
     if (manual) {
-      const r = dialog.showMessageBoxSync({ type: "question", buttons: ["Atualizar agora", "Depois"], defaultId: 0, title: "Atualização disponível", message: "Há uma nova versão do Acesso Remoto. Atualizar agora?" });
-      if (r !== 0) return;
+      try { dialog.showMessageBox({ type: "info", title: "Acesso Remoto", message: "Atualizando para a versão mais nova… O app reinicia sozinho." }); } catch {}
     }
     // Marca ANTES de instalar, para não repetir a atualização depois do reinício.
     try { fs.writeFileSync(stampFile, releaseStamp); } catch {}
@@ -964,9 +965,10 @@ app.whenReady().then(() => {
     /* tray opcional */
   }
 
-  // Verifica atualização ao abrir e depois a cada 3 horas (silencioso).
+  // Verifica atualização ao abrir e depois a cada 30 min (silencioso, instala
+  // sozinho sem perguntar nada) — fica sempre na versão mais nova.
   setTimeout(() => checkForUpdate(payload, false), 8000);
-  setInterval(() => checkForUpdate(payload, false), 3 * 3600 * 1000);
+  setInterval(() => checkForUpdate(payload, false), 30 * 60 * 1000);
 });
 
 app.on("window-all-closed", (e) => {
