@@ -15,8 +15,11 @@ export default function ServersSection() {
 
   const load = useCallback(async () => {
     if (!supabase) return;
+    // Só os servidores DESTA empresa (a que criou o servidor). Máquinas apenas
+    // compartilhadas por código aparecem como computador no Acesso Remoto, não aqui.
+    const { data: myCo } = await supabase.rpc("my_company");
     const { data } = await supabase.from("remote_agents").select("*").eq("is_server", true).order("name");
-    const list = (data as RemoteAgent[]) ?? [];
+    const list = ((data as RemoteAgent[]) ?? []).filter((s) => s.company_id === myCo);
     setServers(list);
     const ids = list.map((s) => s.graph_folder_id).filter(Boolean) as string[];
     if (ids.length) {

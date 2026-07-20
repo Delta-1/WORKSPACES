@@ -122,7 +122,9 @@ export default function RemoteViewer({ agent, profile, onClose }: { agent: Remot
       .from("remote_agents")
       .select("*")
       .eq("is_server", true)
-      .then(({ data }) => setServers(((data as RemoteAgent[]) ?? []).filter((s) => s.id !== agent.id)));
+      // Servidores da MESMA empresa dona desta máquina (não puxa servidor de outra
+      // empresa que só tenha acesso compartilhado).
+      .then(({ data }) => setServers(((data as RemoteAgent[]) ?? []).filter((s) => s.id !== agent.id && s.company_id === agent.company_id)));
   }, [agent.id]);
 
   function fsSend(obj: unknown) {
