@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, Copy, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { Building2, ChevronRight, Copy, Eye, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import RemoteViewer from "@/components/RemoteViewer";
+import type { RemoteAgent } from "@/lib/types";
 
 type Company = { company_id: string; name: string; company_code: string | null; plan: string | null; segment: string | null; status: string | null; license_until: string | null; monthly_price: number | null; users: number; clients: number; agents: number; created_at: string };
 type AiKeys = { provider: string | null; api_key: string | null; elevenlabs_key: string | null; elevenlabs_voice_id: string | null };
@@ -18,6 +20,19 @@ export default function AdminCompaniesTab() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [keys, setKeys] = useState<AiKeys>({ provider: "anthropic", api_key: "", elevenlabs_key: "", elevenlabs_voice_id: "" });
   const [savedKeys, setSavedKeys] = useState(false);
+  const [liveAgent, setLiveAgent] = useState<RemoteAgent | null>(null); // ver máquina ao vivo (Admin)
+
+  // Constrói um RemoteAgent a partir do que a listagem admin traz, com controle
+  // total (o Admin Geral pode ver/controlar para suporte).
+  function toFullAgent(a: Agent): RemoteAgent {
+    return {
+      id: a.id, company_id: null, client_id: null, name: a.name,
+      access_code: a.access_code ?? "", pin: a.pin, status: a.status ?? "offline",
+      os: a.os, last_seen: null, created_by: null, created_at: new Date().toISOString(),
+      specs: null, is_server: a.is_server, server_root: null, graph_folder_id: null,
+      shared_paths: null, allow_control: true, allow_files: true, allow_screenshot: true,
+    };
+  }
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -139,8 +154,16 @@ export default function AdminCompaniesTab() {
                     <Monitor size={15} className={`shrink-0 ${a.status === "online" ? "text-emerald-400" : "text-gray-500"}`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm truncate">{a.name}{a.is_server ? " · servidor" : ""}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{a.client_name || "—"} · {a.os || "?"}</p>
+                      <p className="text-[10px] text-gray-500 truncate">{a.client_name || "—"} · {a.os || "?"} · {a.status === "online" ? "online" : "offline"}</p>
                     </div>
+                    <button
+                      onClick={() => setLiveAgent(toFullAgent(a))}
+                      disabled={a.status !== "online"}
+                      title={a.status === "online" ? "Ver a tela ao vivo (suporte)" : "Máquina offline"}
+                      className="text-[11px] flex items-center gap-1 px-2 py-1 rounded bg-fuchsia-600/30 text-fuchsia-200 hover:bg-fuchsia-600/50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                    >
+                      <Eye size={12} /> Ao vivo
+                    </button>
                     {a.access_code && (
                       <button onClick={() => copy(a.access_code!)} title="Copiar código de acesso" className="text-[11px] flex items-center gap-1 px-2 py-1 rounded bg-white/10 hover:bg-white/20 cursor-pointer font-mono">
                         <KeyRound size={11} /> {a.access_code} <Copy size={11} />
@@ -154,6 +177,8 @@ export default function AdminCompaniesTab() {
           </div>
         </div>
       )}
+
+      {liveAgent && <RemoteViewer agent={liveAgent} onClose={() => setLiveAgent(null)} />}
     </div>
   );
 }
