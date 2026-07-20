@@ -10,6 +10,7 @@ export type Profile = {
   company_id: string | null;
   whatsapp_number: string | null;
   finance_access: boolean | null;
+  tool_access: Record<string, boolean> | null; // permissão por ferramenta (null = padrão do cargo)
   created_at: string;
 };
 
