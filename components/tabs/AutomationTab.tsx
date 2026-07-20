@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Clock, Plus, RefreshCw, Send, Server, Trash2 } from "lucide-react";
+import { Bot, Clock, Plus, RefreshCw, Send, Server, Terminal, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import AutomationFlowBuilder from "@/components/AutomationFlowBuilder";
 import type { Profile, RemoteAgent } from "@/lib/types";
@@ -51,6 +51,8 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
   const [latestRun, setLatestRun] = useState<Record<string, RunRow>>({});
   const [folders, setFolders] = useState<GraphFolder[]>([]);
   const [flowOpen, setFlowOpen] = useState(false);
+  const [termFor, setTermFor] = useState<Routine | null>(null); // mini-terminal (histórico de rodadas)
+  const [termRuns, setTermRuns] = useState<RunRow[]>([]);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [now, setNow] = useState(Date.now());
   const bcastRef = useRef<HTMLInputElement>(null);
@@ -130,6 +132,27 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
     setSyncMsg({ ok: true, text: `"${r.name}" vai coletar no próximo ciclo do agente (até ~1 min).` });
     load();
   }
+  // Mini-terminal: abre e mostra o histórico de rodadas (concluído/erro + hora).
+  async function openTerminal(r: Routine) {
+    setTermFor(r);
+    setTermRuns([]);
+    if (!supabase) return;
+    const { data } = await supabase
+      .from("automation_runs")
+      .select("routine_id,status,error,created_at")
+      .eq("routine_id", r.id)
+      .order("created_at", { ascending: false })
+      .limit(80);
+    setTermRuns((data as RunRow[]) ?? []);
+  }
+  function termLine(run: RunRow): { txt: string; cls: string } {
+    const t = new Date(run.created_at).toLocaleString("pt-BR");
+    if (run.status === "in_server") return { txt: `[${t}] ✓ concluído — arquivo entregue no servidor`, cls: "text-emerald-300" };
+    if (run.status === "uploaded") return { txt: `[${t}] … coletado, enviando ao servidor`, cls: "text-amber-300" };
+    if (run.status === "error") return { txt: `[${t}] ✕ erro${run.error ? ": " + run.error : ""}`, cls: "text-red-300" };
+    return { txt: `[${t}] ${run.status}`, cls: "text-gray-400" };
+  }
+
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
 
   return (
@@ -183,6 +206,9 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
                   <p className="text-[11px] text-gray-500 truncate">{agentName.get(r.agent_id) ?? "máquina removida"}</p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => openTerminal(r)} title="Terminal — ver rodadas (concluído/erro)" className="text-gray-400 hover:text-sky-300 cursor-pointer">
+                    <Terminal size={13} />
+                  </button>
                   <button onClick={() => runNow(r)} title="Rodar agora" className="text-gray-400 hover:text-emerald-400 cursor-pointer">
                     <RefreshCw size={13} />
                   </button>
@@ -242,6 +268,31 @@ export default function AutomationTab({ profile }: { profile: Profile | null }) 
       </div>
 
       {flowOpen && <AutomationFlowBuilder agents={agents} folders={folders} createdBy={profile?.id ?? null} onClose={() => setFlowOpen(false)} onSaved={load} />}
+
+      {termFor && (
+        <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" onClick={() => setTermFor(null)}>
+          <div className="w-full max-w-lg max-h-[80vh] flex flex-col bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-bold flex items-center gap-2"><Terminal size={15} className="text-sky-400" /> {termFor.name}</h3>
+              <div className="flex items-center gap-1">
+                <button onClick={() => openTerminal(termFor)} title="Atualizar" className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><RefreshCw size={14} /></button>
+                <button onClick={() => setTermFor(null)} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={15} /></button>
+              </div>
+            </div>
+            <div className="p-3 overflow-y-auto custom-scroll font-mono text-[11px] leading-relaxed bg-black/40">
+              {termRuns.length === 0 ? (
+                <p className="text-gray-500">Sem rodadas ainda. Clique em “Rodar agora” na automação.</p>
+              ) : (
+                termRuns.map((run, i) => {
+                  const l = termLine(run);
+                  return <div key={i} className={l.cls}>{l.txt}</div>;
+                })
+              )}
+            </div>
+            <p className="text-[10px] text-gray-500 px-4 py-2 border-t border-white/10">Mostra as últimas 80 rodadas desta automação. Cada conclusão/erro também vai pro app Log.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
