@@ -674,7 +674,7 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
   return (
     // No CELULAR, com uma conversa aberta, o chat vira TELA CHEIA por cima do dock
     // de apps (que ficava na frente da barra de escrever). No desktop, nada muda.
-    <div className={`h-full flex overflow-hidden rounded-2xl liquid-glass ${hasSel ? "max-md:fixed max-md:inset-0 max-md:z-[60] max-md:rounded-none max-md:h-[100dvh]" : ""}`}>
+    <div className={`h-full flex overflow-hidden rounded-2xl liquid-glass ${hasSel ? "max-md:fixed max-md:inset-0 max-md:z-[80] max-md:rounded-none max-md:h-[100dvh] max-md:!bg-[#0a0e16] max-md:backdrop-blur-none" : ""}`}>
       {/* Rail de servidores (grupos ficam separados aqui) */}
       <div className={`w-16 shrink-0 bg-black/30 flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
@@ -903,14 +903,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                   <button
                     onClick={() => setShowBotSetup(true)}
                     title="Escolher tipo de automação do WhatsApp para este número"
-                    className="p-1.5 rounded-lg hover:bg-white/10 text-sky-300 cursor-pointer"
+                    className="max-md:hidden p-1.5 rounded-lg hover:bg-white/10 text-sky-300 cursor-pointer"
                   >
                     <Bot size={15} />
                   </button>
                   <button
                     onClick={() => setShowConnect(true)}
                     title="Configurar / conectar WhatsApp"
-                    className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
+                    className="max-md:hidden p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
                   >
                     <Plug size={15} />
                   </button>
@@ -925,7 +925,14 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
                     {chatMenu && (
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setChatMenu(false)} />
-                        <div className="absolute right-0 top-9 z-50 w-44 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+                        <div className="absolute right-0 top-9 z-50 w-48 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
+                          {/* No celular estas duas entram aqui (ficam escondidas no cabeçalho) */}
+                          <button onClick={() => { setChatMenu(false); setShowBotSetup(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            <Bot size={13} className="text-sky-400" /> Configurar bot
+                          </button>
+                          <button onClick={() => { setChatMenu(false); setShowConnect(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            <Plug size={13} className="text-gray-300" /> Conectar WhatsApp
+                          </button>
                           <button onClick={openContactLog} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <FileText size={13} className="text-sky-400" /> Histórico do contato
                           </button>
