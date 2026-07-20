@@ -29,6 +29,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
+  // Um dispositivo só é "servidor" para a empresa que o criou. Empresas que só
+  // têm acesso (compartilhado, via código) o veem como computador comum — e
+  // podem, se quiserem, defini-lo como servidor da PRÓPRIA empresa depois.
+  const ownsAgent = (a: RemoteAgent) => !!companyId && a.company_id === companyId;
   const thumbBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
 
   // Atualiza as prévias ao vivo a cada 6s (o agente sobe um print nesse ritmo).
@@ -180,7 +184,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                   <div className="min-w-0">
                     <p className="text-sm font-bold truncate flex items-center gap-1.5">
                       {a.name}
-                      {a.is_server && (
+                      {a.is_server && ownsAgent(a) && (
                         <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded-full">
                           <Server size={9} /> SERVIDOR
                         </span>
@@ -201,13 +205,15 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                     >
                       <Settings2 size={14} />
                     </button>
-                    <button
-                      onClick={() => toggleServer(a)}
-                      title={a.is_server ? "É o servidor de arquivos — clique para tirar" : "Definir como servidor de arquivos"}
-                      className={`cursor-pointer ${a.is_server ? "text-sky-400" : "text-gray-500 hover:text-sky-300"}`}
-                    >
-                      <Server size={14} />
-                    </button>
+                    {ownsAgent(a) && (
+                      <button
+                        onClick={() => toggleServer(a)}
+                        title={a.is_server ? "É o servidor de arquivos — clique para tirar" : "Definir como servidor de arquivos"}
+                        className={`cursor-pointer ${a.is_server ? "text-sky-400" : "text-gray-500 hover:text-sky-300"}`}
+                      >
+                        <Server size={14} />
+                      </button>
+                    )}
                     <button onClick={() => remove(a.id)} className="text-gray-500 hover:text-red-400 cursor-pointer">
                       <Trash2 size={14} />
                     </button>
