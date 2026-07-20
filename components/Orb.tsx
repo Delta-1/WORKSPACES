@@ -131,10 +131,12 @@ export default function Orb({
       `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, esc, copy, paste, save, selectall, home).\n` +
       `• «clique» — clica onde o cursor já está.\n` +
       `• «abrir: APP» — abre um programa pelo nome via menu (ex.: chrome, notepad, cmd).\n` +
+      `• «mover: x,y» — SÓ move o cursor até o ponto (NÃO clica). Use para MIRAR antes de clicar.\n` +
       `• «clicar: x,y» — UM clique num ponto; x e y são frações de 0 a 1 (x=esquerda→direita, y=cima→baixo) do CENTRO EXATO do elemento.\n` +
       `• «duploclique: x,y» — DOIS cliques nesse ponto.\n` +
       `\nCOMO ACERTAR (MUITO IMPORTANTE):\n` +
       `1) VOCÊ VÊ A TELA: em cada mensagem vem um print ATUAL da máquina, na RESOLUÇÃO REAL da tela. Ele tem uma GRADE de mira: linhas a cada 10% com números (0 a 100) na horizontal (X) e na vertical (Y), e a linha 50 (meio) em vermelho. USE a grade para medir a posição do CENTRO do elemento: veja entre quais números ele está e estime a fração. Ex.: um botão entre as linhas 40 e 50 na horizontal e bem em cima da 30 na vertical → «clicar: 0.45,0.30». Como x/y são FRAÇÕES da tela, valem em qualquer resolução — use a proporção do print (largura×altura) como guia extra: em tela larga (16:9) os elementos ficam mais "espremidos" na horizontal. Não chute — leia os rótulos/ícones e confira pela grade. A grade é só um guia (não existe na tela real).\n` +
+      `1b) MIRE ANTES DE CLICAR (precisão): quando o alvo for pequeno ou você tiver QUALQUER dúvida da posição, primeiro «mover: x,y» (só move, não clica). No PRÓXIMO print veja onde a PONTA do cursor (a setinha) parou: se está EM CIMA do elemento, aí sim «clique». Se parou ao lado, ajuste a fração e «mover» de novo — só clique quando o cursor estiver certo. Mover NUNCA clica; clicar só quando for necessário. Isso corrige a mira e evita clicar no lugar errado.\n` +
       `2) TRABALHE EM PASSOS: faça UM passo por vez (no máximo 2 comandos ligados, ex.: clicar num campo E já digitar). Depois da ação eu te mando um NOVO print — confira se deu certo e continue. Se o passo falhou (nada mudou / abriu o errado), CORRIJA no próximo passo.\n` +
       `3) COMPLETE A TAREFA INTEIRA: não pare no meio. Ex.: "pesquisa X no Google" = clicar na barra de pesquisa → «digitar: X» → «tecla: enter». Clicar no campo e parar NÃO resolve.\n` +
       `4) ABRIR PROGRAMAS: ícone na ÁREA DE TRABALHO abre com «duploclique» (um clique só seleciona!). Ícone na BARRA DE TAREFAS ou item do MENU INICIAR abre com um «clicar». Se o app não estiver visível, «abrir: nome».\n` +
@@ -208,10 +210,11 @@ export default function Orb({
       if (low.startsWith("digitar:")) cmds.push({ kind: "type", text: raw.slice(raw.indexOf(":") + 1).trim() });
       else if (low.startsWith("tecla:")) cmds.push({ kind: "key", name: low.slice(low.indexOf(":") + 1).trim() });
       else if (low.startsWith("abrir:")) cmds.push({ kind: "open", text: raw.slice(raw.indexOf(":") + 1).trim() });
-      else if (low.startsWith("clicar:") || low.startsWith("duploclique:")) {
+      else if (low.startsWith("mover:") || low.startsWith("clicar:") || low.startsWith("duploclique:")) {
         const nums = raw.slice(raw.indexOf(":") + 1).split(",").map((s) => parseFloat(s.trim()));
         if (nums.length === 2 && nums.every((n) => Number.isFinite(n))) {
-          cmds.push({ kind: low.startsWith("duplo") ? "doubleclickat" : "clickat", x: nums[0] > 1 ? nums[0] / 100 : nums[0], y: nums[1] > 1 ? nums[1] / 100 : nums[1] });
+          const kind = low.startsWith("mover") ? "moveat" : low.startsWith("duplo") ? "doubleclickat" : "clickat";
+          cmds.push({ kind, x: nums[0] > 1 ? nums[0] / 100 : nums[0], y: nums[1] > 1 ? nums[1] / 100 : nums[1] });
         }
       } else if (low === "clique" || low === "clicar") cmds.push({ kind: "click" });
     }
