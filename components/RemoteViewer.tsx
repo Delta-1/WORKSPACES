@@ -658,6 +658,26 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
           >
             <Bot size={14} /> Orb
           </button>
+          {/* No DESKTOP essas ferramentas ficavam só no celular — agora também aqui,
+              para enviar/instalar apps registrados e usar tela cheia pelo PC. */}
+          {!isTouch && (
+            <>
+              <button
+                onClick={() => setToolsOpen(true)}
+                title="Enviar/instalar uma ferramenta ou app registrado na máquina do cliente"
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
+              >
+                <Package size={14} /> Ferramentas
+              </button>
+              <button
+                onClick={() => setFs(true)}
+                title="Tela cheia"
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
+              >
+                <Maximize2 size={14} /> Tela cheia
+              </button>
+            </>
+          )}
           <div className="relative">
             <button
               onClick={() => setShowSettings((v) => !v)}
