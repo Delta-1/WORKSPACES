@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Users, Wallet } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Wallet } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -24,6 +24,7 @@ import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import FormsTab from "@/components/tabs/FormsTab";
+import AppHubTab from "@/components/tabs/AppHubTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
 import VisaoAdmTab from "@/components/tabs/VisaoAdmTab";
@@ -59,6 +60,7 @@ const APPS: AppDef[] = [
   { id: "financeiro", label: "Financeiro", icon: Wallet, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes", label: "Clientes", icon: Building2, accent: "bg-lime-800/60", roles: ["gestor", "gerente"] },
   { id: "formularios", label: "Formulários", icon: FileSpreadsheet, accent: "bg-teal-800/60", roles: ["gestor", "gerente"] },
+  { id: "apphub", label: "App Hub", icon: Store, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes_ia", label: "Work.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
@@ -239,6 +241,8 @@ export default function Home() {
         if (mounted && p) {
           setProfile(p);
           await loadCompany(p.company_id);
+          // Garante a CASA pessoal (grátis, inclusa) — calendário/arquivos próprios.
+          if (p.company_id && supabase) { try { await supabase.rpc("ensure_personal_home"); } catch { /* ok */ } }
         }
       }
       setCheckingSession(false);
@@ -489,6 +493,7 @@ export default function Home() {
         {tab === "financeiro" && <FinanceTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "formularios" && <FormsTab profile={profile} />}
+        {tab === "apphub" && <AppHubTab profile={profile} superAdmin={superAdmin} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}
         {tab === "godseye" && superAdmin && <GodsEyeTab />}

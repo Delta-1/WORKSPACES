@@ -1205,6 +1205,11 @@ const COPILOT_TOOLS = [
     description: "Registra UMA linha numa planilha/formulário. form_id vem de list_forms. 'data' é um objeto { \"Rótulo do campo\": valor }. Se faltar campo obrigatório, a ferramenta devolve quais faltam — pergunte à pessoa (dando as opções quando houver) e chame de novo com tudo.",
     input_schema: { type: "object", properties: { form_id: { type: "string" }, data: { type: "object" } }, required: ["form_id", "data"] },
   },
+  {
+    name: "search_app_hub",
+    description: "Procura um programa/app na LOJA oficial (App Hub) e devolve o link de download oficial. Use ANTES de mandar procurar na internet quando pedirem para baixar/instalar algo (ex.: Minecraft, OBS, um navegador). Se não achar, aí sim busque o site oficial.",
+    input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1223,6 +1228,10 @@ async function copilotAction(companyId, name, input) {
       if (!target) return { ok: false, message: `Não achei um agente chamado "${input.agent}".` };
       const reply = await runChatbotReply(target, String(input.message || ""), [], "ai", companyId);
       return { ok: true, agent: target.name, reply: reply || "(o agente não respondeu)" };
+    }
+    if (name === "search_app_hub") {
+      const { data } = await supabase.rpc("search_app_hub", { p_query: String(input.query || "") });
+      return (data ?? []).map((a) => ({ nome: a.name, categoria: a.category, link: a.link, descricao: a.description }));
     }
     if (name === "list_forms") {
       const { data } = await supabase.from("forms").select("id,title,fields,ai_agent_id").eq("company_id", companyId).order("created_at", { ascending: false });
