@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, Copy, Eye, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, Trash2, Users } from "lucide-react";
+import { Building2, ChevronRight, Copy, Eye, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, ToggleLeft, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import ConfirmReasonModal from "@/components/ConfirmReasonModal";
+import { FEATURES, type FeatureId } from "@/lib/plan";
 import type { RemoteAgent } from "@/lib/types";
 
 type Company = { company_id: string; name: string; company_code: string | null; plan: string | null; segment: string | null; status: string | null; license_until: string | null; monthly_price: number | null; users: number; clients: number; agents: number; created_at: string };
@@ -23,6 +24,17 @@ export default function AdminCompaniesTab() {
   const [savedKeys, setSavedKeys] = useState(false);
   const [liveAgent, setLiveAgent] = useState<RemoteAgent | null>(null); // ver máquina ao vivo (Admin)
   const [deleting, setDeleting] = useState<Company | null>(null); // empresa a excluir (com motivo)
+  const [feats, setFeats] = useState<FeatureId[]>([]); // ferramentas liberadas da empresa aberta
+  const [featSaved, setFeatSaved] = useState(false);
+
+  async function toggleFeature(id: FeatureId) {
+    if (!supabase || !open) return;
+    const next = feats.includes(id) ? feats.filter((f) => f !== id) : [...feats, id];
+    setFeats(next);
+    await supabase.rpc("admin_set_company_features", { p_company: open.company_id, p_features: next });
+    setFeatSaved(true);
+    setTimeout(() => setFeatSaved(false), 1200);
+  }
 
   async function deleteCompany(c: Company, reason: string) {
     if (!supabase) return;
@@ -63,6 +75,8 @@ export default function AdminCompaniesTab() {
     const { data: k } = await supabase.rpc("admin_get_ai_keys", { p_company: c.company_id });
     const row = (k as AiKeys[])?.[0];
     setKeys(row ? { provider: row.provider || "anthropic", api_key: row.api_key || "", elevenlabs_key: row.elevenlabs_key || "", elevenlabs_voice_id: row.elevenlabs_voice_id || "" } : { provider: "anthropic", api_key: "", elevenlabs_key: "", elevenlabs_voice_id: "" });
+    const { data: fe } = await supabase.rpc("admin_get_company_features", { p_company: c.company_id });
+    setFeats((fe as FeatureId[]) ?? []);
   }
 
   async function setLicense(status: string, days: number | null) {
@@ -137,6 +151,23 @@ export default function AdminCompaniesTab() {
                   <button onClick={() => setLicense("blocked", 0)} className="text-[11px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/30 text-red-200 hover:bg-red-600/50 cursor-pointer"><Power size={12} /> Bloquear</button>
                 </div>
                 {open.segment && <p className="text-[10px] text-gray-500 mt-1.5">Segmento: {open.segment}</p>}
+              </div>
+
+              {/* Desbloqueio de ferramentas — só o Admin Geral libera por empresa */}
+              <div className="pt-3 border-t border-white/10">
+                <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-1.5 flex items-center gap-1"><ToggleLeft size={12} /> Ferramentas liberadas {featSaved && <span className="text-emerald-400 normal-case">· salvo</span>}</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {FEATURES.map((f) => {
+                    const on = feats.includes(f.id);
+                    return (
+                      <button key={f.id} onClick={() => toggleFeature(f.id)} className={`text-left text-[11px] rounded-lg px-2 py-1.5 border cursor-pointer flex items-center gap-1.5 ${on ? "border-emerald-500 bg-emerald-950/30 text-emerald-200" : "border-white/10 bg-black/20 text-gray-400"}`}>
+                        <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${on ? "bg-emerald-600 border-emerald-600" : "border-gray-500"}`}>{on && <span className="text-white text-[9px]">✓</span>}</span>
+                        {f.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1">Marque para habilitar a ferramenta para esta empresa. (Só você pode fazer isso.)</p>
               </div>
 
               {/* Chaves de IA / Voz — o super admin configura pela empresa */}

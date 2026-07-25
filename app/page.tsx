@@ -333,7 +333,7 @@ export default function Home() {
       const hasOverride = ta && Object.prototype.hasOwnProperty.call(ta, a.id);
       if (hasOverride && ta![a.id] === false) return false;             // bloqueado p/ esta pessoa
       const roleOk = a.roles.includes(role) || (hasOverride && ta![a.id] === true); // liberado supera o cargo
-      const featOk = a.id === "planos" || appEnabled(a.id, enabledFeatures); // empresa precisa ter a ferramenta
+      const featOk = superAdmin || a.id === "planos" || appEnabled(a.id, enabledFeatures); // super admin vê TUDO; empresa precisa ter a ferramenta
       return roleOk && featOk;
     }),
     ...(showGame ? [{ id: "game", label: "Game", icon: Gamepad2, accent: "bg-fuchsia-900/60", roles: [] as Role[] }] : []),
