@@ -50,54 +50,66 @@ export default function CadastroPage({ params }: { params: Promise<{ code: strin
     else setDone(true);
   }
 
+  const shellStyle = { ["--wf" as string]: theme } as React.CSSProperties;
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#060a12] p-4 text-gray-100">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-[#080b12] p-4 text-gray-100" style={shellStyle}>
+      <style>{`
+        .wf-input{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:.65rem .85rem;font-size:.9rem;outline:none;transition:border-color .15s,box-shadow .15s,background .15s;color:#f1f5f9}
+        .wf-input:focus{border-color:var(--wf);box-shadow:0 0 0 3px color-mix(in srgb,var(--wf) 30%,transparent);background:rgba(255,255,255,.06)}
+        .wf-orb{position:absolute;width:46vw;height:46vw;max-width:600px;max-height:600px;border-radius:50%;filter:blur(90px);opacity:.2}
+        @keyframes wfFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(3vw,4vh) scale(1.08)}}
+        .wf-fade{animation:wfUp .5s ease both}@keyframes wfUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+      `}</style>
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="wf-orb" style={{ background: theme, top: "-14vw", left: "-10vw", animation: "wfFloat 14s ease-in-out infinite" }} />
+        <div className="wf-orb" style={{ background: theme, bottom: "-16vw", right: "-12vw", opacity: .14, animation: "wfFloat 18s ease-in-out infinite reverse" }} />
+      </div>
+      <div className="w-full max-w-md wf-fade">
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-3" style={{ backgroundColor: `${theme}22`, border: `1px solid ${theme}`, color: theme }}>
-            <Building2 size={26} />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl mb-3 shadow-lg" style={{ background: `linear-gradient(135deg, ${theme}, color-mix(in srgb, ${theme} 55%, #000))`, color: "#fff" }}>
+            <Building2 size={28} />
           </div>
-          <h1 className="text-xl font-bold">{company ? `Cadastro — ${company}` : invalid ? "Link inválido" : "Carregando…"}</h1>
-          {!invalid && <p className="text-gray-400 text-sm mt-1">Preencha seus dados para se cadastrar. É rápido.</p>}
+          <h1 className="text-2xl font-black tracking-tight">{company ? company : invalid ? "Link inválido" : "Carregando…"}</h1>
+          {!invalid && company && <p className="text-gray-400 text-sm mt-1">Cadastro rápido — preencha seus dados abaixo.</p>}
         </div>
 
         {invalid ? (
-          <p className="text-center text-sm text-gray-400 bg-black/20 rounded-xl p-6">Este link de cadastro não é válido. Peça um novo à empresa.</p>
+          <p className="text-center text-sm text-gray-400 bg-white/5 border border-white/10 rounded-2xl p-6">Este link de cadastro não é válido. Peça um novo à empresa.</p>
         ) : done ? (
-          <div className="text-center bg-emerald-950/30 border border-emerald-700/40 rounded-2xl p-8">
-            <div className="w-14 h-14 rounded-full bg-emerald-600/30 border border-emerald-500 flex items-center justify-center mx-auto mb-3"><Check size={28} className="text-emerald-300" /></div>
-            <p className="font-semibold">Cadastro enviado!</p>
+          <div className="text-center rounded-3xl p-10" style={{ background: `color-mix(in srgb, ${theme} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${theme} 40%, transparent)` }}>
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: `color-mix(in srgb, ${theme} 30%, transparent)`, border: `1px solid ${theme}` }}><Check size={32} style={{ color: theme }} /></div>
+            <p className="font-bold text-lg">Enviado! 🎉</p>
             <p className="text-sm text-gray-400 mt-1">A empresa já recebeu seus dados. Pode fechar esta página.</p>
           </div>
         ) : (
-          <div className="liquid-glass rounded-2xl p-6 space-y-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome / Razão social *" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
+          <div className="rounded-3xl p-6 space-y-3" style={{ background: "rgba(255,255,255,.035)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,.08)" }}>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome / Razão social *" className="wf-input" />
             <div className="grid grid-cols-2 gap-2">
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone / WhatsApp" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
-              <input value={document} onChange={(e) => setDocument(e.target.value)} placeholder="CNPJ / CPF" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone / WhatsApp" className="wf-input" />
+              <input value={document} onChange={(e) => setDocument(e.target.value)} placeholder="CNPJ / CPF" className="wf-input" />
             </div>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações (opcional)" rows={2} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none resize-none" />
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="wf-input" />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações (opcional)" rows={2} className="wf-input resize-none" />
 
             {/* Campos extras que a empresa adicionou ao formulário */}
             {extra.map((f) => (
               <div key={f.id}>
                 <label className="block text-xs font-medium mb-1 text-gray-300">{f.label} {f.required && <span style={{ color: theme }}>*</span>}</label>
                 {f.type === "long_text" ? (
-                  <textarea value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} rows={2} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none resize-none" />
+                  <textarea value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} rows={2} className="wf-input resize-none" />
                 ) : f.type === "choice" ? (
-                  <select value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none">
+                  <select value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="wf-input">
                     <option value="">Selecione…</option>
                     {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
                 ) : (
-                  <input type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"} value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
+                  <input type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"} value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="wf-input" />
                 )}
               </div>
             ))}
 
             {error && <p className="text-xs text-red-400">{error}</p>}
-            <button onClick={submit} disabled={saving || !name.trim()} className="w-full text-white font-medium py-2.5 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2" style={{ backgroundColor: theme }}>
+            <button onClick={submit} disabled={saving || !name.trim()} className="w-full text-white font-semibold py-3.5 rounded-2xl cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[.98]" style={{ background: `linear-gradient(135deg, ${theme}, color-mix(in srgb, ${theme} 60%, #000))`, boxShadow: `0 8px 24px -8px ${theme}` }}>
               {saving ? <><Loader2 size={16} className="animate-spin" /> Enviando…</> : <><UserPlus size={16} /> Enviar cadastro</>}
             </button>
           </div>
