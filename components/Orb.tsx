@@ -157,6 +157,10 @@ export default function Orb({
       `4b) CLIQUE É ÚNICO E NADA DE INSISTIR ÀS CEGAS: cada «clicar» aperta e solta UMA vez (nunca segura). Depois de clicar para abrir algo, ESPERE o novo print e confira se abriu (janela nova, ícone na barra de tarefas, cursor de carregando). Programas demoram alguns segundos — se parecer que está carregando, aguarde o próximo print SEM clicar de novo (clicar duas vezes abre duas cópias!). Se no print seguinte NÃO abriu nem está carregando, tente clicar mais UMA vez. Se ainda assim não abrir, PARE de clicar e abra de outro jeito: «abrir: nome do programa» (que usa o menu Iniciar/Executar). Em último caso, confira no Gerenciador de Tarefas se o processo abriu.\n` +
       `5) INSTALAR ALGO (ex.: "instala o Minecraft"): PRIMEIRO procure no CATÁLOGO DA LOJA abaixo. Se o app estiver lá, abra o navegador («abrir: chrome»), clique na barra de endereço e «digitar: LINK do catálogo» + «tecla: enter» para baixar direto do link oficial — depois execute o instalador. SÓ se NÃO estiver no catálogo, vá ao site oficial do programa. Nunca use sites duvidosos. Se houver versões/edições diferentes, PERGUNTE qual antes.\n` +
       hubBlock +
+      `6) TAREFAS COMUNS DE SUPORTE:\n` +
+      `   • "diminui/abaixa o som/volume": se der, baixe o volume do APP que está tocando (foco nele e use as teclas de mídia/atalho); se não achar, clique no ícone de VOLUME (alto-falante) na barra ao lado do relógio e arraste a barrinha para baixo. Confirme pelo print que o volume desceu.\n` +
+      `   • "abre o WhatsApp e vê as mensagens": PRIMEIRO olhe se há NOTIFICAÇÃO do WhatsApp (canto do relógio / central de notificações) — se tiver, abra por ela. Senão, abra o WhatsApp: se houver WhatsApp Web no navegador (Chrome já logado), «abrir: chrome» e vá em web.whatsapp.com; ou abra o app WhatsApp Desktop pelo «abrir: whatsapp». Leia as conversas não lidas (em negrito) e resuma para a pessoa.\n` +
+      `   • Navegador padrão é o que está logado (Chrome) — prefira ele para ver contas/serviços já conectados.\n` +
       `\nQUANDO PERGUNTAR (não adivinhe): se houver DOIS OU MAIS itens com nome parecido/idêntico (ex.: três coisas com "Google" no nome), ou se você NÃO encontrar o ícone/nome no print, PERGUNTE qual a pessoa quer e NÃO emita comando nessa vez — espere a resposta.\n` +
       `\nQuando a tarefa estiver 100% concluída, diga uma frase curta e termine com «fim». Fale curtinho o que está fazendo a cada passo. Ao ouvir que vão finalizar, despeça-se em uma frase com «fim».`
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
@@ -250,7 +254,11 @@ export default function Orb({
       // Modo autônomo (acesso remoto): loop passo-a-passo — age, VÊ o resultado
       // num print novo e continua até terminar («fim») ou parar p/ perguntar.
       // Modo assessor comum: uma resposta só.
-      const maxSteps = onControl ? 8 : 1;
+      // Modo controle: MAIS passos e NÃO desiste no meio. Se a IA narrou sem
+      // emitir comando (mas não terminou nem perguntou), a gente CUTUCA ela a
+      // continuar — em vez de parar e "esquecer" a tarefa (era o bug).
+      const maxSteps = onControl ? 20 : 1;
+      let idle = 0;
       for (let step = 0; step < maxSteps; step++) {
         const headers = await authHeaders();
         // Visão: manda o print ATUAL da tela para a IA "enxergar" e decidir.
@@ -268,12 +276,21 @@ export default function Orb({
         let count = 0;
         if (onControl) { const r = await runControlCommands(raw); reply = r.text; count = r.count; }
         if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
-        // Para o loop quando: não é modo controle; a IA não executou nenhum
-        // comando (está falando ou perguntando algo e esperando você); ou marcou «fim».
-        if (!onControl || count === 0 || /«?\s*fim\s*»?/i.test(raw)) break;
+        if (!onControl || /«?\s*fim\s*»?/i.test(raw)) break; // terminou de vez
+        if (count > 0) { idle = 0; }
+        else {
+          // Sem comando: se está PERGUNTANDO algo (espera você), para. Senão,
+          // cutuca a continuar — mas no máximo 2 vezes seguidas pra não travar.
+          const asking = /\?\s*$|pergunt|qual (você|vc|voce)|me diga|confirma|posso\b/i.test(raw);
+          if (asking) break;
+          idle += 1;
+          if (idle >= 3) break;
+        }
         // Deixa a tela reagir e alimenta o próximo passo com um print novo.
-        await new Promise((r) => setTimeout(r, 1100));
-        convo = [...convo, { role: "user", text: "(feito — aqui está a tela agora. Confira o resultado e continue a tarefa; se já terminou, responda com «fim».)" }];
+        await new Promise((r) => setTimeout(r, 900));
+        convo = [...convo, { role: "user", text: count > 0
+          ? "(feito — aqui está a tela agora. Confira o resultado e CONTINUE a tarefa até concluir; se já terminou, responda «fim».)"
+          : "(você não emitiu nenhum comando. NÃO PARE: olhe a tela e EMITA JÁ o próximo comando «...» para avançar. Só responda «fim» quando a tarefa estiver realmente concluída.)" }];
       }
     } catch {
       setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema para responder agora." }]);
@@ -288,14 +305,22 @@ export default function Orb({
     setTimeout(onClose, 1400);
   }
 
-  function handleTranscript(t: string) {
-    showFloat(t); // mostra o que você falou flutuando ao lado da bola
+  // Palavra de acordar tolerante a erro de reconhecimento: "orb" e o que costuma
+  // ser ouvido errado (orbe, órbi, orbi, orbis, orbiz, barbie, hobby, robie…).
+  const WAKE = /\b(orbe?s?|[óo]rb[ie]s?|orbiz|orbes|barb(?:ie|i)|hobb?y|rob(?:ie|y)|orv[ei])\b/gi;
+  function handleTranscript(raw: string) {
+    showFloat(raw); // mostra o que você falou flutuando ao lado da bola
+    const t = raw.trim();
     // Fechar por voz: "tchau", "bye", "bye bye" (com ou sem "orb").
     if (/\b(tchau|bye ?bye|bye|adeus)\b/i.test(t) || /(finaliz|encerr|deslig|é isso orb|pode sair orb|obrigado orb)/i.test(t)) {
       farewellAndClose();
       return;
     }
-    ask(t);
+    // Tira a palavra de acordar do começo (ex.: "Orbe, abre o WhatsApp" → "abre o
+    // WhatsApp"). Se sobrou só o chamado, responde presente e fica ouvindo.
+    const stripped = t.replace(WAKE, "").replace(/^[\s,.:!?-]+/, "").trim();
+    if (!stripped) { showFloat("Oi! Pode falar."); if (voiceOn) speak("Oi! Estou aqui, pode falar."); return; }
+    ask(stripped);
   }
 
   function makeRec(onFinal: (t: string) => void, auto: boolean): Rec | null {

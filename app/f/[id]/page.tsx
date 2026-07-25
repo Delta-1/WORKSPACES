@@ -45,63 +45,101 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
     if (error) setError(error.message); else setDone(true);
   }
 
-  if (!form) return <div className="min-h-screen flex items-center justify-center bg-[#0b0f16] text-gray-400 text-sm">Carregando…</div>;
-  if (!form.ok) return <div className="min-h-screen flex items-center justify-center bg-[#0b0f16] text-gray-300 p-4 text-center">Formulário não encontrado.</div>;
+  const shellStyle = { ["--wf" as string]: color } as React.CSSProperties;
+  const bg = (
+    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+      <div className="wf-orb wf-orb1" style={{ background: color }} />
+      <div className="wf-orb wf-orb2" style={{ background: color }} />
+    </div>
+  );
+  const styleTag = (
+    <style>{`
+      .wf-input{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:.6rem .85rem;font-size:.9rem;outline:none;transition:border-color .15s, box-shadow .15s, background .15s;color:#f1f5f9}
+      .wf-input:focus{border-color:var(--wf);box-shadow:0 0 0 3px color-mix(in srgb, var(--wf) 30%, transparent);background:rgba(255,255,255,.06)}
+      .wf-card{background:rgba(255,255,255,.035);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);border-radius:18px;transition:border-color .18s, transform .18s}
+      .wf-card:focus-within{border-color:color-mix(in srgb, var(--wf) 55%, transparent)}
+      .wf-opt{display:flex;align-items:center;gap:.6rem;font-size:.9rem;cursor:pointer;padding:.5rem .7rem;border-radius:11px;border:1px solid transparent;transition:background .15s,border-color .15s}
+      .wf-opt:hover{background:rgba(255,255,255,.05)}
+      .wf-orb{position:absolute;width:46vw;height:46vw;max-width:620px;max-height:620px;border-radius:50%;filter:blur(90px);opacity:.22}
+      .wf-orb1{top:-14vw;left:-10vw;animation:wfFloat 14s ease-in-out infinite}
+      .wf-orb2{bottom:-16vw;right:-12vw;opacity:.16;animation:wfFloat 18s ease-in-out infinite reverse}
+      @keyframes wfFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(3vw,4vh) scale(1.08)}}
+      .wf-fade{animation:wfUp .5s ease both}
+      @keyframes wfUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+    `}</style>
+  );
+
+  if (!form) return <div className="min-h-screen flex items-center justify-center bg-[#080b12] text-gray-400 text-sm">Carregando…</div>;
+  if (!form.ok) return <div className="min-h-screen flex items-center justify-center bg-[#080b12] text-gray-300 p-4 text-center">Formulário não encontrado.</div>;
   if (done) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0b0f16] text-gray-100 p-4">
-      <div className="text-center bg-emerald-950/30 border border-emerald-700/40 rounded-2xl p-8 max-w-sm">
-        <div className="w-14 h-14 rounded-full bg-emerald-600/30 border border-emerald-500 flex items-center justify-center mx-auto mb-3"><Check size={28} className="text-emerald-300" /></div>
-        <p className="font-semibold">Resposta enviada!</p>
+    <div className="min-h-screen flex items-center justify-center bg-[#080b12] text-gray-100 p-4" style={shellStyle}>
+      {styleTag}{bg}
+      <div className="wf-fade text-center wf-card p-10 max-w-sm">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg" style={{ background: `color-mix(in srgb, ${color} 30%, transparent)`, border: `1px solid ${color}` }}><Check size={32} style={{ color }} /></div>
+        <p className="font-bold text-lg">Enviado! 🎉</p>
         <p className="text-sm text-gray-400 mt-1">Obrigado. Pode fechar esta página.</p>
       </div>
     </div>
   );
 
+  const required = (form.fields ?? []).filter((f) => f.type !== "section" && f.required);
+  const filled = required.filter((f) => { const v = values[f.id]; return !(v == null || v === "" || (Array.isArray(v) && v.length === 0)); }).length;
+  const pct = required.length ? Math.round((filled / required.length) * 100) : 0;
+
   return (
-    <div className="min-h-screen bg-[#0b0f16] text-gray-100 py-8 px-4">
+    <div className="min-h-screen bg-[#080b12] text-gray-100 py-10 px-4" style={shellStyle}>
+      {styleTag}{bg}
       <div className="max-w-xl mx-auto">
-        <div className="rounded-2xl p-5 bg-black/25 border-t-4 mb-4" style={{ borderTopColor: color }}>
-          <h1 className="text-xl font-bold">{form.title}</h1>
-          {form.description && <p className="text-sm text-gray-400 mt-1 whitespace-pre-wrap">{form.description}</p>}
+        <div className="wf-fade rounded-3xl p-6 mb-5 relative overflow-hidden wf-card" style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${color} 22%, transparent), rgba(255,255,255,.03))` }}>
+          <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full blur-3xl opacity-40" style={{ background: color }} />
+          <h1 className="text-2xl font-black tracking-tight relative">{form.title}</h1>
+          {form.description && <p className="text-sm text-gray-300/90 mt-1.5 whitespace-pre-wrap relative">{form.description}</p>}
+          {required.length > 0 && (
+            <div className="mt-4 relative">
+              <div className="h-1.5 rounded-full bg-white/10 overflow-hidden"><div className="h-full transition-all duration-300" style={{ width: `${pct}%`, background: color }} /></div>
+              <p className="text-[11px] text-gray-400 mt-1">{filled}/{required.length} obrigatórios</p>
+            </div>
+          )}
         </div>
 
-        <div className="space-y-3">
-          {(form.fields ?? []).map((f) => {
-            if (f.type === "section") return <h2 key={f.id} className="text-base font-bold pt-3">{f.label}</h2>;
+        <div className="space-y-3.5">
+          {(form.fields ?? []).map((f, i) => {
+            if (f.type === "section") return <h2 key={f.id} className="text-base font-bold pt-4 pl-1 wf-fade" style={{ animationDelay: `${i * 30}ms` }}>{f.label}</h2>;
             const v = values[f.id];
             return (
-              <div key={f.id} className="rounded-xl p-4 bg-black/25 border border-white/10">
-                <label className="block text-sm font-medium mb-2">{f.label} {f.required && <span style={{ color }}>*</span>}</label>
+              <div key={f.id} className="wf-card p-4 wf-fade" style={{ animationDelay: `${i * 30}ms` }}>
+                <label className="block text-sm font-semibold mb-2.5">{f.label} {f.required && <span style={{ color }}>*</span>}</label>
                 {f.type === "long_text" ? (
-                  <textarea rows={3} value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none resize-none" />
+                  <textarea rows={3} value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)} className="wf-input resize-none" />
                 ) : f.type === "choice" ? (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     {(f.options ?? []).map((op) => (
-                      <label key={op} className="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" name={f.id} checked={v === op} onChange={() => set(f.id, op)} className="accent-emerald-500" /> {op}</label>
+                      <label key={op} className="wf-opt" style={v === op ? { borderColor: color, background: `color-mix(in srgb, ${color} 12%, transparent)` } : undefined}><input type="radio" name={f.id} checked={v === op} onChange={() => set(f.id, op)} style={{ accentColor: color }} /> {op}</label>
                     ))}
                   </div>
                 ) : f.type === "multichoice" ? (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     {(f.options ?? []).map((op) => {
                       const arr = Array.isArray(v) ? (v as string[]) : [];
-                      return <label key={op} className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={arr.includes(op)} onChange={(e) => set(f.id, e.target.checked ? [...arr, op] : arr.filter((x) => x !== op))} className="accent-emerald-500" /> {op}</label>;
+                      const on = arr.includes(op);
+                      return <label key={op} className="wf-opt" style={on ? { borderColor: color, background: `color-mix(in srgb, ${color} 12%, transparent)` } : undefined}><input type="checkbox" checked={on} onChange={(e) => set(f.id, e.target.checked ? [...arr, op] : arr.filter((x) => x !== op))} style={{ accentColor: color }} /> {op}</label>;
                     })}
                   </div>
                 ) : f.type === "photo" || f.type === "file" ? (
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
-                      {f.type === "photo" ? <Camera size={15} /> : <Upload size={15} />} {v ? "Trocar" : (f.type === "photo" ? "Tirar/enviar foto" : "Enviar arquivo")}
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl cursor-pointer text-white font-medium" style={{ background: `color-mix(in srgb, ${color} 85%, black)` }}>
+                      {f.type === "photo" ? <Camera size={16} /> : <Upload size={16} />} {v ? "Trocar" : (f.type === "photo" ? "Tirar/enviar foto" : "Enviar arquivo")}
                       <input type="file" accept={f.type === "photo" ? "image/*" : undefined} capture={f.type === "photo" ? "environment" : undefined} className="hidden"
                         onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; if (file.size > MAX_FILE) { setError("Arquivo muito grande (máx 3 MB)."); return; } set(f.id, await fileToDataUrl(file)); }} />
                     </label>
-                    {typeof v === "string" && v.startsWith("data:image") && <img src={v} alt="" className="w-12 h-12 rounded object-cover" />}
-                    {typeof v === "string" && v.startsWith("data:") && !v.startsWith("data:image") && <span className="text-[11px] text-emerald-400">arquivo anexado ✓</span>}
+                    {typeof v === "string" && v.startsWith("data:image") && <img src={v} alt="" className="w-14 h-14 rounded-lg object-cover ring-2 ring-white/10" />}
+                    {typeof v === "string" && v.startsWith("data:") && !v.startsWith("data:image") && <span className="text-[12px]" style={{ color }}>arquivo anexado ✓</span>}
                   </div>
                 ) : (
                   <input
                     type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"}
                     value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)}
-                    className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+                    className="wf-input" />
                 )}
               </div>
             );
@@ -109,10 +147,10 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
         </div>
 
         {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
-        <button onClick={submit} disabled={saving} className="mt-4 w-full py-3 rounded-xl text-white font-medium cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2" style={{ backgroundColor: color }}>
-          {saving ? <><Loader2 size={16} className="animate-spin" /> Enviando…</> : "Enviar"}
+        <button onClick={submit} disabled={saving} className="mt-5 w-full py-3.5 rounded-2xl text-white font-semibold cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[.98]" style={{ background: `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 60%, #000))`, boxShadow: `0 8px 24px -8px ${color}` }}>
+          {saving ? <><Loader2 size={16} className="animate-spin" /> Enviando…</> : "Enviar resposta"}
         </button>
-        <p className="text-[10px] text-gray-600 text-center mt-4">Formulário Workspace.</p>
+        <p className="text-[10px] text-gray-600 text-center mt-5">feito com <span style={{ color }}>Workspace</span></p>
       </div>
     </div>
   );
