@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Crown, Pencil, Search, ShieldCheck, UserRound, Users, X } from "lucide-react";
+import { Crown, Pencil, Search, ShieldCheck, UserMinus, UserRound, Users, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import ConfirmReasonModal from "@/components/ConfirmReasonModal";
 import type { Profile, Role, Sector } from "@/lib/types";
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -40,8 +41,17 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Profile | null>(null);
+  const [removing, setRemoving] = useState<Profile | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  async function removeUser(p: Profile, reason: string) {
+    if (!supabase) return;
+    const { error } = await supabase.rpc("remove_user_from_company", { p_user_id: p.id, p_reason: reason });
+    if (error) throw error;
+    setPeople((prev) => prev.filter((x) => x.id !== p.id));
+    setEditing(null);
+  }
 
   const isAdmin = profile?.role === "gestor";
 
@@ -177,8 +187,20 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
           person={editing}
           sectors={sectors}
           saving={saving}
+          canRemove={editing.id !== profile?.id}
+          onRemove={() => setRemoving(editing)}
           onClose={() => setEditing(null)}
           onSave={saveEdit}
+        />
+      )}
+
+      {removing && (
+        <ConfirmReasonModal
+          title="Remover da empresa"
+          message={`Remover "${removing.full_name ?? removing.email}" da empresa (demissão / quebra de contrato)? A pessoa perde o acesso, mas a conta não é apagada.`}
+          confirmLabel="Remover"
+          onConfirm={(reason) => removeUser(removing, reason)}
+          onClose={() => setRemoving(null)}
         />
       )}
     </div>
@@ -189,12 +211,16 @@ function EditModal({
   person,
   sectors,
   saving,
+  canRemove,
+  onRemove,
   onClose,
   onSave,
 }: {
   person: Profile;
   sectors: Sector[];
   saving: boolean;
+  canRemove: boolean;
+  onRemove: () => void;
   onClose: () => void;
   onSave: (role: Role, sectorId: string | null, financeAccess: boolean, toolAccess: Record<string, boolean> | null) => void;
 }) {
@@ -290,20 +316,31 @@ function EditModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            onClick={onClose}
-            className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => onSave(role, sectorId, financeAccess, customTools ? tools : null)}
-            disabled={saving}
-            className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
-          >
-            {saving ? "Salvando..." : "Salvar alterações"}
-          </button>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          {canRemove ? (
+            <button
+              onClick={onRemove}
+              className="text-xs px-3 py-2 rounded-lg bg-red-600/20 text-red-300 hover:bg-red-600/40 cursor-pointer flex items-center gap-1.5"
+              title="Remover esta pessoa da empresa (demissão / quebra de contrato)"
+            >
+              <UserMinus size={13} /> Remover da empresa
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => onSave(role, sectorId, financeAccess, customTools ? tools : null)}
+              disabled={saving}
+              className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
+            >
+              {saving ? "Salvando..." : "Salvar alterações"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
