@@ -120,6 +120,8 @@ export type Client = {
   folder_id: string | null;
   created_by: string | null;
   created_at: string;
+  third_party_id?: string | null;
+  status?: string | null;
 };
 
 export type CalendarEvent = {

@@ -139,6 +139,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
   const [hovered, setHovered] = useState<RemoteAgent | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [companyCode, setCompanyCode] = useState<string>("");
+  const [subtab, setSubtab] = useState<"clientes" | "terceiros">("clientes");
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
@@ -232,6 +233,16 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
         </div>
       </div>
 
+      {canManage && (
+        <div className="flex items-center gap-1 bg-black/20 rounded-lg p-1 self-start">
+          <button onClick={() => setSubtab("clientes")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "clientes" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Clientes</button>
+          <button onClick={() => setSubtab("terceiros")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "terceiros" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Acesso de terceiros</button>
+        </div>
+      )}
+
+      {subtab === "terceiros" && canManage ? (
+        <ThirdPartiesManager companyId={companyId} clients={clients} onChanged={load} />
+      ) : (
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
         {filtered.length === 0 && (
           <p className="text-sm text-gray-500 italic col-span-full text-center py-8">
@@ -345,6 +356,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
           );
         })}
       </div>
+      )}
 
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
       {showForm && <FormLinkModal code={companyCode} onClose={() => setShowForm(false)} />}
@@ -489,6 +501,112 @@ function AddClientModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ACESSO DE TERCEIROS (espelha o modelo GestaSheet): a empresa cadastra terceiros
+// (ex.: contabilidades), gera o link de cada um e atribui clientes. O terceiro
+// abre o link e vê só os clientes dele (leitura), em /terceiros/<código>.
+type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string };
+function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: string | null; clients: Client[]; onChanged: () => void }) {
+  const [tps, setTps] = useState<ThirdParty[]>([]);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [manage, setManage] = useState<ThirdParty | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase || !companyId) return;
+    const { data } = await supabase.from("third_parties").select("*").eq("company_id", companyId).order("name");
+    setTps((data as ThirdParty[]) ?? []);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function add() {
+    if (!supabase || !name.trim()) return;
+    setBusy(true); setError(null);
+    const { error } = await supabase.rpc("create_third_party", { p_name: name.trim(), p_email: email.trim() || null });
+    setBusy(false);
+    if (error) { setError(error.message); return; }
+    setName(""); setEmail(""); load();
+  }
+  async function removeTp(id: string) {
+    if (!supabase) return;
+    if (!confirm("Remover este terceiro? Os clientes atribuídos ficam sem terceiro (não são apagados).")) return;
+    await supabase.from("third_parties").delete().eq("id", id);
+    load(); onChanged();
+  }
+  function linkOf(code: string) { return typeof window !== "undefined" ? `${window.location.origin}/terceiros/${code}` : ""; }
+  function copyLink(code: string) { navigator.clipboard?.writeText(linkOf(code)); setCopied(code); setTimeout(() => setCopied(null), 1600); }
+
+  const countFor = (id: string) => clients.filter((c) => c.third_party_id === id).length;
+
+  return (
+    <div className="flex-1 overflow-y-auto custom-scroll">
+      <div className="bg-black/20 border border-white/10 rounded-xl p-3 mb-4 max-w-2xl">
+        <p className="text-xs font-semibold mb-2 flex items-center gap-1.5"><UserPlus size={14} className="text-emerald-400" /> Novo terceiro (ex.: contabilidade)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do terceiro *" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail (opcional)" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+        </div>
+        {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
+        <button onClick={add} disabled={busy || !name.trim()} className="mt-2 text-xs px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+          <Plus size={13} /> {busy ? "Salvando…" : "Cadastrar terceiro"}
+        </button>
+      </div>
+
+      {tps.length === 0 ? (
+        <p className="text-sm text-gray-500 text-center py-8">Nenhum terceiro cadastrado ainda.</p>
+      ) : (
+        <div className="space-y-2 max-w-2xl">
+          {tps.map((t) => (
+            <div key={t.id} className="bg-black/20 border border-white/5 rounded-xl p-3">
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-lg bg-emerald-950/50 flex items-center justify-center shrink-0"><Building2 size={16} className="text-emerald-300" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold truncate">{t.name}</p>
+                  <p className="text-[11px] text-gray-500 truncate">{t.email || "sem e-mail"} · {countFor(t.id)} cliente(s)</p>
+                </div>
+                <button onClick={() => copyLink(t.access_code)} className="text-[11px] flex items-center gap-1 px-2 py-1 rounded bg-white/10 hover:bg-white/20 cursor-pointer" title="Copiar link do portal do terceiro">
+                  {copied === t.access_code ? <><CheckIcon size={12} /> Copiado</> : <><Copy size={12} /> Link</>}
+                </button>
+                <button onClick={() => setManage(manage?.id === t.id ? null : t)} className="text-[11px] px-2 py-1 rounded bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600/50 cursor-pointer">Clientes</button>
+                <button onClick={() => removeTp(t.id)} className="text-gray-500 hover:text-red-400 cursor-pointer" title="Remover"><Trash2 size={14} /></button>
+              </div>
+
+              {manage?.id === t.id && (
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <p className="text-[11px] text-gray-400 mb-2">Marque os clientes que este terceiro pode visualizar:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-64 overflow-y-auto custom-scroll">
+                    {clients.length === 0 && <p className="text-[11px] text-gray-600">Nenhum cliente cadastrado.</p>}
+                    {clients.map((c) => {
+                      const assigned = c.third_party_id === t.id;
+                      return (
+                        <label key={c.id} className="flex items-center gap-2 text-[12px] cursor-pointer rounded px-2 py-1 hover:bg-white/5">
+                          <input
+                            type="checkbox"
+                            checked={assigned}
+                            onChange={async () => {
+                              if (!supabase) return;
+                              await supabase.from("clients").update({ third_party_id: assigned ? null : t.id }).eq("id", c.id);
+                              onChanged();
+                            }}
+                            className="accent-emerald-500"
+                          />
+                          <span className="truncate">{c.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
