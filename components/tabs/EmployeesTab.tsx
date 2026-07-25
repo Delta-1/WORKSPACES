@@ -61,14 +61,20 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
       setLoading(false);
       return;
     }
+    // IMPORTANTE: filtrar pela empresa. A RLS de profiles deixa ver quem está sem
+    // empresa (company_id null); sem este filtro, um funcionário REMOVIDO (que
+    // fica com company_id null) continuaria aparecendo na lista — foi o bug.
+    const cid = profile?.company_id ?? null;
+    let pplQ = supabase.from("profiles").select("*").order("full_name", { nullsFirst: false });
+    if (cid) pplQ = pplQ.eq("company_id", cid);
     const [pplRes, secRes] = await Promise.all([
-      supabase.from("profiles").select("*").order("full_name", { nullsFirst: false }),
+      pplQ,
       supabase.from("sectors").select("*").order("name"),
     ]);
     setPeople((pplRes.data as Profile[]) ?? []);
     setSectors((secRes.data as Sector[]) ?? []);
     setLoading(false);
-  }, []);
+  }, [profile?.company_id]);
 
   useEffect(() => {
     load();
