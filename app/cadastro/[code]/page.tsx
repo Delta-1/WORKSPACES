@@ -11,6 +11,9 @@ export default function CadastroPage({ params }: { params: Promise<{ code: strin
   const { code } = use(params);
   const [company, setCompany] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
+  const [theme, setTheme] = useState("#10b981");
+  const [extra, setExtra] = useState<{ id: string; label: string; type: string; required?: boolean; options?: string[] }[]>([]);
+  const [extraVals, setExtraVals] = useState<Record<string, string>>({});
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [document, setDocument] = useState("");
@@ -22,18 +25,25 @@ export default function CadastroPage({ params }: { params: Promise<{ code: strin
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.rpc("company_name_by_code", { p_code: code }).then(({ data }) => {
-      if (data) setCompany(data as string);
-      else setInvalid(true);
+    supabase.rpc("get_client_form", { p_code: code }).then(({ data }) => {
+      const d = data as { ok: boolean; company?: string; theme?: string; extra?: typeof extra } | null;
+      if (!d?.ok) { setInvalid(true); return; }
+      setCompany(d.company ?? "");
+      setTheme(d.theme || "#10b981");
+      setExtra(Array.isArray(d.extra) ? d.extra : []);
     });
   }, [code]);
 
   async function submit() {
     if (!supabase || !name.trim()) return;
+    for (const f of extra) { if (f.required && !extraVals[f.id]?.trim()) { setError(`Preencha: ${f.label}`); return; } }
     setSaving(true);
     setError(null);
+    // Mapeia os extras por rótulo (fica legível nos dados do cliente).
+    const extraByLabel: Record<string, string> = {};
+    extra.forEach((f) => { if (extraVals[f.id]) extraByLabel[f.label] = extraVals[f.id]; });
     const { error } = await supabase.rpc("public_register_client", {
-      p_code: code, p_name: name, p_phone: phone, p_document: document, p_email: email, p_notes: notes,
+      p_code: code, p_name: name, p_phone: phone, p_document: document, p_email: email, p_notes: notes, p_extra: extraByLabel,
     });
     setSaving(false);
     if (error) setError(error.message);
@@ -44,7 +54,7 @@ export default function CadastroPage({ params }: { params: Promise<{ code: strin
     <div className="min-h-screen flex items-center justify-center bg-[#060a12] p-4 text-gray-100">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-emerald-950 border border-emerald-500 rounded-2xl text-emerald-400 mb-3">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-3" style={{ backgroundColor: `${theme}22`, border: `1px solid ${theme}`, color: theme }}>
             <Building2 size={26} />
           </div>
           <h1 className="text-xl font-bold">{company ? `Cadastro — ${company}` : invalid ? "Link inválido" : "Carregando…"}</h1>
@@ -68,8 +78,26 @@ export default function CadastroPage({ params }: { params: Promise<{ code: strin
             </div>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações (opcional)" rows={2} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none resize-none" />
+
+            {/* Campos extras que a empresa adicionou ao formulário */}
+            {extra.map((f) => (
+              <div key={f.id}>
+                <label className="block text-xs font-medium mb-1 text-gray-300">{f.label} {f.required && <span style={{ color: theme }}>*</span>}</label>
+                {f.type === "long_text" ? (
+                  <textarea value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} rows={2} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none resize-none" />
+                ) : f.type === "choice" ? (
+                  <select value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none">
+                    <option value="">Selecione…</option>
+                    {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"} value={extraVals[f.id] ?? ""} onChange={(e) => setExtraVals((s) => ({ ...s, [f.id]: e.target.value }))} className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none" />
+                )}
+              </div>
+            ))}
+
             {error && <p className="text-xs text-red-400">{error}</p>}
-            <button onClick={submit} disabled={saving || !name.trim()} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
+            <button onClick={submit} disabled={saving || !name.trim()} className="w-full text-white font-medium py-2.5 rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2" style={{ backgroundColor: theme }}>
               {saving ? <><Loader2 size={16} className="animate-spin" /> Enviando…</> : <><UserPlus size={16} /> Enviar cadastro</>}
             </button>
           </div>

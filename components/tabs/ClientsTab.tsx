@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, LayoutGrid, MemoryStick, MessageSquare, Monitor, Plus, Search, Table as TableIcon, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, LayoutGrid, MemoryStick, MessageSquare, Monitor, Pencil, Plus, Search, Table as TableIcon, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -138,6 +138,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
   const [hovered, setHovered] = useState<RemoteAgent | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showFormEditor, setShowFormEditor] = useState(false);
   const [companyCode, setCompanyCode] = useState<string>("");
   const [subtab, setSubtab] = useState<"clientes" | "terceiros">("clientes");
   const [view, setView] = useState<"cards" | "table">("cards");
@@ -221,6 +222,15 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
               title="Link do formulário público para seus clientes se cadastrarem"
             >
               <ClipboardList size={14} /> Formulário
+            </button>
+          )}
+          {canManage && (
+            <button
+              onClick={() => setShowFormEditor(true)}
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/15 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
+              title="Editar os campos e o tema do formulário de cadastro de clientes"
+            >
+              <Pencil size={14} /> Editar formulário
             </button>
           )}
           {canManage && (
@@ -414,6 +424,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
 
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
       {showForm && <FormLinkModal code={companyCode} onClose={() => setShowForm(false)} />}
+      {showFormEditor && <ClientFormEditor companyId={companyId} onClose={() => setShowFormEditor(false)} />}
       {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} />}
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
@@ -711,6 +722,82 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Editor do FORMULÁRIO DE CLIENTES: campos extras + tema (estilo Google Forms).
+type ExtraField = { id: string; label: string; type: string; required?: boolean; options?: string[] };
+const FIELD_TYPES: { v: string; l: string }[] = [
+  { v: "short_text", l: "Texto curto" }, { v: "long_text", l: "Texto longo" }, { v: "number", l: "Número" },
+  { v: "email", l: "E-mail" }, { v: "phone", l: "Telefone" }, { v: "date", l: "Data" }, { v: "choice", l: "Escolha" },
+];
+function ClientFormEditor({ companyId, onClose }: { companyId: string | null; onClose: () => void }) {
+  const [fields, setFields] = useState<ExtraField[]>([]);
+  const [theme, setTheme] = useState("#10b981");
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || !companyId) return;
+    supabase.from("company_settings").select("client_form_extra,client_form_theme").eq("company_id", companyId).maybeSingle().then(({ data }) => {
+      setFields(Array.isArray(data?.client_form_extra) ? (data!.client_form_extra as ExtraField[]) : []);
+      setTheme((data?.client_form_theme as string) || "#10b981");
+      setLoaded(true);
+    });
+  }, [companyId]);
+
+  const uid = () => Math.random().toString(36).slice(2, 9);
+  function add() { setFields((f) => [...f, { id: uid(), label: "Novo campo", type: "short_text", required: false }]); }
+  function patch(id: string, up: Partial<ExtraField>) { setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...up } : f))); }
+  function remove(id: string) { setFields((fs) => fs.filter((f) => f.id !== id)); }
+  async function save() {
+    if (!supabase || !companyId) return;
+    setSaving(true);
+    await supabase.from("company_settings").update({ client_form_extra: fields, client_form_theme: theme }).eq("company_id", companyId);
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="liquid-glass rounded-2xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-base font-bold flex items-center gap-2"><Pencil size={16} className="text-emerald-400" /> Editar formulário de clientes</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <p className="text-[11px] text-gray-400 mb-3">Nome, telefone, CNPJ/CPF, e-mail e observações já vêm no formulário. Aqui você adiciona campos extras e escolhe o tema.</p>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs text-gray-400">Tema:</span>
+          <input type="color" value={theme} onChange={(e) => setTheme(e.target.value)} className="w-7 h-7 rounded cursor-pointer bg-transparent" />
+        </div>
+        <div className="flex-1 overflow-y-auto custom-scroll space-y-2">
+          {!loaded ? <p className="text-sm text-gray-500">Carregando…</p> : fields.length === 0 ? (
+            <p className="text-[12px] text-gray-500 text-center py-4">Nenhum campo extra. Adicione abaixo.</p>
+          ) : fields.map((f) => (
+            <div key={f.id} className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <input value={f.label} onChange={(e) => patch(f.id, { label: e.target.value })} className="flex-1 bg-black/30 border border-white/10 rounded px-2 py-1.5 text-sm outline-none" placeholder="Rótulo do campo" />
+                <button onClick={() => remove(f.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={14} /></button>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <select value={f.type} onChange={(e) => patch(f.id, { type: e.target.value })} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer">
+                  {FIELD_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+                </select>
+                <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"><input type="checkbox" checked={!!f.required} onChange={(e) => patch(f.id, { required: e.target.checked })} className="accent-emerald-500" /> Obrigatório</label>
+                {f.type === "choice" && (
+                  <input value={(f.options ?? []).join(", ")} onChange={(e) => patch(f.id, { options: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} placeholder="opções separadas por vírgula" className="flex-1 min-w-[160px] bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none" />
+                )}
+              </div>
+            </div>
+          ))}
+          <button onClick={add} className="text-[11px] text-emerald-400 hover:text-emerald-300 cursor-pointer">+ adicionar campo</button>
+        </div>
+        <div className="flex justify-end gap-2 pt-3">
+          <button onClick={onClose} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
+          <button onClick={save} disabled={saving} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60">{saving ? "Salvando…" : "Salvar formulário"}</button>
+        </div>
+      </div>
     </div>
   );
 }
