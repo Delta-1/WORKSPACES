@@ -1195,6 +1195,16 @@ const COPILOT_TOOLS = [
       "Pergunta a OUTRO agente/bot da empresa (pelo nome) e recebe a resposta dele. Use para consultar um especialista — ex.: perguntar ao bot Financeiro, ou repassar uma dúvida a outro atendente. Assim os bots conversam entre si.",
     input_schema: { type: "object", properties: { agent: { type: "string", description: "nome do agente/bot" }, message: { type: "string" } }, required: ["agent", "message"] },
   },
+  {
+    name: "list_forms",
+    description: "Lista as PLANILHAS/FORMULÁRIOS da empresa (id, título e os campos de cada um). Use para saber em qual planilha registrar um dado e quais campos ela tem.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "save_to_form",
+    description: "Registra UMA linha numa planilha/formulário. form_id vem de list_forms. 'data' é um objeto { \"Rótulo do campo\": valor }. Se faltar campo obrigatório, a ferramenta devolve quais faltam — pergunte à pessoa (dando as opções quando houver) e chame de novo com tudo.",
+    input_schema: { type: "object", properties: { form_id: { type: "string" }, data: { type: "object" } }, required: ["form_id", "data"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1213,6 +1223,33 @@ async function copilotAction(companyId, name, input) {
       if (!target) return { ok: false, message: `Não achei um agente chamado "${input.agent}".` };
       const reply = await runChatbotReply(target, String(input.message || ""), [], "ai", companyId);
       return { ok: true, agent: target.name, reply: reply || "(o agente não respondeu)" };
+    }
+    if (name === "list_forms") {
+      const { data } = await supabase.from("forms").select("id,title,fields,ai_agent_id").eq("company_id", companyId).order("created_at", { ascending: false });
+      return (data ?? []).map((f) => ({
+        id: f.id, title: f.title, vinculado_a_agente: f.ai_agent_id || null,
+        campos: (Array.isArray(f.fields) ? f.fields : []).filter((x) => x.type !== "section").map((x) => ({ rotulo: x.label, tipo: x.type, obrigatorio: !!x.required, opcoes: x.options || undefined })),
+      }));
+    }
+    if (name === "save_to_form") {
+      const { data: form } = await supabase.from("forms").select("id,fields").eq("id", input.form_id).eq("company_id", companyId).maybeSingle();
+      if (!form) return { ok: false, message: "Planilha não encontrada. Use list_forms para pegar o id certo." };
+      const fields = (Array.isArray(form.fields) ? form.fields : []).filter((x) => x.type !== "section");
+      const provided = input.data || {};
+      const norm = (s) => String(s || "").trim().toLowerCase();
+      const row = {};
+      const missing = [];
+      for (const f of fields) {
+        let v = provided[f.label];
+        if (v == null) { const k = Object.keys(provided).find((kk) => norm(kk) === norm(f.label)); if (k) v = provided[k]; }
+        if (v == null) v = provided[f.id];
+        if (v != null && v !== "") row[f.id] = v;
+        else if (f.required) missing.push(f.label);
+      }
+      if (missing.length) return { ok: false, faltando: missing, message: `Faltam campos obrigatórios: ${missing.join(", ")}. Pergunte à pessoa e chame save_to_form de novo com todos os campos.` };
+      const { error } = await supabase.from("form_responses").insert({ form_id: form.id, company_id: companyId, data: row });
+      if (error) return { ok: false, message: "Não consegui salvar: " + error.message };
+      return { ok: true, message: "Registrado na planilha." };
     }
     if (name === "list_sectors") {
       const { data } = await supabase.from("sectors").select("id,name").eq("company_id", companyId).order("name");
@@ -1531,6 +1568,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     `Ao listar, mande VISUAL e organizado: cada pasta com 📁 e cada arquivo com 📄, um por linha, mostrando as subpastas e os arquivos que tem dentro. Nada de frase corrida. ` +
     `Ao procurar um ARQUIVO pelo nome (search_files): se a pessoa não disse a pasta e vier mais de um resultado, PERGUNTE se ela tem preferência de pasta; se ela disser que não, LISTE todos os resultados NUMERADOS (1, 2, 3…) mostrando o nome e de qual PASTA veio, e peça o número. ` +
     `SUPORTE REMOTO: se pedirem para ver a tela de um cliente (ex.: 'tira um print da máquina do fulano'), use screenshot_client. SEMPRE saiba QUAL CLIENTE e, se ele tiver mais de um computador, PERGUNTE qual antes. ` +
+    `PLANILHAS/FORMULÁRIOS: você pode REGISTRAR dados em planilhas da empresa. Quando a pessoa mandar uma informação para guardar (ex.: 'anota esse lead', 'coloca na planilha X: ...'), use list_forms para achar a planilha certa e os campos, e save_to_form para gravar. Se faltar algum campo obrigatório, PERGUNTE à pessoa — quando o campo tiver opções, ofereça as opções — e só então salve. Você também pode coletar os dados aos poucos, de forma natural na conversa, e registrar quando tiver o suficiente. ` +
     (testMode
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
       : `Aja de forma autônoma, perguntando só o essencial.`) +
@@ -1549,6 +1587,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     relay: ["send_whatsapp", "send_file_to_contact", "forward_media"],
     finance: ["finance_summary", "add_finance_entry"],
     remote: ["screenshot_client"],
+    forms: ["list_forms", "save_to_form"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
