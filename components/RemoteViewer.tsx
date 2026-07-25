@@ -40,6 +40,14 @@ const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 type Entry = { name: string; isDir: boolean; size: number; full?: string };
 type Quality = "alta" | "media" | "baixa";
 type Progress = { label: string; pct: number } | null;
+type Peer = { id: string; name: string; avatar: string | null; color: string };
+
+// Cor estável por pessoa (para a borda e o avatar de quem está controlando).
+const PRESENCE_COLORS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444", "#14b8a6"];
+function colorFromId(id: string) {
+  let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return PRESENCE_COLORS[h % PRESENCE_COLORS.length];
+}
 
 export default function RemoteViewer({ agent, profile, onClose, initialGame, teachBot }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void; initialGame?: boolean; teachBot?: { id: string; folder_id: string | null; name: string } | null }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -88,6 +96,45 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   // Ponteiro fantasma animado: quando o Orb mira/clica, um pontinho brilhante
   // desliza até o alvo (parece humano). x,y em fração 0..1 da área do vídeo.
   const [ghost, setGhost] = useState<{ x: number; y: number; click: number } | null>(null);
+  // PRESENÇA: várias pessoas podem estar no mesmo acesso. Mostramos os avatares e,
+  // quando OUTRA pessoa está mexendo, uma borda na cor dela + quem é no topo.
+  const myId = profile?.id || "anon-" + Math.random().toString(36).slice(2, 7);
+  const myColor = colorFromId(myId);
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [controller, setController] = useState<Peer | null>(null);
+  const presenceRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const ctrlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCtrlBroadcast = useRef(0);
+  useEffect(() => {
+    if (!supabase) return;
+    const me: Peer = { id: myId, name: profile?.full_name || "Você", avatar: profile?.avatar_url || null, color: myColor };
+    const ch = supabase.channel(`rv-presence-${agent.id}`, { config: { presence: { key: myId } } });
+    presenceRef.current = ch;
+    ch.on("presence", { event: "sync" }, () => {
+      const state = ch.presenceState() as Record<string, { id: string; name: string; avatar: string | null; color: string }[]>;
+      const list: Peer[] = [];
+      Object.values(state).forEach((arr) => arr.forEach((p) => { if (p.id !== myId && !list.some((x) => x.id === p.id)) list.push({ id: p.id, name: p.name, avatar: p.avatar, color: p.color }); }));
+      setPeers(list);
+    });
+    ch.on("broadcast", { event: "control" }, (msg) => {
+      const p = msg.payload as Peer;
+      if (!p || p.id === myId) return;
+      setController(p);
+      if (ctrlTimer.current) clearTimeout(ctrlTimer.current);
+      ctrlTimer.current = setTimeout(() => setController(null), 1800);
+    });
+    ch.subscribe((s) => { if (s === "SUBSCRIBED") ch.track(me); });
+    return () => { try { supabase!.removeChannel(ch); } catch { /* ignore */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id]);
+  // Avisa aos outros que EU estou mexendo (no máx. 1x/700ms).
+  function broadcastControl() {
+    const now = Date.now();
+    if (now - lastCtrlBroadcast.current < 700) return;
+    lastCtrlBroadcast.current = now;
+    presenceRef.current?.send({ type: "broadcast", event: "control", payload: { id: myId, name: profile?.full_name || "Você", avatar: profile?.avatar_url || null, color: myColor } });
+  }
+
   const ghostClickRef = useRef(0);
   function showGhost(x: number, y: number, click = false) {
     if (click) ghostClickRef.current += 1;
@@ -428,6 +475,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     const ch = controlRef.current;
     if (ch && ch.readyState === "open") ch.send(JSON.stringify(ev));
     if (teaching) recordStep(ev as { kind?: string; x?: number; y?: number; text?: string; name?: string });
+    const k = (ev as { kind?: string }).kind;
+    if (k && k !== "move") broadcastControl(); // avisa presença quando clica/digita
   }
   function combo(name: string) {
     sendInput({ kind: "combo", name });
@@ -825,6 +874,32 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
               for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
             }}
           />
+
+          {/* Presença: borda na cor de quem está mexendo + aviso de quem é. */}
+          {controller && (
+            <>
+              <div className="pointer-events-none absolute inset-0 z-[94] rounded-sm" style={{ boxShadow: `inset 0 0 0 3px ${controller.color}` }} />
+              <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 z-[94] flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] text-white" style={{ background: controller.color }}>
+                {controller.avatar ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={controller.avatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                ) : null}
+                {controller.name} está controlando
+              </div>
+            </>
+          )}
+          {peers.length > 0 && (
+            <div className="absolute top-2 right-2 z-[94] flex -space-x-1.5">
+              {peers.slice(0, 5).map((p) => (
+                <span key={p.id} title={p.name} className="w-6 h-6 rounded-full ring-2 flex items-center justify-center text-[9px] font-bold text-white overflow-hidden" style={{ background: p.color, borderColor: "#0b0f16", ["--tw-ring-color" as string]: p.color }}>
+                  {p.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.avatar} alt="" className="w-full h-full object-cover" />
+                  ) : (p.name[0] || "?").toUpperCase()}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Ponteiro fantasma do Orb — desliza até o alvo, com "ping" ao clicar. */}
           {ghost && (
