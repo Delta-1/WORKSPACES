@@ -37,7 +37,8 @@ export const TRIAL_DAYS = 3; // dias grátis de teste ao criar a empresa
 // Planos da tela de cadastro. "Simples" = o essencial com limitação (sem agentes
 // de IA), "Avançado" = o recomendado completo, "Customizado" = a pessoa monta o
 // seu escolhendo cada ferramenta. Todos começam com 3 dias grátis.
-export type PlanTierId = "simples" | "avancado" | "customizado";
+export type PlanTierId = "simples" | "avancado" | "customizado" | "criacao";
+export const CRIACAO_PRICE = 2000; // entrada única (parcelável); demais combinados
 export const PLAN_TIERS: {
   id: PlanTierId;
   name: string;
@@ -45,6 +46,7 @@ export const PLAN_TIERS: {
   features: FeatureId[]; // vazio em "customizado" = a pessoa escolhe
   custom?: boolean;
   highlight?: boolean;
+  bespoke?: boolean; // plano sob medida (Criação) — pagamento à parte/combinado
 }[] = [
   {
     id: "simples",
@@ -65,6 +67,13 @@ export const PLAN_TIERS: {
     tagline: "Monte o seu: escolha exatamente as ferramentas que quiser.",
     features: [],
     custom: true,
+  },
+  {
+    id: "criacao",
+    name: "Plano Criação",
+    tagline: "Algo sob medida para você, com a auditoria do Victor. Entrada de R$2000 (parcelável); os pagamentos seguintes são combinados.",
+    features: [],
+    bespoke: true,
   },
 ];
 

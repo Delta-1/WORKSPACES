@@ -30,6 +30,7 @@ const EDITABLE_TOOLS: { id: string; label: string }[] = [
   { id: "organograma", label: "Organograma" },
   { id: "financeiro", label: "Financeiro" },
   { id: "clientes", label: "Clientes" },
+  { id: "formularios", label: "Formulários" },
   { id: "remoto", label: "Acesso Remoto" },
   { id: "automacao", label: "Automação" },
   { id: "labs", label: "Labs" },

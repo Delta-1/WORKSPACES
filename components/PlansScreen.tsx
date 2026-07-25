@@ -5,6 +5,7 @@ import { Check, Sparkles, Gift } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Company } from "@/lib/types";
 import {
+  CRIACAO_PRICE,
   FEATURES,
   PLAN_TIERS,
   RECOMMENDED_WA_LIMIT,
@@ -26,6 +27,8 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mpConfigured, setMpConfigured] = useState<boolean | null>(null);
+  const [criacaoDone, setCriacaoDone] = useState(false);
+  const isCriacao = tier === "criacao";
 
   useEffect(() => {
     fetch("/api/billing/config").then((r) => r.json()).then((d) => setMpConfigured(!!d.configured)).catch(() => setMpConfigured(false));
@@ -50,6 +53,14 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
     setLoading(true);
     setError(null);
     try {
+      // Plano Criação: sob medida. Registra a escolha (fica pendente, sem liberar
+      // o site) e mostra o aviso — a equipe combina os R$2000 (parcelável) e o resto.
+      if (isCriacao) {
+        const { error } = await supabase.rpc("choose_plan", { p_features: [], p_wa_limit: RECOMMENDED_WA_LIMIT, p_activate: false });
+        if (error) { setError(error.message); return; }
+        setCriacaoDone(true);
+        return;
+      }
       const activate = mpConfigured === false; // sem cobrança configurada → libera na hora
       const { error } = await supabase.rpc("choose_plan", {
         p_features: activeFeatures,
@@ -67,7 +78,7 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-[#060a12] p-4 overflow-y-auto">
-      <div className="w-full max-w-3xl my-8">
+      <div className="w-full max-w-5xl my-8">
         <div className="text-center mb-5">
           <h1 className="text-2xl font-bold">Escolha seu plano</h1>
           <p className="text-gray-400 text-sm mt-1 inline-flex items-center gap-1.5">
@@ -75,10 +86,10 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {PLAN_TIERS.map((t) => {
             const selected = tier === t.id;
-            const tPrice = t.custom ? price : tierPrice(t.id);
+            const tPrice = t.custom || t.bespoke ? price : tierPrice(t.id);
             return (
               <button
                 key={t.id}
@@ -100,17 +111,19 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
                 </div>
                 <p className="text-[11px] text-gray-400 mt-1 min-h-[32px]">{t.tagline}</p>
                 <div className="mt-2 mb-3">
-                  {t.custom ? (
+                  {t.bespoke ? (
+                    <p className="text-lg font-bold text-emerald-400">R$ {CRIACAO_PRICE}<span className="text-xs text-gray-400 font-normal"> entrada</span></p>
+                  ) : t.custom ? (
                     <p className="text-lg font-bold text-emerald-400">Você monta</p>
                   ) : (
                     <p className="text-2xl font-bold">R$ {tPrice}<span className="text-xs text-gray-400 font-normal">/mês</span></p>
                   )}
                 </div>
                 <ul className="space-y-1 text-[12px] text-gray-300 mt-auto">
-                  {(t.custom ? ["Escolha cada ferramenta abaixo"] : t.features.map((f) => FEATURES.find((x) => x.id === f)?.label ?? f)).map((f) => (
+                  {(t.bespoke ? ["Projeto sob medida", "Auditoria do Victor", "Parcelável"] : t.custom ? ["Escolha cada ferramenta abaixo"] : t.features.map((f) => FEATURES.find((x) => x.id === f)?.label ?? f)).map((f) => (
                     <li key={f} className="flex items-center gap-1.5"><Check size={12} className="text-emerald-400 shrink-0" /> {f}</li>
                   ))}
-                  {!t.custom && t.id === "simples" && <li className="text-[11px] text-amber-300/80 pl-4">Sem agentes de IA</li>}
+                  {!t.custom && !t.bespoke && t.id === "simples" && <li className="text-[11px] text-amber-300/80 pl-4">Sem agentes de IA</li>}
                 </ul>
               </button>
             );
@@ -148,26 +161,49 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
 
         <div className="mt-4 liquid-glass rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-sm text-gray-400">Total mensal após o teste</p>
-            <p className="text-3xl font-bold">R$ {price}<span className="text-sm text-gray-400 font-normal">/mês</span></p>
-            <p className="text-[11px] text-gray-500 mt-1">Inclui {RECOMMENDED_WA_LIMIT} números de WhatsApp. Você pode mudar o plano depois.</p>
+            {isCriacao ? (
+              <>
+                <p className="text-sm text-gray-400">Entrada (parcelável)</p>
+                <p className="text-3xl font-bold">R$ {CRIACAO_PRICE}<span className="text-sm text-gray-400 font-normal"> uma vez</span></p>
+                <p className="text-[11px] text-gray-500 mt-1">Projeto sob medida com auditoria do Victor. Os pagamentos seguintes são combinados.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-400">Total mensal após o teste</p>
+                <p className="text-3xl font-bold">R$ {price}<span className="text-sm text-gray-400 font-normal">/mês</span></p>
+                <p className="text-[11px] text-gray-500 mt-1">Inclui {RECOMMENDED_WA_LIMIT} números de WhatsApp. Você pode mudar o plano depois.</p>
+              </>
+            )}
           </div>
           <div className="flex-1 min-w-[220px]">
             {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
             <button
               onClick={confirmPlan}
-              disabled={loading || activeFeatures.length === 0 || mpConfigured === null}
+              disabled={loading || (!isCriacao && activeFeatures.length === 0) || mpConfigured === null}
               className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-3 rounded-lg cursor-pointer disabled:opacity-50"
             >
-              {loading ? "Processando..." : mpConfigured ? "Continuar para o pagamento" : `Começar ${TRIAL_DAYS} dias grátis`}
+              {loading ? "Processando..." : isCriacao ? "Escolher o Plano Criação" : mpConfigured ? "Continuar para o pagamento" : `Começar ${TRIAL_DAYS} dias grátis`}
             </button>
             <p className="text-[11px] text-gray-500 text-center mt-2">
-              {mpConfigured
+              {isCriacao
+                ? "A equipe entra em contato para combinar os R$2000 (parcelável) e os próximos passos."
+                : mpConfigured
                 ? "Você escolhe pagar no Cartão (automático) ou Pix na próxima tela. O acesso libera assim que o pagamento for confirmado."
                 : `Acesso liberado na hora para testar por ${TRIAL_DAYS} dias.`}
             </p>
           </div>
         </div>
+
+        {criacaoDone && (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onLogout}>
+            <div className="liquid-glass rounded-2xl p-8 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
+              <div className="w-14 h-14 rounded-full bg-emerald-600/30 border border-emerald-500 flex items-center justify-center mx-auto mb-3"><Check size={28} className="text-emerald-300" /></div>
+              <h3 className="text-lg font-bold">Plano Criação escolhido!</h3>
+              <p className="text-sm text-gray-400 mt-2">Recebemos seu interesse. A equipe vai falar com você para combinar os <b className="text-gray-200">R$2000 (parcelável)</b> e desenhar seu projeto sob medida com a auditoria do Victor.</p>
+              <button onClick={onLogout} className="mt-5 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg cursor-pointer">Entendi</button>
+            </div>
+          </div>
+        )}
 
         <button onClick={onLogout} className="w-full text-[11px] text-gray-500 hover:text-gray-300 mt-4 cursor-pointer">Sair</button>
       </div>
