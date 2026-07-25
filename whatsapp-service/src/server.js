@@ -137,6 +137,165 @@ async function getNumberConfig(numberId) {
   return { number, chatbot };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /configia — PROGRAMAR A IA PELO PRÓPRIO WHATSAPP
+// O dono da empresa (ou o Administrador Geral) manda "/configia" para o número
+// gerenciado por um bot. A IA pede login (e-mail + senha), com 5 tentativas até
+// bloquear; ao entrar, mostra um menu numerado para mexer no atendimento do
+// número (ligar/desligar auto-resposta, trocar o bot, modo etiqueta, status).
+// O Admin Geral entra em QUALQUER empresa (acesso prioritário).
+const configiaSessions = new Map(); // jid -> { stage, attempts, lockedUntil, email, userId, isSuper }
+const CONFIGIA_MAX_ATTEMPTS = 5;
+const CONFIGIA_LOCK_MINUTES = 30;
+
+// Verifica e-mail+senha no Supabase Auth (endpoint GoTrue) usando a service key
+// como apikey. Retorna { id, email } quando as credenciais estão certas.
+async function verifyCredentials(email, password) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  try {
+    const res = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: key },
+      body: JSON.stringify({ email: String(email).trim(), password: String(password) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.user?.id) return { id: data.user.id, email: data.user.email };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// A pessoa autenticada pode configurar este número? Super admin sempre pode; caso
+// contrário precisa ser gestor/dono da empresa do número. Retorna { ok, isSuper }.
+async function configiaAuthorize(userId, companyId) {
+  if (!supabase || !userId) return { ok: false, isSuper: false };
+  const { data: prof } = await supabase.from("profiles").select("email, role, company_id").eq("id", userId).maybeSingle();
+  let isSuper = false;
+  if (prof?.email) {
+    const { data: sa } = await supabase.from("super_admins").select("email").ilike("email", prof.email).maybeSingle();
+    isSuper = !!sa;
+  }
+  if (isSuper) return { ok: true, isSuper: true };
+  const okCompany = prof?.role === "gestor" && prof?.company_id && companyId && prof.company_id === companyId;
+  return { ok: !!okCompany, isSuper: false };
+}
+
+function configiaMenuText(number, botName) {
+  return (
+    `🔧 *Painel do número* (${number?.label || number?.phone_number || "WhatsApp"})\n` +
+    `Bot atual: *${botName || "nenhum"}* · Auto-resposta: *${number?.auto_reply ? "ligada" : "desligada"}* · Modo: *${number?.bot_mode || "responder"}*\n\n` +
+    `Escolha uma opção (mande o número):\n` +
+    `1️⃣ ${number?.auto_reply ? "Desligar" : "Ligar"} resposta automática\n` +
+    `2️⃣ Trocar o bot que atende este número\n` +
+    `3️⃣ ${number?.bot_mode === "label" ? "Sair do" : "Entrar no"} modo só-etiqueta\n` +
+    `4️⃣ Ver status do número\n` +
+    `0️⃣ Sair`
+  );
+}
+
+// Motor do /configia. Recebe o texto e o contexto do número; devolve as respostas
+// a enviar (array de strings). `send` é feito por quem chama.
+async function handleConfigia({ jid, text, numberId, number, companyId }) {
+  const t = (text || "").trim();
+  let s = configiaSessions.get(jid);
+
+  // Bloqueado por tentativas?
+  if (s?.lockedUntil && Date.now() < s.lockedUntil) {
+    const when = new Date(s.lockedUntil).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+    return [`🚫 Acesso bloqueado por tentativas. Tente novamente às *${when}* (horário de Brasília).`];
+  }
+
+  // Início
+  if (!s) {
+    if (t.toLowerCase() !== "/configia") return null; // não é para nós
+    s = { stage: "await_email", attempts: 0 };
+    configiaSessions.set(jid, s);
+    return ["🔐 *Configuração da IA*\nInforme o *e-mail* de acesso (da empresa ou do administrador)."];
+  }
+
+  if (t.toLowerCase() === "/sair" || t === "0" && s.stage === "menu") {
+    configiaSessions.delete(jid);
+    return ["👋 Saí do painel. Mande */configia* quando quiser voltar."];
+  }
+
+  if (s.stage === "await_email") {
+    s.email = t;
+    s.stage = "await_password";
+    return ["🔑 Agora a *senha*."];
+  }
+
+  if (s.stage === "await_password") {
+    const cred = await verifyCredentials(s.email, t);
+    if (cred) {
+      const auth = await configiaAuthorize(cred.id, companyId);
+      if (!auth.ok) {
+        configiaSessions.delete(jid);
+        return ["⛔ Este acesso não tem permissão para configurar este número. (Precisa ser o gestor da empresa ou o Administrador Geral.)"];
+      }
+      s.stage = "menu";
+      s.userId = cred.id;
+      s.isSuper = auth.isSuper;
+      const { number: fresh, chatbot } = await getNumberConfig(numberId);
+      return ["✅ *Carregando acesso...*" + (auth.isSuper ? " (Administrador Geral — acesso prioritário)" : ""), configiaMenuText(fresh, chatbot?.name)];
+    }
+    s.attempts = (s.attempts || 0) + 1;
+    const left = CONFIGIA_MAX_ATTEMPTS - s.attempts;
+    if (left <= 0) {
+      s.lockedUntil = Date.now() + CONFIGIA_LOCK_MINUTES * 60000;
+      s.stage = "await_email";
+      s.email = null;
+      const when = new Date(s.lockedUntil).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+      return [`⛔ *Acesso negado.* Você esgotou as tentativas. Tente novamente às *${when}* (horário de Brasília).`];
+    }
+    s.stage = "await_email";
+    s.email = null;
+    return [`❌ *Acesso negado.* Você tem *${left}* tentativa(s) até o bloqueio.\nInforme o *e-mail* novamente.`];
+  }
+
+  if (s.stage === "menu") {
+    const { number: n, chatbot } = await getNumberConfig(numberId);
+    if (t === "1") {
+      await supabase.from("whatsapp_numbers").update({ auto_reply: !n?.auto_reply }).eq("id", numberId);
+      const { number: n2, chatbot: c2 } = await getNumberConfig(numberId);
+      return [`✅ Resposta automática *${n2?.auto_reply ? "ligada" : "desligada"}*.`, configiaMenuText(n2, c2?.name)];
+    }
+    if (t === "2") {
+      const { data: bots } = await supabase.from("chatbots").select("id,name").eq("company_id", companyId).order("name");
+      const list = (bots || []).filter((b) => b.name);
+      if (!list.length) return ["Nenhum bot cadastrado nesta empresa.", configiaMenuText(n, chatbot?.name)];
+      s.stage = "pick_bot";
+      s.bots = list;
+      return ["Qual bot deve atender este número? Mande o número:\n" + list.map((b, i) => `${i + 1}️⃣ ${b.name}`).join("\n")];
+    }
+    if (t === "3") {
+      const newMode = n?.bot_mode === "label" ? "reply" : "label";
+      await supabase.from("whatsapp_numbers").update({ bot_mode: newMode }).eq("id", numberId);
+      const { number: n2, chatbot: c2 } = await getNumberConfig(numberId);
+      return [`✅ Modo alterado para *${newMode === "label" ? "só-etiqueta" : "responder"}*.`, configiaMenuText(n2, c2?.name)];
+    }
+    if (t === "4") {
+      return [configiaMenuText(n, chatbot?.name)];
+    }
+    return ["Opção inválida. Mande *1*, *2*, *3*, *4* ou *0* para sair."];
+  }
+
+  if (s.stage === "pick_bot") {
+    const idx = parseInt(t, 10) - 1;
+    const pick = s.bots?.[idx];
+    if (!pick) return ["Número inválido. Mande o número do bot da lista."];
+    await supabase.from("whatsapp_numbers").update({ chatbot_id: pick.id }).eq("id", numberId);
+    s.stage = "menu";
+    const { number: n2, chatbot: c2 } = await getNumberConfig(numberId);
+    return [`✅ Agora quem atende é *${pick.name}*.`, configiaMenuText(n2, c2?.name)];
+  }
+
+  return null;
+}
+
 // Agente COPILOTO (adm do sistema) da empresa — slot 'internal', com TODAS as
 // capacidades. É ele quem responde os contatos marcados como "copilot ativado",
 // no lugar do bot de atendimento do número (ex.: "Vitor"). Cache de 1 min.
@@ -1687,6 +1846,24 @@ async function startSession(numberId) {
             cid
           );
           await logMessage(conversation.id, "in", text, null, media, cid);
+
+          // /configia — painel de configuração do número pelo WhatsApp. Intercepta
+          // ANTES do bot: se há sessão ativa ou a pessoa mandou "/configia",
+          // conduz o login + menu e NÃO deixa o bot de atendimento responder.
+          if (text && (configiaSessions.has(contactJid) || text.trim().toLowerCase() === "/configia")) {
+            try {
+              const replies = await handleConfigia({ jid: contactJid, text, numberId, number, companyId: cid });
+              if (replies && replies.length) {
+                for (const r of replies) {
+                  const g = await sock.sendMessage(contactJid, { text: r });
+                  await logMessage(conversation.id, "out", r, null, null, cid, g?.key?.id ?? null);
+                }
+                continue; // tratado pelo /configia; pula o bot normal
+              }
+            } catch (e) {
+              console.error("configia failed:", e?.message || e);
+            }
+          }
 
           // Contato liberado pelo gestor → COPILOTO (assessor com acesso total).
           const isCopilot = contact?.copilot_access === true;
