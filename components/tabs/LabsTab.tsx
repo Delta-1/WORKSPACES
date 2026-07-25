@@ -22,6 +22,7 @@ const CAPS: { id: string; label: string; desc: string }[] = [
   { id: "attendance", label: "Atendimento", desc: "Abrir/encerrar atendimentos" },
   { id: "relay", label: "Assessor", desc: "Enviar mensagens no WhatsApp por você" },
   { id: "remote", label: "Acesso remoto (beta)", desc: "Ver/controlar máquinas via acesso remoto" },
+  { id: "forms", label: "Formulários", desc: "Registrar dados em planilhas/formulários da empresa" },
 ];
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];
