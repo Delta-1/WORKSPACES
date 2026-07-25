@@ -41,7 +41,7 @@ type Entry = { name: string; isDir: boolean; size: number; full?: string };
 type Quality = "alta" | "media" | "baixa";
 type Progress = { label: string; pct: number } | null;
 
-export default function RemoteViewer({ agent, profile, onClose, initialGame }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void; initialGame?: boolean }) {
+export default function RemoteViewer({ agent, profile, onClose, initialGame, teachBot }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void; initialGame?: boolean; teachBot?: { id: string; folder_id: string | null; name: string } | null }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -93,8 +93,80 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
     if (click) ghostClickRef.current += 1;
     setGhost({ x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), click: ghostClickRef.current });
   }
+
+  // MODO ENSINAR (treino por demonstração): enquanto você controla a máquina, cada
+  // clique/digitação vira um PASSO com um print — no fim vira um passo a passo que
+  // fica na memória do agente (grafo). Usa o próprio caminho de controle.
+  type Step = { n: number; kind: "click" | "type" | "key"; x?: number; y?: number; text?: string; thumb?: string };
+  const [teaching, setTeaching] = useState(false);
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [savingLesson, setSavingLesson] = useState(false);
+  const typeBufRef = useRef<string>("");
+  function captureThumb(): string | undefined {
+    try {
+      const v = videoRef.current; if (!v || !v.videoWidth) return undefined;
+      const c = document.createElement("canvas");
+      const w = 240; c.width = w; c.height = Math.round((v.videoHeight / v.videoWidth) * w);
+      const ctx = c.getContext("2d"); if (!ctx) return undefined;
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", 0.5);
+    } catch { return undefined; }
+  }
+  function flushTypeBuffer() {
+    if (typeBufRef.current) {
+      const text = typeBufRef.current; typeBufRef.current = "";
+      setSteps((s) => [...s, { n: s.length + 1, kind: "type", text }]);
+    }
+  }
+  // Registra um passo a partir de um evento de controle (chamado pelo sendInput).
+  function recordStep(ev: { kind?: string; x?: number; y?: number; text?: string; name?: string; key?: string }) {
+    if (!teaching) return;
+    if (ev.kind === "type" && ev.text) { typeBufRef.current += ev.text; return; }
+    if (ev.kind === "down" || ev.kind === "click") {
+      flushTypeBuffer();
+      setSteps((s) => [...s, { n: s.length + 1, kind: "click", x: ev.x, y: ev.y, thumb: captureThumb() }]);
+      return;
+    }
+    if (ev.kind === "combo" || ev.kind === "key") {
+      // Teclado do desktop manda tecla a tecla; letra imprimível vira digitação.
+      const printable = ev.text && ev.text.length === 1 ? ev.text : null;
+      if (printable && !ev.name) { typeBufRef.current += printable; return; }
+      const nm = ev.name || ev.key || "";
+      if (nm === "Backspace" || nm === "backspace") { typeBufRef.current = typeBufRef.current.slice(0, -1); return; }
+      // ignora modificadores soltos
+      if (["Shift", "Control", "Alt", "Meta"].includes(nm)) return;
+      flushTypeBuffer();
+      setSteps((s) => [...s, { n: s.length + 1, kind: "key", text: nm }]);
+    }
+  }
+  async function finishLesson() {
+    if (!supabase || !teachBot) return;
+    flushTypeBuffer();
+    setSavingLesson(true);
+    try {
+      const when = new Date().toLocaleString("pt-BR");
+      let md = `# Aula — ${teachBot.name}\nGravada em ${when} · ${steps.length} passos\n\n`;
+      steps.forEach((s) => {
+        if (s.kind === "click") md += `${s.n}. **Clique** em (${((s.x ?? 0) * 100).toFixed(0)}%, ${((s.y ?? 0) * 100).toFixed(0)}%) da tela.\n`;
+        else if (s.kind === "type") md += `${s.n}. **Digite**: "${s.text}"\n`;
+        else md += `${s.n}. **Tecla**: ${s.text}\n`;
+      });
+      const cid = agent.company_id;
+      const path = `agent-lessons/${teachBot.id}/${Date.now()}.md`;
+      await supabase.storage.from("company-files").upload(path, new Blob([md], { type: "text/markdown" }), { contentType: "text/markdown", upsert: true });
+      // Também grava a versão estruturada (JSON) para a IA reusar.
+      const jpath = `agent-lessons/${teachBot.id}/${Date.now()}.json`;
+      await supabase.storage.from("company-files").upload(jpath, new Blob([JSON.stringify({ name: teachBot.name, when, steps }, null, 2)], { type: "application/json" }), { contentType: "application/json", upsert: true });
+      if (teachBot.folder_id) {
+        await supabase.from("files").insert({ name: `Aula ${when}.md`, type: "file", parent_id: teachBot.folder_id, company_id: cid, storage_path: path, mime: "text/markdown" });
+      }
+      setSteps([]); setTeaching(false);
+      alert("Aula salva na memória do agente! Ela aparece nas pastas dele no grafo.");
+    } finally { setSavingLesson(false); }
+  }
   const [volume, setVolume] = useState(1); // áudio LIGADO por padrão; botão só ajusta o volume
   useEffect(() => { if (videoRef.current) videoRef.current.volume = volume; }, [volume]);
+  useEffect(() => { if (teachBot) setTeaching(true); }, [teachBot]);
   const [homeGame, setHomeGame] = useState(false); // Modo Game só na conta Casa e ligado nas configs
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
@@ -355,6 +427,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
   function sendInput(ev: object) {
     const ch = controlRef.current;
     if (ch && ch.readyState === "open") ch.send(JSON.stringify(ev));
+    if (teaching) recordStep(ev as { kind?: string; x?: number; y?: number; text?: string; name?: string });
   }
   function combo(name: string) {
     sendInput({ kind: "combo", name });
@@ -773,6 +846,33 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
             </div>
           )}
         </div>
+
+        {teaching && teachBot && (
+          <div className="w-80 max-w-[85vw] shrink-0 bg-[#0b0f16] border-l border-white/10 flex flex-col">
+            <div className="p-3 border-b border-white/10">
+              <p className="text-xs font-bold flex items-center gap-1.5 text-rose-300"><span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" /> Gravando aula — {teachBot.name}</p>
+              <p className="text-[10px] text-gray-500 mt-1">Faça a tarefa na tela (clique e digite). Cada ação vira um passo com print. No fim, clique em Finalizar.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scroll p-2 space-y-1.5">
+              {steps.length === 0 ? <p className="text-[11px] text-gray-600 text-center py-6">Nenhum passo ainda. Comece a mexer na tela.</p> : steps.map((s) => (
+                <div key={s.n} className="flex items-start gap-2 bg-black/20 rounded-lg p-1.5">
+                  <span className="text-[10px] text-gray-500 w-4 text-right shrink-0">{s.n}</span>
+                  {s.thumb ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.thumb} alt="" className="w-16 rounded border border-white/10 shrink-0" />
+                  ) : <span className="w-16 h-9 rounded bg-black/40 shrink-0" />}
+                  <span className="text-[11px] text-gray-300 min-w-0">
+                    {s.kind === "click" ? `Clique (${((s.x ?? 0) * 100).toFixed(0)}%, ${((s.y ?? 0) * 100).toFixed(0)}%)` : s.kind === "type" ? <>Digitar: <span className="text-emerald-300">{s.text}</span></> : `Tecla: ${s.text}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="p-2 border-t border-white/10 flex gap-2">
+              <button onClick={() => { setSteps([]); typeBufRef.current = ""; }} className="flex-1 text-[11px] py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">Limpar</button>
+              <button onClick={finishLesson} disabled={savingLesson || steps.length === 0} className="flex-1 text-[11px] py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">{savingLesson ? "Salvando…" : "Finalizar"}</button>
+            </div>
+          </div>
+        )}
 
         {showFiles && (
           <div className="w-80 max-w-[85vw] shrink-0 bg-[#0b0f16] border-l border-white/10 flex flex-col">
