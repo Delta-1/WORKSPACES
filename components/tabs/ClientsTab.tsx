@@ -450,7 +450,7 @@ function AddClientModal({
       const subs = Array.isArray(cfg?.client_subfolders) ? cfg.client_subfolders : DEFAULT_CLIENT_SUBFOLDERS;
       folderId = await ensureClientFolders(companyId, name.trim(), subs);
     }
-    const { error } = await supabase.from("clients").insert({
+    const { data: created, error } = await supabase.from("clients").insert({
       name: name.trim(),
       phone: phone.trim() || null,
       document: document.trim() || null,
@@ -461,12 +461,31 @@ function AddClientModal({
       notes: notes.trim() || null,
       company_id: companyId,
       created_by: createdBy,
-    });
-    setSaving(false);
+    }).select("id").single();
     if (error) {
+      setSaving(false);
       alert("Erro ao salvar: " + error.message);
       return;
     }
+    // Salva os DADOS do cliente num arquivo .txt dentro da pasta dele (fica no
+    // grafo e o terceiro com acesso a pastas também consegue baixar).
+    if (created?.id && folderId && companyId) {
+      try {
+        const txt =
+          `DADOS DO CLIENTE\n================\n` +
+          `Nome: ${name.trim()}\n` +
+          `Telefone: ${phone.trim() || "—"}\n` +
+          `CNPJ/CPF: ${document.trim() || "—"}\n` +
+          `E-mail: ${email.trim() || "—"}\n` +
+          `Regime: ${regime || "—"}\n` +
+          `Observações: ${notes.trim() || "—"}\n` +
+          `Cadastrado em: ${new Date().toLocaleString("pt-BR")}\n`;
+        const path = `clients/${created.id}/dados.txt`;
+        await supabase.storage.from("company-files").upload(path, new Blob([txt], { type: "text/plain" }), { contentType: "text/plain", upsert: true });
+        await supabase.from("files").insert({ name: "dados.txt", type: "file", parent_id: folderId, company_id: companyId, storage_path: path, mime: "text/plain" });
+      } catch { /* não bloqueia o cadastro se o txt falhar */ }
+    }
+    setSaving(false);
     onSaved();
     onClose();
   }

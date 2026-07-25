@@ -7,7 +7,7 @@ import type { Profile } from "@/lib/types";
 
 type FieldType = "short_text" | "long_text" | "number" | "email" | "phone" | "date" | "choice" | "multichoice" | "photo" | "file" | "section";
 type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string };
-type Form = { id: string; company_id: string; title: string; description: string | null; theme: { color?: string; bg?: string } | null; fields: Field[]; created_at: string };
+type Form = { id: string; company_id: string; title: string; description: string | null; theme: { color?: string; bg?: string } | null; fields: Field[]; ai_agent_id?: string | null; created_at: string };
 type Response = { id: string; data: Record<string, unknown>; created_at: string };
 
 const TYPE_LABEL: Record<FieldType, string> = {
@@ -104,8 +104,15 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   const [description, setDescription] = useState(form.description ?? "");
   const [color, setColor] = useState(form.theme?.color ?? "#10b981");
   const [fields, setFields] = useState<Field[]>(Array.isArray(form.fields) ? form.fields : []);
+  const [aiAgent, setAiAgent] = useState<string>(form.ai_agent_id ?? "");
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("chatbots").select("id,name").eq("company_id", form.company_id).order("name").then(({ data }) => setAgents((data as { id: string; name: string }[])?.filter((a) => a.name) ?? []));
+  }, [form.company_id]);
 
   const link = typeof window !== "undefined" ? `${window.location.origin}/f/${form.id}` : "";
   function addField(type: FieldType) { setFields((f) => [...f, { id: uid(), label: type === "section" ? "Nova seção" : "Nova pergunta", type, required: false, options: (type === "choice" || type === "multichoice") ? ["Opção 1"] : undefined }]); }
@@ -117,7 +124,7 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   async function save() {
     if (!supabase) return;
     setSaving(true);
-    await supabase.from("forms").update({ title: title.trim() || "Formulário sem título", description: description.trim() || null, theme: { color, bg: "#0b0f16" }, fields, updated_at: new Date().toISOString() }).eq("id", form.id);
+    await supabase.from("forms").update({ title: title.trim() || "Formulário sem título", description: description.trim() || null, theme: { color, bg: "#0b0f16" }, fields, ai_agent_id: aiAgent || null, updated_at: new Date().toISOString() }).eq("id", form.id);
     setSaving(false);
     onClose();
   }
@@ -137,10 +144,20 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
         <div className="rounded-2xl p-4 bg-black/20 border-t-4" style={{ borderTopColor: color }}>
           <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-transparent text-lg font-bold outline-none" placeholder="Título do formulário" />
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Descrição (opcional)" className="w-full bg-transparent text-sm text-gray-300 outline-none resize-none mt-1" />
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-[11px] text-gray-400">Tema:</span>
-            <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="w-7 h-7 rounded cursor-pointer bg-transparent" />
+          <div className="flex items-center gap-4 mt-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-400">Tema:</span>
+              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="w-7 h-7 rounded cursor-pointer bg-transparent" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-400">Preenchido pela IA:</span>
+              <select value={aiAgent} onChange={(e) => setAiAgent(e.target.value)} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer">
+                <option value="">— nenhum —</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
           </div>
+          <p className="text-[10px] text-gray-500 mt-1">Vinculando um agente, a IA pode preencher esta planilha a partir das conversas no WhatsApp (coleta e registro de dados).</p>
         </div>
 
         {fields.map((f) => (
