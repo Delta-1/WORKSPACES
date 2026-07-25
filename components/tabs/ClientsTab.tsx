@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, MemoryStick, MessageSquare, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, LayoutGrid, MemoryStick, MessageSquare, Monitor, Plus, Search, Table as TableIcon, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -140,6 +140,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
   const [showForm, setShowForm] = useState(false);
   const [companyCode, setCompanyCode] = useState<string>("");
   const [subtab, setSubtab] = useState<"clientes" | "terceiros">("clientes");
+  const [view, setView] = useState<"cards" | "table">("cards");
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
@@ -233,15 +234,68 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
         </div>
       </div>
 
-      {canManage && (
-        <div className="flex items-center gap-1 bg-black/20 rounded-lg p-1 self-start">
-          <button onClick={() => setSubtab("clientes")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "clientes" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Clientes</button>
-          <button onClick={() => setSubtab("terceiros")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "terceiros" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Acesso de terceiros</button>
-        </div>
-      )}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        {canManage ? (
+          <div className="flex items-center gap-1 bg-black/20 rounded-lg p-1 self-start">
+            <button onClick={() => setSubtab("clientes")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "clientes" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Clientes</button>
+            <button onClick={() => setSubtab("terceiros")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "terceiros" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Acesso de terceiros</button>
+          </div>
+        ) : <span />}
+        {subtab === "clientes" && (
+          <div className="flex items-center gap-1 bg-black/20 rounded-lg p-1 self-start" title="Como visualizar">
+            <button onClick={() => setView("cards")} className={`text-xs px-2.5 py-1.5 rounded-md cursor-pointer flex items-center gap-1 ${view === "cards" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}><LayoutGrid size={13} /> Cartões</button>
+            <button onClick={() => setView("table")} className={`text-xs px-2.5 py-1.5 rounded-md cursor-pointer flex items-center gap-1 ${view === "table" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}><TableIcon size={13} /> Tabela</button>
+          </div>
+        )}
+      </div>
 
       {subtab === "terceiros" && canManage ? (
         <ThirdPartiesManager companyId={companyId} clients={clients} onChanged={load} />
+      ) : view === "table" ? (
+        <div className="flex-1 overflow-auto custom-scroll border border-white/10 rounded-xl">
+          <table className="w-full text-sm border-collapse">
+            <thead className="sticky top-0 bg-[#0b0f16]">
+              <tr>
+                {["Cliente", "Telefone", "CNPJ/CPF", "E-mail", "Regime", "Máquinas", ""].map((h) => (
+                  <th key={h} className="text-left text-[11px] text-gray-400 font-semibold px-3 py-2 border-b border-white/10 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={7} className="text-center text-gray-500 py-8">Nenhum cliente cadastrado.</td></tr>
+              ) : filtered.map((c) => {
+                const machines = agents.filter((a) => a.client_id === c.id);
+                return (
+                  <tr key={c.id} className="hover:bg-white/5">
+                    <td className="px-3 py-2 border-b border-white/5">
+                      <span className="flex items-center gap-2">
+                        {c.logo_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={c.logo_url} alt="" className="w-6 h-6 rounded object-cover" />
+                        ) : <span className="w-6 h-6 rounded bg-black/30 flex items-center justify-center text-gray-500"><Building2 size={12} /></span>}
+                        <span className="font-medium truncate max-w-[180px]">{c.name}</span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 border-b border-white/5 text-gray-300 whitespace-nowrap">{c.phone || "—"}</td>
+                    <td className="px-3 py-2 border-b border-white/5 text-gray-300 whitespace-nowrap">{c.document || "—"}</td>
+                    <td className="px-3 py-2 border-b border-white/5 text-gray-400 truncate max-w-[180px]">{c.email || "—"}</td>
+                    <td className="px-3 py-2 border-b border-white/5 text-gray-400 whitespace-nowrap">{c.tax_regime || "—"}</td>
+                    <td className="px-3 py-2 border-b border-white/5 text-gray-400 text-center">{machines.length}</td>
+                    <td className="px-3 py-2 border-b border-white/5 whitespace-nowrap">
+                      <span className="flex items-center gap-1.5">
+                        {c.phone && onOpenMessages && (
+                          <button onClick={() => onOpenMessages(c.phone as string, c.name)} title="Mensagem" className="text-green-300 hover:text-green-200 cursor-pointer"><MessageSquare size={14} /></button>
+                        )}
+                        {canManage && <button onClick={() => removeClient(c.id)} title="Remover" className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={14} /></button>}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
         {filtered.length === 0 && (
@@ -508,11 +562,15 @@ function AddClientModal({
 // ACESSO DE TERCEIROS (espelha o modelo GestaSheet): a empresa cadastra terceiros
 // (ex.: contabilidades), gera o link de cada um e atribui clientes. O terceiro
 // abre o link e vê só os clientes dele (leitura), em /terceiros/<código>.
-type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string };
+type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string; login_email: string | null; can_view_info: boolean; can_view_folders: boolean; can_view_remote: boolean };
 function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: string | null; clients: Client[]; onChanged: () => void }) {
   const [tps, setTps] = useState<ThirdParty[]>([]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [canInfo, setCanInfo] = useState(true);
+  const [canFolders, setCanFolders] = useState(false);
+  const [canRemote, setCanRemote] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manage, setManage] = useState<ThirdParty | null>(null);
@@ -528,10 +586,22 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
   async function add() {
     if (!supabase || !name.trim()) return;
     setBusy(true); setError(null);
-    const { error } = await supabase.rpc("create_third_party", { p_name: name.trim(), p_email: email.trim() || null });
+    const { error } = await supabase.rpc("create_third_party", {
+      p_name: name.trim(), p_email: email.trim() || null, p_login_email: email.trim() || null,
+      p_password: password.trim() || null, p_can_info: canInfo, p_can_folders: canFolders, p_can_remote: canRemote,
+    });
     setBusy(false);
     if (error) { setError(error.message); return; }
-    setName(""); setEmail(""); load();
+    setName(""); setEmail(""); setPassword(""); load();
+  }
+  async function savePerms(t: ThirdParty, up: Partial<ThirdParty>, newPassword?: string) {
+    if (!supabase) return;
+    const merged = { ...t, ...up };
+    await supabase.rpc("set_third_party", {
+      p_id: t.id, p_login_email: merged.login_email ?? merged.email ?? null, p_password: newPassword?.trim() || null,
+      p_can_info: merged.can_view_info, p_can_folders: merged.can_view_folders, p_can_remote: merged.can_view_remote,
+    });
+    load();
   }
   async function removeTp(id: string) {
     if (!supabase) return;
@@ -548,11 +618,19 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
     <div className="flex-1 overflow-y-auto custom-scroll">
       <div className="bg-black/20 border border-white/10 rounded-xl p-3 mb-4 max-w-2xl">
         <p className="text-xs font-semibold mb-2 flex items-center gap-1.5"><UserPlus size={14} className="text-emerald-400" /> Novo terceiro (ex.: contabilidade)</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do terceiro *" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail (opcional)" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail / login" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha (opcional)" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+        </div>
+        <div className="flex items-center gap-3 flex-wrap mt-2 text-[11px] text-gray-300">
+          <span className="text-gray-500">Pode ver:</span>
+          <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={canInfo} onChange={(e) => setCanInfo(e.target.checked)} className="accent-emerald-500" /> Informações</label>
+          <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={canFolders} onChange={(e) => setCanFolders(e.target.checked)} className="accent-emerald-500" /> Pastas (download)</label>
+          <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={canRemote} onChange={(e) => setCanRemote(e.target.checked)} className="accent-emerald-500" /> Acesso remoto</label>
         </div>
         {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
+        <p className="text-[10px] text-gray-500 mt-1">Com senha, o terceiro faz login no portal. Sem senha, o link já abre direto.</p>
         <button onClick={add} disabled={busy || !name.trim()} className="mt-2 text-xs px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
           <Plus size={13} /> {busy ? "Salvando…" : "Cadastrar terceiro"}
         </button>
@@ -579,6 +657,13 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
 
               {manage?.id === t.id && (
                 <div className="mt-3 border-t border-white/10 pt-3">
+                  <div className="flex items-center gap-3 flex-wrap mb-3 text-[11px] text-gray-300 bg-black/20 rounded-lg p-2">
+                    <span className="text-gray-500">Permissões:</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={t.can_view_info} onChange={(e) => savePerms(t, { can_view_info: e.target.checked })} className="accent-emerald-500" /> Informações</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={t.can_view_folders} onChange={(e) => savePerms(t, { can_view_folders: e.target.checked })} className="accent-emerald-500" /> Pastas (download)</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={t.can_view_remote} onChange={(e) => savePerms(t, { can_view_remote: e.target.checked })} className="accent-emerald-500" /> Acesso remoto</label>
+                    <button onClick={() => { const p = prompt("Nova senha para este terceiro (deixe vazio para manter):"); if (p) savePerms(t, {}, p); }} className="text-emerald-400 hover:text-emerald-300 cursor-pointer">trocar senha</button>
+                  </div>
                   <p className="text-[11px] text-gray-400 mb-2">Marque os clientes que este terceiro pode visualizar:</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-64 overflow-y-auto custom-scroll">
                     {clients.length === 0 && <p className="text-[11px] text-gray-600">Nenhum cliente cadastrado.</p>}
