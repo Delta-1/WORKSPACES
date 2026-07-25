@@ -120,6 +120,8 @@ export type Client = {
   folder_id: string | null;
   created_by: string | null;
   created_at: string;
+  third_party_id?: string | null;
+  status?: string | null;
 };
 
 export type CalendarEvent = {
@@ -234,6 +236,7 @@ export type WhatsappMessageRow = {
 
 export type Chatbot = {
   id: string;
+  company_id: string | null;
   name: string;
   persona: string | null;
   instructions: string | null;

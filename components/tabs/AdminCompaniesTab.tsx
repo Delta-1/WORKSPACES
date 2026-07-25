@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, Copy, Eye, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { Building2, ChevronRight, Copy, Eye, KeyRound, Monitor, Power, RefreshCw, Search, ShieldCheck, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
+import ConfirmReasonModal from "@/components/ConfirmReasonModal";
 import type { RemoteAgent } from "@/lib/types";
 
 type Company = { company_id: string; name: string; company_code: string | null; plan: string | null; segment: string | null; status: string | null; license_until: string | null; monthly_price: number | null; users: number; clients: number; agents: number; created_at: string };
@@ -21,6 +22,15 @@ export default function AdminCompaniesTab() {
   const [keys, setKeys] = useState<AiKeys>({ provider: "anthropic", api_key: "", elevenlabs_key: "", elevenlabs_voice_id: "" });
   const [savedKeys, setSavedKeys] = useState(false);
   const [liveAgent, setLiveAgent] = useState<RemoteAgent | null>(null); // ver máquina ao vivo (Admin)
+  const [deleting, setDeleting] = useState<Company | null>(null); // empresa a excluir (com motivo)
+
+  async function deleteCompany(c: Company, reason: string) {
+    if (!supabase) return;
+    const { error } = await supabase.rpc("admin_delete_company", { p_company_id: c.company_id, p_reason: reason });
+    if (error) throw error;
+    setRows((cur) => cur.filter((r) => r.company_id !== c.company_id));
+    setOpen(null);
+  }
 
   // Constrói um RemoteAgent a partir do que a listagem admin traz, com controle
   // total (o Admin Geral pode ver/controlar para suporte).
@@ -173,9 +183,31 @@ export default function AdminCompaniesTab() {
                   </div>
                 ))}
               </div>
+
+              {/* Zona de perigo — excluir a empresa (pede confirmação + motivo, grava no log) */}
+              <div className="pt-3 mt-1 border-t border-red-500/20">
+                <p className="text-[11px] uppercase tracking-wider text-red-400/80 mb-1.5 flex items-center gap-1"><Trash2 size={12} /> Zona de perigo</p>
+                <button
+                  onClick={() => setDeleting(open)}
+                  className="text-[11px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600/20 text-red-300 hover:bg-red-600/40 cursor-pointer"
+                >
+                  <Trash2 size={13} /> Excluir esta empresa
+                </button>
+                <p className="text-[10px] text-gray-500 mt-1">Apaga a empresa e todos os dados dela. Os usuários ficam sem empresa (não são apagados).</p>
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {deleting && (
+        <ConfirmReasonModal
+          title="Excluir empresa"
+          message={`Tem certeza que deseja excluir "${deleting.name}"? Esta ação não pode ser desfeita.`}
+          confirmLabel="Excluir empresa"
+          onConfirm={(reason) => deleteCompany(deleting, reason)}
+          onClose={() => setDeleting(null)}
+        />
       )}
 
       {liveAgent && <RemoteViewer agent={liveAgent} onClose={() => setLiveAgent(null)} />}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Eye, Monitor, Video, RefreshCw, Search, X } from "lucide-react";
+import { Eye, Monitor, RefreshCw, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { RemoteAgent } from "@/lib/types";
@@ -9,7 +9,6 @@ import type { RemoteAgent } from "@/lib/types";
 type Row = { id: string; name: string; os: string | null; status: string | null; last_seen: string | null; company_id: string | null; company_name: string | null };
 
 const THUMB = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
-const CAM = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-cams`;
 
 function online(r: Row) {
   return r.status === "online" && !!r.last_seen && Date.now() - new Date(r.last_seen).getTime() < 120000;
@@ -30,7 +29,6 @@ export default function GodsEyeTab() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
-  const [filter, setFilter] = useState<"tela" | "camera">("tela");
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<Row | null>(null);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
@@ -47,7 +45,7 @@ export default function GodsEyeTab() {
 
   const list = rows.filter((r) => `${r.name} ${r.company_name ?? ""} ${r.os ?? ""}`.toLowerCase().includes(q.toLowerCase()));
   const onlineCount = rows.filter(online).length;
-  const src = (r: Row) => `${filter === "camera" ? CAM : THUMB}/${r.id}.jpg?v=${tick}`;
+  const src = (r: Row) => `${THUMB}/${r.id}.jpg?v=${tick}`;
 
   return (
     <div className="h-full overflow-y-auto custom-scroll p-4 md:p-6">
@@ -59,21 +57,11 @@ export default function GodsEyeTab() {
         <p className="text-[12px] text-gray-400 mb-3">Telas ao vivo de todos os clientes. {onlineCount} online. Só você vê isto.</p>
 
         <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <div className="flex bg-black/20 border border-white/10 rounded-lg p-0.5">
-            <button onClick={() => setFilter("tela")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer flex items-center gap-1.5 ${filter === "tela" ? "bg-red-600/40 text-red-200" : "text-gray-400"}`}><Monitor size={13} /> Tela</button>
-            <button onClick={() => setFilter("camera")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer flex items-center gap-1.5 ${filter === "camera" ? "bg-red-600/40 text-red-200" : "text-gray-400"}`}><Video size={13} /> Câmera</button>
-          </div>
           <div className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-1.5 flex-1 max-w-xs">
             <Search size={14} className="text-gray-400" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar máquina/empresa…" className="bg-transparent outline-none text-sm w-full" />
           </div>
         </div>
-
-        {filter === "camera" && (
-          <p className="text-[11px] text-amber-300/80 mb-3 bg-amber-950/20 border border-amber-800/40 rounded-lg px-3 py-2">
-            As câmeras aparecem aqui assim que o agente atualizado começar a enviar a imagem da câmera. (Precisa do rebuild do app do cliente.)
-          </p>
-        )}
 
         {loading ? <p className="text-sm text-gray-500 text-center py-10">Carregando…</p> : list.length === 0 ? (
           <p className="text-sm text-gray-500 text-center py-10">Nenhuma máquina encontrada.</p>

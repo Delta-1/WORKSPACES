@@ -22,6 +22,7 @@ export default function ChatbotSection() {
   const [files, setFiles] = useState<FileNodeRow[]>([]);
   const [voices, setVoices] = useState<{ id: string; name: string; voice_id: string }[]>([]);
   const [customVoice, setCustomVoice] = useState(false); // "Outro (ID próprio)" selecionado
+  const [companyVoice, setCompanyVoice] = useState<string>(""); // voz padrão da empresa
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -45,6 +46,8 @@ export default function ChatbotSection() {
     if (supabase) {
       supabase.from("global_voices").select("id,name,voice_id").order("name")
         .then(({ data }) => setVoices((data as { id: string; name: string; voice_id: string }[]) ?? []));
+      supabase.from("company_settings").select("default_voice_id").limit(1).maybeSingle()
+        .then(({ data }) => setCompanyVoice((data?.default_voice_id as string) ?? ""));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -280,7 +283,7 @@ export default function ChatbotSection() {
               }}
               className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
             >
-              <option value="">Padrão do sistema</option>
+              <option value="">Padrão (empresa → sistema)</option>
               {voices.map((v) => <option key={v.id} value={v.voice_id}>{v.name}</option>)}
               <option value="__custom__">Outro (ID próprio)…</option>
             </select>
@@ -298,6 +301,28 @@ export default function ChatbotSection() {
           Pegue a chave em elevenlabs.io → API Keys. O plano grátis pode bloquear voz a partir de servidores; se a voz
           não sair, use um plano pago (o mais barato já resolve).
         </p>
+
+        {/* Voz padrão da EMPRESA — usada por qualquer bot que esteja em "Padrão". */}
+        <div className="border-t border-white/10 pt-4">
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+            <Volume2 size={13} /> Voz padrão da empresa
+          </label>
+          <select
+            value={companyVoice}
+            onChange={async (e) => {
+              const val = e.target.value;
+              setCompanyVoice(val);
+              if (supabase && bot?.company_id) {
+                await supabase.from("company_settings").update({ default_voice_id: val || null }).eq("company_id", bot.company_id);
+              }
+            }}
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none max-w-sm"
+          >
+            <option value="">Voz global do sistema</option>
+            {voices.map((v) => <option key={v.id} value={v.voice_id}>{v.name}</option>)}
+          </select>
+          <p className="text-[11px] text-gray-500 mt-1">Cada bot pode ter a própria voz; quando ele fica em &quot;Padrão&quot;, usa esta voz da empresa (e, se vazia, a voz global do sistema).</p>
+        </div>
       </div>
 
       {/* Pasta / grafo próprio do chatbot */}

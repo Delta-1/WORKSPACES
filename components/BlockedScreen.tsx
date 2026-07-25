@@ -50,10 +50,14 @@ export default function BlockedScreen({ company, isOwner, onLogout }: { company:
         <div className="w-16 h-16 rounded-2xl bg-red-950/50 border border-red-500/30 flex items-center justify-center mx-auto mb-5">
           <Lock size={30} className="text-red-400" />
         </div>
-        <h1 className="text-2xl font-bold">Acesso suspenso</h1>
+        <h1 className="text-2xl font-bold">{company.subscription_status === "pending" ? "Falta o pagamento" : "Acesso suspenso"}</h1>
         <p className="text-gray-400 text-sm mt-2">
-          A assinatura de <b className="text-gray-200">{company.name}</b> está{" "}
-          {company.subscription_status === "past_due" ? "com pagamento atrasado" : "pausada ou cancelada"}.
+          {company.subscription_status === "pending" ? (
+            <>Para liberar <b className="text-gray-200">{company.name}</b> e começar seus 3 dias grátis, conclua o pagamento abaixo.</>
+          ) : (
+            <>A assinatura de <b className="text-gray-200">{company.name}</b> está{" "}
+            {company.subscription_status === "past_due" ? "com pagamento atrasado" : "pausada ou cancelada"}.</>
+          )}
         </p>
 
         {isOwner ? (

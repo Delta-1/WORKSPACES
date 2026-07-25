@@ -613,18 +613,26 @@ const QUALITY = {
 
 async function captureScreen(sourceId) {
   const q = QUALITY[currentQuality] || QUALITY.alta;
-  return navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      mandatory: {
-        chromeMediaSource: "desktop",
-        chromeMediaSourceId: sourceId,
-        maxWidth: q.maxWidth,
-        maxHeight: q.maxHeight,
-        maxFrameRate: q.maxFrameRate,
-      },
+  const video = {
+    mandatory: {
+      chromeMediaSource: "desktop",
+      chromeMediaSourceId: sourceId,
+      maxWidth: q.maxWidth,
+      maxHeight: q.maxHeight,
+      maxFrameRate: q.maxFrameRate,
     },
-  });
+  };
+  // Tenta capturar também o ÁUDIO DO SISTEMA (o som que SAI da máquina — o que
+  // toca no computador). NÃO é o microfone/ambiente. Se o SO não permitir o
+  // loopback, cai para vídeo-só sem quebrar a transmissão.
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { mandatory: { chromeMediaSource: "desktop" } },
+      video,
+    });
+  } catch {
+    return navigator.mediaDevices.getUserMedia({ audio: false, video });
+  }
 }
 
 // Troca a resolução/qualidade da transmissão sem reconectar (menos lag).

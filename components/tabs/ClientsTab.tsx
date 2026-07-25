@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Cpu, FolderTree, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, MemoryStick, MessageSquare, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -130,24 +130,29 @@ function AgentInfoPanel({ agent }: { agent: RemoteAgent }) {
   );
 }
 
-export default function ClientsTab({ profile }: { profile: Profile | null }) {
+export default function ClientsTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
   const [hovered, setHovered] = useState<RemoteAgent | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [companyCode, setCompanyCode] = useState<string>("");
+  const [subtab, setSubtab] = useState<"clientes" | "terceiros">("clientes");
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    const [cRes, aRes] = await Promise.all([
+    const [cRes, aRes, coRes] = await Promise.all([
       supabase.from("clients").select("*").eq("company_id", companyId).order("name"),
       supabase.from("remote_agents").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
+      supabase.from("companies").select("company_code").eq("id", companyId).maybeSingle(),
     ]);
     setClients((cRes.data as Client[]) ?? []);
     setAgents((aRes.data as RemoteAgent[]) ?? []);
+    setCompanyCode((coRes.data?.company_code as string) ?? "");
   }, [companyId]);
 
   useEffect(() => {
@@ -210,6 +215,15 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
           </div>
           {canManage && (
             <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/15 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
+              title="Link do formulário público para seus clientes se cadastrarem"
+            >
+              <ClipboardList size={14} /> Formulário
+            </button>
+          )}
+          {canManage && (
+            <button
               onClick={() => setAdding(true)}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
             >
@@ -219,6 +233,16 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
         </div>
       </div>
 
+      {canManage && (
+        <div className="flex items-center gap-1 bg-black/20 rounded-lg p-1 self-start">
+          <button onClick={() => setSubtab("clientes")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "clientes" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Clientes</button>
+          <button onClick={() => setSubtab("terceiros")} className={`text-xs px-3 py-1.5 rounded-md cursor-pointer ${subtab === "terceiros" ? "bg-emerald-600/40 text-emerald-200" : "text-gray-400"}`}>Acesso de terceiros</button>
+        </div>
+      )}
+
+      {subtab === "terceiros" && canManage ? (
+        <ThirdPartiesManager companyId={companyId} clients={clients} onChanged={load} />
+      ) : (
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
         {filtered.length === 0 && (
           <p className="text-sm text-gray-500 italic col-span-full text-center py-8">
@@ -247,11 +271,22 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
                     )}
                   </div>
                 </div>
-                {canManage && (
-                  <button onClick={() => removeClient(c.id)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
-                    <Trash2 size={14} />
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {c.phone && onOpenMessages && (
+                    <button
+                      onClick={() => onOpenMessages(c.phone as string, c.name)}
+                      title="Abrir conversa no Mensagens"
+                      className="flex items-center gap-1 text-[10px] bg-green-700/70 hover:bg-green-600 text-white px-1.5 py-1 rounded cursor-pointer"
+                    >
+                      <MessageSquare size={11} /> Mensagem
+                    </button>
+                  )}
+                  {canManage && (
+                    <button onClick={() => removeClient(c.id)} className="text-gray-500 hover:text-red-400 cursor-pointer">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {canManage && c.folder_id && <ClientUpload client={c} companyId={companyId} />}
@@ -321,8 +356,10 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
           );
         })}
       </div>
+      )}
 
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
+      {showForm && <FormLinkModal code={companyCode} onClose={() => setShowForm(false)} />}
       {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} />}
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
@@ -461,6 +498,141 @@ function AddClientModal({
             className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
           >
             {saving ? "Salvando..." : "Salvar cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ACESSO DE TERCEIROS (espelha o modelo GestaSheet): a empresa cadastra terceiros
+// (ex.: contabilidades), gera o link de cada um e atribui clientes. O terceiro
+// abre o link e vê só os clientes dele (leitura), em /terceiros/<código>.
+type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string };
+function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: string | null; clients: Client[]; onChanged: () => void }) {
+  const [tps, setTps] = useState<ThirdParty[]>([]);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [manage, setManage] = useState<ThirdParty | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase || !companyId) return;
+    const { data } = await supabase.from("third_parties").select("*").eq("company_id", companyId).order("name");
+    setTps((data as ThirdParty[]) ?? []);
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function add() {
+    if (!supabase || !name.trim()) return;
+    setBusy(true); setError(null);
+    const { error } = await supabase.rpc("create_third_party", { p_name: name.trim(), p_email: email.trim() || null });
+    setBusy(false);
+    if (error) { setError(error.message); return; }
+    setName(""); setEmail(""); load();
+  }
+  async function removeTp(id: string) {
+    if (!supabase) return;
+    if (!confirm("Remover este terceiro? Os clientes atribuídos ficam sem terceiro (não são apagados).")) return;
+    await supabase.from("third_parties").delete().eq("id", id);
+    load(); onChanged();
+  }
+  function linkOf(code: string) { return typeof window !== "undefined" ? `${window.location.origin}/terceiros/${code}` : ""; }
+  function copyLink(code: string) { navigator.clipboard?.writeText(linkOf(code)); setCopied(code); setTimeout(() => setCopied(null), 1600); }
+
+  const countFor = (id: string) => clients.filter((c) => c.third_party_id === id).length;
+
+  return (
+    <div className="flex-1 overflow-y-auto custom-scroll">
+      <div className="bg-black/20 border border-white/10 rounded-xl p-3 mb-4 max-w-2xl">
+        <p className="text-xs font-semibold mb-2 flex items-center gap-1.5"><UserPlus size={14} className="text-emerald-400" /> Novo terceiro (ex.: contabilidade)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do terceiro *" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail (opcional)" className="bg-black/30 border border-white/10 rounded px-2 py-2 text-sm outline-none" />
+        </div>
+        {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
+        <button onClick={add} disabled={busy || !name.trim()} className="mt-2 text-xs px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+          <Plus size={13} /> {busy ? "Salvando…" : "Cadastrar terceiro"}
+        </button>
+      </div>
+
+      {tps.length === 0 ? (
+        <p className="text-sm text-gray-500 text-center py-8">Nenhum terceiro cadastrado ainda.</p>
+      ) : (
+        <div className="space-y-2 max-w-2xl">
+          {tps.map((t) => (
+            <div key={t.id} className="bg-black/20 border border-white/5 rounded-xl p-3">
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-lg bg-emerald-950/50 flex items-center justify-center shrink-0"><Building2 size={16} className="text-emerald-300" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold truncate">{t.name}</p>
+                  <p className="text-[11px] text-gray-500 truncate">{t.email || "sem e-mail"} · {countFor(t.id)} cliente(s)</p>
+                </div>
+                <button onClick={() => copyLink(t.access_code)} className="text-[11px] flex items-center gap-1 px-2 py-1 rounded bg-white/10 hover:bg-white/20 cursor-pointer" title="Copiar link do portal do terceiro">
+                  {copied === t.access_code ? <><CheckIcon size={12} /> Copiado</> : <><Copy size={12} /> Link</>}
+                </button>
+                <button onClick={() => setManage(manage?.id === t.id ? null : t)} className="text-[11px] px-2 py-1 rounded bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600/50 cursor-pointer">Clientes</button>
+                <button onClick={() => removeTp(t.id)} className="text-gray-500 hover:text-red-400 cursor-pointer" title="Remover"><Trash2 size={14} /></button>
+              </div>
+
+              {manage?.id === t.id && (
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <p className="text-[11px] text-gray-400 mb-2">Marque os clientes que este terceiro pode visualizar:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-64 overflow-y-auto custom-scroll">
+                    {clients.length === 0 && <p className="text-[11px] text-gray-600">Nenhum cliente cadastrado.</p>}
+                    {clients.map((c) => {
+                      const assigned = c.third_party_id === t.id;
+                      return (
+                        <label key={c.id} className="flex items-center gap-2 text-[12px] cursor-pointer rounded px-2 py-1 hover:bg-white/5">
+                          <input
+                            type="checkbox"
+                            checked={assigned}
+                            onChange={async () => {
+                              if (!supabase) return;
+                              await supabase.from("clients").update({ third_party_id: assigned ? null : t.id }).eq("id", c.id);
+                              onChanged();
+                            }}
+                            className="accent-emerald-500"
+                          />
+                          <span className="truncate">{c.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Mostra o LINK do formulário público de cadastro de clientes para compartilhar.
+function FormLinkModal({ code, onClose }: { code: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const link = typeof window !== "undefined" && code ? `${window.location.origin}/cadastro/${code}` : "";
+  function copy() {
+    if (!link) return;
+    navigator.clipboard?.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="liquid-glass rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h4 className="text-base font-bold flex items-center gap-2"><ClipboardList size={18} className="text-emerald-400" /> Formulário de cadastro</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <p className="text-sm text-gray-400">Compartilhe este link com seus clientes. Quem preencher entra direto na sua base de Clientes — sem precisar de login.</p>
+        <div className="bg-black/30 border border-white/10 rounded-lg p-3 text-xs font-mono break-all text-emerald-300">{link || "Gerando…"}</div>
+        <div className="flex justify-end gap-2">
+          <button onClick={copy} disabled={!link} className="flex items-center gap-2 text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
+            {copied ? <><CheckIcon size={14} /> Copiado</> : <><Copy size={14} /> Copiar link</>}
           </button>
         </div>
       </div>
