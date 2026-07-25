@@ -92,6 +92,7 @@ export default function Home() {
   const [showSplash, setShowSplash] = useState(false);
   const [showTV, setShowTV] = useState(false);
   const [tab, setTab] = useState("inicio");
+  const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false); // copiloto de voz global (tecla "v")
   const [editApps, setEditApps] = useState(false); // modo edição (lápis) do menu de apps
@@ -477,14 +478,14 @@ export default function Home() {
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "calendario" && <CalendarTab profile={profile} />}
-        {tab === "mensagens" && <MessagesTab profile={profile} />}
+        {tab === "mensagens" && <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
         {tab === "mural" && <AnnouncementsTab profile={profile} />}
         {tab === "funcionarios" && <EmployeesTab profile={profile} />}
         {tab === "financeiro" && <FinanceTab profile={profile} />}
-        {tab === "clientes" && <ClientsTab profile={profile} />}
+        {tab === "clientes" && <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}
         {tab === "godseye" && superAdmin && <GodsEyeTab />}

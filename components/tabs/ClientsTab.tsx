@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, MemoryStick, MessageSquare, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -130,7 +130,7 @@ function AgentInfoPanel({ agent }: { agent: RemoteAgent }) {
   );
 }
 
-export default function ClientsTab({ profile }: { profile: Profile | null }) {
+export default function ClientsTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
   const [query, setQuery] = useState("");
@@ -260,11 +260,22 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
                     )}
                   </div>
                 </div>
-                {canManage && (
-                  <button onClick={() => removeClient(c.id)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0">
-                    <Trash2 size={14} />
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {c.phone && onOpenMessages && (
+                    <button
+                      onClick={() => onOpenMessages(c.phone as string, c.name)}
+                      title="Abrir conversa no Mensagens"
+                      className="flex items-center gap-1 text-[10px] bg-green-700/70 hover:bg-green-600 text-white px-1.5 py-1 rounded cursor-pointer"
+                    >
+                      <MessageSquare size={11} /> Mensagem
+                    </button>
+                  )}
+                  {canManage && (
+                    <button onClick={() => removeClient(c.id)} className="text-gray-500 hover:text-red-400 cursor-pointer">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {canManage && c.folder_id && <ClientUpload client={c} companyId={companyId} />}

@@ -50,7 +50,7 @@ function mediaTypeFromMime(mime: string): WhatsappMediaType {
 
 const EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😉 🙂 😢 😭 😡 👍 👎 🙏 👏 🙌 💪 🔥 ✅ ❌ ⚠️ 🎉 ❤️ 💚 💙 💛 ⭐ 💯 👀 🤝 🫡 😴 🥳 😱 🤦 🤷 👌 ✌️ 🤙 📌 📎 📞 💬 ⏰ 💰 🚀".split(" ");
 
-export default function MessagesTab({ profile }: { profile: Profile | null }) {
+export default function MessagesTab({ profile, openTarget, onTargetHandled }: { profile: Profile | null; openTarget?: { phone: string; name: string } | null; onTargetHandled?: () => void }) {
   const [server, setServer] = useState<string>("whatsapp"); // "whatsapp" | "equipe" | <groupId>
   const [conversations, setConversations] = useState<ConvRow[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -436,6 +436,19 @@ export default function MessagesTab({ profile }: { profile: Profile | null }) {
     setServer(numberId ? `wa:${numberId}` : "whatsapp");
     if (convId) openConv(convId);
   }
+
+  // Abertura vinda de fora (ex.: botão "Mensagens" no card do cliente): abre a
+  // conversa daquele telefone (cria o contato/conversa se ainda não existir).
+  const handledTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = openTarget ? `${openTarget.phone}|${openTarget.name}` : null;
+    if (key && handledTargetRef.current !== key) {
+      handledTargetRef.current = key;
+      startChat(openTarget!.phone, openTarget!.name || "");
+      onTargetHandled?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTarget]);
 
   async function authHeaders(): Promise<Record<string, string>> {
     if (!supabase) return {};
