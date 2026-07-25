@@ -85,6 +85,14 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
   const [fs, setFs] = useState(false); // tela cheia (qualquer acesso, não só game)
+  // Ponteiro fantasma animado: quando o Orb mira/clica, um pontinho brilhante
+  // desliza até o alvo (parece humano). x,y em fração 0..1 da área do vídeo.
+  const [ghost, setGhost] = useState<{ x: number; y: number; click: number } | null>(null);
+  const ghostClickRef = useRef(0);
+  function showGhost(x: number, y: number, click = false) {
+    if (click) ghostClickRef.current += 1;
+    setGhost({ x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), click: ghostClickRef.current });
+  }
   const [volume, setVolume] = useState(1); // áudio LIGADO por padrão; botão só ajusta o volume
   useEffect(() => { if (videoRef.current) videoRef.current.volume = volume; }, [volume]);
   const [homeGame, setHomeGame] = useState(false); // Modo Game só na conta Casa e ligado nas configs
@@ -434,6 +442,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
     if (a.kind === "moveat" && a.x != null && a.y != null) {
       // SÓ move o cursor (não clica). A IA usa isto para mirar e conferir no próximo
       // print se o cursor caiu no elemento certo, antes de clicar.
+      showGhost(a.x, a.y);
       sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
       await wait(200);
       return "movi o cursor até o ponto (sem clicar)";
@@ -441,14 +450,18 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
     if (a.kind === "clickat" && a.x != null && a.y != null) {
       // Clique num ponto da tela (coordenadas 0..1 que a IA viu no print).
       // smooth: o cursor DESLIZA até o ponto (parece humano) e é bem mais preciso.
+      showGhost(a.x, a.y);
       sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
       await wait(360);
+      showGhost(a.x, a.y, true);
       sendInput({ kind: "click", button: 0 });
       return "cliquei no ponto";
     }
     if (a.kind === "doubleclickat" && a.x != null && a.y != null) {
+      showGhost(a.x, a.y);
       sendInput({ kind: "move", x: Math.max(0, Math.min(1, a.x)), y: Math.max(0, Math.min(1, a.y)), smooth: true });
       await wait(360);
+      showGhost(a.x, a.y, true);
       sendInput({ kind: "click", button: 0 });
       await wait(90);
       sendInput({ kind: "click", button: 0 });
@@ -739,6 +752,17 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame }: {
               for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
             }}
           />
+
+          {/* Ponteiro fantasma do Orb — desliza até o alvo, com "ping" ao clicar. */}
+          {ghost && (
+            <div
+              className="pointer-events-none absolute z-[95] -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ease-out"
+              style={{ left: `${ghost.x * 100}%`, top: `${ghost.y * 100}%` }}
+            >
+              <span className="block w-4 h-4 rounded-full bg-emerald-400/90 shadow-[0_0_14px_4px_rgba(16,185,129,0.7)] ring-2 ring-white/70" />
+              <span key={ghost.click} className="absolute inset-0 rounded-full ring-2 ring-emerald-300/80 animate-ping" style={{ animationIterationCount: 1 }} />
+            </div>
+          )}
 
           {progress && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 border border-white/10 rounded-lg px-3 py-2 w-64 max-w-[80%]">
