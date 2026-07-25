@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, Cpu, FolderTree, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
+import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, MemoryStick, Monitor, Plus, Search, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
@@ -137,17 +137,21 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
   const [hovered, setHovered] = useState<RemoteAgent | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [companyCode, setCompanyCode] = useState<string>("");
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    const [cRes, aRes] = await Promise.all([
+    const [cRes, aRes, coRes] = await Promise.all([
       supabase.from("clients").select("*").eq("company_id", companyId).order("name"),
       supabase.from("remote_agents").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
+      supabase.from("companies").select("company_code").eq("id", companyId).maybeSingle(),
     ]);
     setClients((cRes.data as Client[]) ?? []);
     setAgents((aRes.data as RemoteAgent[]) ?? []);
+    setCompanyCode((coRes.data?.company_code as string) ?? "");
   }, [companyId]);
 
   useEffect(() => {
@@ -208,6 +212,15 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
               className="bg-transparent outline-none text-xs w-56"
             />
           </div>
+          {canManage && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/15 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"
+              title="Link do formulário público para seus clientes se cadastrarem"
+            >
+              <ClipboardList size={14} /> Formulário
+            </button>
+          )}
           {canManage && (
             <button
               onClick={() => setAdding(true)}
@@ -323,6 +336,7 @@ export default function ClientsTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
+      {showForm && <FormLinkModal code={companyCode} onClose={() => setShowForm(false)} />}
       {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} />}
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
@@ -461,6 +475,35 @@ function AddClientModal({
             className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60"
           >
             {saving ? "Salvando..." : "Salvar cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Mostra o LINK do formulário público de cadastro de clientes para compartilhar.
+function FormLinkModal({ code, onClose }: { code: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const link = typeof window !== "undefined" && code ? `${window.location.origin}/cadastro/${code}` : "";
+  function copy() {
+    if (!link) return;
+    navigator.clipboard?.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="liquid-glass rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h4 className="text-base font-bold flex items-center gap-2"><ClipboardList size={18} className="text-emerald-400" /> Formulário de cadastro</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <p className="text-sm text-gray-400">Compartilhe este link com seus clientes. Quem preencher entra direto na sua base de Clientes — sem precisar de login.</p>
+        <div className="bg-black/30 border border-white/10 rounded-lg p-3 text-xs font-mono break-all text-emerald-300">{link || "Gerando…"}</div>
+        <div className="flex justify-end gap-2">
+          <button onClick={copy} disabled={!link} className="flex items-center gap-2 text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50">
+            {copied ? <><CheckIcon size={14} /> Copiado</> : <><Copy size={14} /> Copiar link</>}
           </button>
         </div>
       </div>
