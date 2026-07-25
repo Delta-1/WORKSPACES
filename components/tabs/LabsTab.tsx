@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, BrainCircuit, FlaskConical, GitBranch, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
-import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi } from "@/lib/types";
+import RemoteViewer from "@/components/RemoteViewer";
+import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi, RemoteAgent } from "@/lib/types";
 
 async function authHeaders(): Promise<Record<string, string>> {
   if (!supabase) return {};
@@ -98,6 +99,8 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [editing, setEditing] = useState<Partial<Agent> | null>(null);
+  const [screenTeach, setScreenTeach] = useState<Agent | null>(null); // agente escolhido para ensinar por tela
+  const [teachMachine, setTeachMachine] = useState<RemoteAgent | null>(null); // máquina vinculada para a aula
   const [teaching, setTeaching] = useState<Agent | null>(null);
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
 
@@ -191,6 +194,9 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
               {canManage && (
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button onClick={() => setTeaching(ag)} className="text-[11px] text-emerald-300 hover:text-white cursor-pointer flex items-center gap-0.5" title="Treinar: conversar e ensinar o agente"><BrainCircuit size={12} /> treinar</button>
+                  {(ag.capabilities ?? []).includes("remote") && (
+                    <button onClick={() => setScreenTeach(ag)} className="text-[11px] text-fuchsia-300 hover:text-white cursor-pointer flex items-center gap-0.5" title="Ensinar por demonstração de tela (acesso remoto)"><Monitor size={12} /> ensinar tela</button>
+                  )}
                   <button onClick={() => setEditing(ag)} className="text-[11px] text-indigo-300 hover:text-white cursor-pointer">editar</button>
                   {!ag.slot && <button onClick={() => remove(ag.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={13} /></button>}
                 </div>
@@ -222,6 +228,15 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
 
       {editing && <AgentEditor agent={editing} profile={profile} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {teaching && <TeachModal agent={teaching} onClose={() => setTeaching(null)} />}
+      {screenTeach && !teachMachine && <MachinePicker companyId={profile?.company_id ?? null} onPick={(m) => setTeachMachine(m)} onClose={() => setScreenTeach(null)} />}
+      {screenTeach && teachMachine && (
+        <RemoteViewer
+          agent={teachMachine}
+          profile={profile}
+          teachBot={{ id: screenTeach.id as string, folder_id: (screenTeach as { folder_id?: string | null }).folder_id ?? null, name: screenTeach.name ?? "Agente" }}
+          onClose={() => { setTeachMachine(null); setScreenTeach(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -502,6 +517,45 @@ function TeachModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
           <button onClick={send} disabled={busy || !input.trim()} className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"><Save size={15} /></button>
         </div>
         <p className="text-[10px] text-gray-500 px-3 pb-2 -mt-1">Tudo que você ensina fica salvo em <b>treinamento.md</b> na memória do agente (aparece no grafo).</p>
+      </div>
+    </div>
+  );
+}
+
+// Escolhe qual COMPUTADOR (acesso remoto) vincular para a aula por demonstração.
+function MachinePicker({ companyId, onPick, onClose }: { companyId: string | null; onPick: (m: RemoteAgent) => void; onClose: () => void }) {
+  const [machines, setMachines] = useState<RemoteAgent[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!supabase || !companyId) { setLoading(false); return; }
+    supabase.from("remote_agents").select("*").eq("company_id", companyId).order("created_at", { ascending: false })
+      .then(({ data }) => { setMachines((data as RemoteAgent[]) ?? []); setLoading(false); });
+  }, [companyId]);
+  const online = (a: RemoteAgent) => a.status === "online" && !!a.last_seen && Date.now() - new Date(a.last_seen).getTime() < 120000;
+  return (
+    <div className="fixed inset-0 z-[85] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-base font-bold flex items-center gap-2"><Monitor size={16} className="text-fuchsia-400" /> Vincular um computador</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <p className="text-[11px] text-gray-400 mb-3">Escolha a máquina onde você vai demonstrar. Você controla, e cada clique/digitação vira um passo da aula.</p>
+        {loading ? <p className="text-sm text-gray-500">Carregando…</p> : machines.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-4">Nenhum computador no acesso remoto ainda.</p>
+        ) : (
+          <div className="space-y-1.5 max-h-72 overflow-y-auto custom-scroll">
+            {machines.map((m) => {
+              const on = online(m);
+              return (
+                <button key={m.id} onClick={() => on && onPick(m)} disabled={!on} className="w-full flex items-center gap-2 bg-black/20 rounded-lg p-2.5 text-left hover:bg-white/5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span className={`w-2 h-2 rounded-full ${on ? "bg-emerald-400" : "bg-gray-600"}`} />
+                  <span className="text-sm truncate flex-1">{m.name}</span>
+                  <span className="text-[10px] text-gray-500">{on ? "online" : "offline"}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
