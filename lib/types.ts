@@ -234,6 +234,7 @@ export type WhatsappMessageRow = {
 
 export type Chatbot = {
   id: string;
+  company_id: string | null;
   name: string;
   persona: string | null;
   instructions: string | null;

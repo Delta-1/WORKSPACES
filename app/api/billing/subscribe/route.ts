@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseForRequest, supabaseService } from "@/lib/supabase-server";
+import { planPrice, RECOMMENDED_WA_LIMIT, type FeatureId } from "@/lib/plan";
 
 export const runtime = "nodejs";
 
@@ -12,8 +13,7 @@ export const runtime = "nodejs";
 // cliente libera o acesso para testes (fluxo atual mantido).
 export async function POST(request: Request) {
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
-  const { aiAddon, amount, companyId, companyName, method } = (await request.json().catch(() => ({}))) as {
-    aiAddon?: boolean;
+  const { amount, companyId, companyName, method } = (await request.json().catch(() => ({}))) as {
     amount?: number;
     companyId?: string;
     companyName?: string;
@@ -33,9 +33,24 @@ export async function POST(request: Request) {
   }
 
   const origin = request.headers.get("origin") ?? new URL(request.url).origin;
-  const value = typeof amount === "number" && amount > 0 ? amount : 50;
-  const reason = `Workspace — ${companyName || "Plano Base"}${aiAddon ? " + IA" : ""}`;
   const svc = supabaseService();
+
+  // Valor da cobrança = preço do plano que a empresa ligou (ferramentas + números
+  // de WhatsApp). Assim o Pix/cartão sempre cobram o valor certo, sem depender do
+  // que o cliente mandou. Se não der pra ler, cai no valor enviado ou num mínimo.
+  let value = typeof amount === "number" && amount > 0 ? amount : 50;
+  if (companyId && svc) {
+    const { data: st } = await svc
+      .from("company_settings")
+      .select("enabled_features, wa_number_limit")
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (st?.enabled_features) {
+      const computed = planPrice((st.enabled_features as FeatureId[]) ?? [], st.wa_number_limit ?? RECOMMENDED_WA_LIMIT);
+      if (computed > 0) value = computed;
+    }
+  }
+  const reason = `Workspace — ${companyName || "Plano"}`;
 
   try {
     // ─── PIX (cobrança avulsa do mês) ───────────────────────────────────────
@@ -95,6 +110,9 @@ export async function POST(request: Request) {
           frequency_type: "months",
           transaction_amount: value,
           currency_id: "BRL",
+          // 3 dias grátis: o cartão é registrado e o acesso libera na autorização,
+          // mas a primeira cobrança só acontece depois do período de teste.
+          free_trial: { frequency: 3, frequency_type: "days" },
         },
         back_url: origin,
         payer_email: payerEmail || undefined,

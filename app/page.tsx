@@ -57,7 +57,7 @@ const APPS: AppDef[] = [
   { id: "funcionarios", label: "Funcionários", icon: Users, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "financeiro", label: "Financeiro", icon: Wallet, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes", label: "Clientes", icon: Building2, accent: "bg-lime-800/60", roles: ["gestor", "gerente"] },
-  { id: "clientes_ia", label: "Clientes.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
+  { id: "clientes_ia", label: "Work.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
   { id: "labs", label: "Labs", icon: FlaskConical, accent: "bg-indigo-900/60", roles: ["gestor", "gerente"] },
@@ -400,7 +400,9 @@ export default function Home() {
     const st = myCompany.subscription_status;
     const licMs = myCompany.license_until ? new Date(myCompany.license_until).getTime() : null;
     const expired = licMs !== null && licMs < Date.now();
-    const blocked = !isHome && st !== "trial" && (st === "blocked" || st === "past_due" || expired);
+    // "pending" = escolheu o plano mas ainda NÃO pagou (ou voltou do Mercado Pago
+    // sem concluir). Nesse caso NÃO pode ver o site — vai para a tela de pagamento.
+    const blocked = !isHome && st !== "trial" && (st === "blocked" || st === "past_due" || st === "pending" || expired);
     if (blocked) {
       return <BlockedScreen company={myCompany} isOwner={myCompany.owner_id === profile.id} onLogout={handleLogout} />;
     }

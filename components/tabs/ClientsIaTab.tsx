@@ -16,9 +16,10 @@ type WorkUser = {
   created_at: string;
 };
 
-// Aba CLIENTES.IA — pessoas de fora que entraram pelo link público (Workspace.IA),
-// separadas dos clientes convencionais. Cada uma com nome de usuário + a máquina
-// (acesso remoto) vinculada, e quando entrou por último.
+// Aba WORK.IA — ferramenta adicional (NÃO tem relação com a aba Clientes): gera o
+// chat que controla o PC. Aqui aparecem as pessoas que entraram pelo link público
+// do Work.IA (login próprio), cada uma com o nome de usuário + a máquina (acesso
+// remoto) vinculada, e quando entrou por último.
 export default function ClientsIaTab({ profile }: { profile: Profile | null }) {
   const [users, setUsers] = useState<WorkUser[]>([]);
   const [q, setQ] = useState("");
@@ -39,7 +40,7 @@ export default function ClientsIaTab({ profile }: { profile: Profile | null }) {
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-lg font-bold flex items-center gap-2"><Bot size={18} className="text-indigo-400" /> Clientes.IA</h2>
+        <h2 className="text-lg font-bold flex items-center gap-2"><Bot size={18} className="text-indigo-400" /> Work.IA</h2>
         <button onClick={load} className="p-2 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300" title="Atualizar"><RefreshCw size={15} /></button>
       </div>
       <p className="text-[12px] text-gray-400 mb-4">Usuários que entraram pelo seu link público do Workspace.IA (com login próprio). Cada máquina aparece com o nome da pessoa + o nome do computador.</p>
