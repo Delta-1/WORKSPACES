@@ -592,7 +592,7 @@ function AddClientModal({
 // ACESSO DE TERCEIROS (espelha o modelo GestaSheet): a empresa cadastra terceiros
 // (ex.: contabilidades), gera o link de cada um e atribui clientes. O terceiro
 // abre o link e vê só os clientes dele (leitura), em /terceiros/<código>.
-type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string; login_email: string | null; can_view_info: boolean; can_view_folders: boolean; can_view_remote: boolean };
+type ThirdParty = { id: string; name: string; email: string | null; access_code: string; created_at: string; login_email: string | null; can_view_info: boolean; can_view_folders: boolean; can_view_remote: boolean; visible_folders: string[] | null };
 function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: string | null; clients: Client[]; onChanged: () => void }) {
   const [tps, setTps] = useState<ThirdParty[]>([]);
   const [name, setName] = useState("");
@@ -631,6 +631,13 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
       p_id: t.id, p_login_email: merged.login_email ?? merged.email ?? null, p_password: newPassword?.trim() || null,
       p_can_info: merged.can_view_info, p_can_folders: merged.can_view_folders, p_can_remote: merged.can_view_remote,
     });
+    load();
+  }
+  async function saveFolders(t: ThirdParty, folder: string) {
+    if (!supabase) return;
+    const cur = t.visible_folders ?? [];
+    const next = cur.includes(folder) ? cur.filter((f) => f !== folder) : [...cur, folder];
+    await supabase.rpc("set_third_party_folders", { p_id: t.id, p_folders: next });
     load();
   }
   async function removeTp(id: string) {
@@ -694,6 +701,18 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
                     <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={t.can_view_remote} onChange={(e) => savePerms(t, { can_view_remote: e.target.checked })} className="accent-emerald-500" /> Acesso remoto</label>
                     <button onClick={() => { const p = prompt("Nova senha para este terceiro (deixe vazio para manter):"); if (p) savePerms(t, {}, p); }} className="text-emerald-400 hover:text-emerald-300 cursor-pointer">trocar senha</button>
                   </div>
+                  {t.can_view_folders && (
+                    <div className="flex items-center gap-2 flex-wrap mb-3 text-[11px] text-gray-300 bg-black/20 rounded-lg p-2">
+                      <span className="text-gray-500">Pastas visíveis:</span>
+                      {DEFAULT_CLIENT_SUBFOLDERS.map((folder) => {
+                        const on = !t.visible_folders || t.visible_folders.length === 0 || t.visible_folders.includes(folder);
+                        return (
+                          <label key={folder} className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={on} onChange={() => saveFolders(t, folder)} className="accent-emerald-500" /> {folder}</label>
+                        );
+                      })}
+                      <span className="text-[10px] text-gray-500">(nada marcado = todas)</span>
+                    </div>
+                  )}
                   <p className="text-[11px] text-gray-400 mb-2">Marque os clientes que este terceiro pode visualizar:</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-64 overflow-y-auto custom-scroll">
                     {clients.length === 0 && <p className="text-[11px] text-gray-600">Nenhum cliente cadastrado.</p>}
@@ -748,9 +767,12 @@ function ClientFormEditor({ companyId, onClose }: { companyId: string | null; on
   }, [companyId]);
 
   const uid = () => Math.random().toString(36).slice(2, 9);
-  function add() { setFields((f) => [...f, { id: uid(), label: "Novo campo", type: "short_text", required: false }]); }
+  function addType(type: string) { setFields((f) => [...f, { id: uid(), label: "Nova pergunta", type, required: false, options: type === "choice" ? ["Opção 1"] : undefined }]); }
   function patch(id: string, up: Partial<ExtraField>) { setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...up } : f))); }
   function remove(id: string) { setFields((fs) => fs.filter((f) => f.id !== id)); }
+  function move(id: string, dir: -1 | 1) {
+    setFields((fs) => { const i = fs.findIndex((f) => f.id === id); const j = i + dir; if (i < 0 || j < 0 || j >= fs.length) return fs; const c = [...fs]; [c[i], c[j]] = [c[j], c[i]]; return c; });
+  }
   async function save() {
     if (!supabase || !companyId) return;
     setSaving(true);
@@ -758,44 +780,74 @@ function ClientFormEditor({ companyId, onClose }: { companyId: string | null; on
     setSaving(false);
     onClose();
   }
+  const inputCls = "w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none";
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="liquid-glass rounded-2xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="text-base font-bold flex items-center gap-2"><Pencil size={16} className="text-emerald-400" /> Editar formulário de clientes</h4>
-          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+      <div className="liquid-glass rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+          <h4 className="text-base font-bold flex items-center gap-2"><Pencil size={16} className="text-emerald-400" /> Editor do formulário de clientes</h4>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-gray-400 hidden sm:flex items-center gap-1.5">Tema <input type="color" value={theme} onChange={(e) => setTheme(e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent" /></span>
+            <button onClick={save} disabled={saving} className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60">{saving ? "Salvando…" : "Salvar"}</button>
+            <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer"><X size={18} /></button>
+          </div>
         </div>
-        <p className="text-[11px] text-gray-400 mb-3">Nome, telefone, CNPJ/CPF, e-mail e observações já vêm no formulário. Aqui você adiciona campos extras e escolhe o tema.</p>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs text-gray-400">Tema:</span>
-          <input type="color" value={theme} onChange={(e) => setTheme(e.target.value)} className="w-7 h-7 rounded cursor-pointer bg-transparent" />
-        </div>
-        <div className="flex-1 overflow-y-auto custom-scroll space-y-2">
-          {!loaded ? <p className="text-sm text-gray-500">Carregando…</p> : fields.length === 0 ? (
-            <p className="text-[12px] text-gray-500 text-center py-4">Nenhum campo extra. Adicione abaixo.</p>
-          ) : fields.map((f) => (
-            <div key={f.id} className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
-              <div className="flex items-center gap-2">
-                <input value={f.label} onChange={(e) => patch(f.id, { label: e.target.value })} className="flex-1 bg-black/30 border border-white/10 rounded px-2 py-1.5 text-sm outline-none" placeholder="Rótulo do campo" />
-                <button onClick={() => remove(f.id)} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={14} /></button>
+
+        <div className="grid md:grid-cols-2 gap-0 flex-1 overflow-hidden">
+          {/* EDITOR */}
+          <div className="overflow-y-auto custom-scroll p-4 space-y-2 border-r border-white/10">
+            <p className="text-[11px] text-gray-400 mb-1">Nome, telefone, CNPJ/CPF, e-mail e observações já vêm no formulário. Adicione seus campos:</p>
+            {!loaded ? <p className="text-sm text-gray-500">Carregando…</p> : fields.map((f, idx) => (
+              <div key={f.id} className="bg-black/20 border border-white/10 rounded-xl p-3">
+                <div className="flex items-start gap-2">
+                  <div className="flex flex-col gap-0.5 pt-1 text-gray-500 text-[10px]">
+                    <button onClick={() => move(f.id, -1)} disabled={idx === 0} className="hover:text-white cursor-pointer disabled:opacity-30">▲</button>
+                    <button onClick={() => move(f.id, 1)} disabled={idx === fields.length - 1} className="hover:text-white cursor-pointer disabled:opacity-30">▼</button>
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <input value={f.label} onChange={(e) => patch(f.id, { label: e.target.value })} className="w-full bg-black/30 border border-white/10 rounded px-2 py-1.5 text-sm outline-none" placeholder="Pergunta / rótulo" />
+                    {f.type === "choice" && (
+                      <input value={(f.options ?? []).join(", ")} onChange={(e) => patch(f.id, { options: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} placeholder="opções separadas por vírgula" className="w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none" />
+                    )}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <select value={f.type} onChange={(e) => patch(f.id, { type: e.target.value })} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer">
+                        {FIELD_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+                      </select>
+                      <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"><input type="checkbox" checked={!!f.required} onChange={(e) => patch(f.id, { required: e.target.checked })} className="accent-emerald-500" /> Obrigatório</label>
+                    </div>
+                  </div>
+                  <button onClick={() => remove(f.id)} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0"><Trash2 size={14} /></button>
+                </div>
               </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <select value={f.type} onChange={(e) => patch(f.id, { type: e.target.value })} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer">
-                  {FIELD_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
-                </select>
-                <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"><input type="checkbox" checked={!!f.required} onChange={(e) => patch(f.id, { required: e.target.checked })} className="accent-emerald-500" /> Obrigatório</label>
-                {f.type === "choice" && (
-                  <input value={(f.options ?? []).join(", ")} onChange={(e) => patch(f.id, { options: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} placeholder="opções separadas por vírgula" className="flex-1 min-w-[160px] bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none" />
-                )}
+            ))}
+            <div className="rounded-xl p-2 bg-black/10 border border-dashed border-white/15">
+              <p className="text-[10px] text-gray-400 mb-1.5">Adicionar campo:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {FIELD_TYPES.map((t) => <button key={t.v} onClick={() => addType(t.v)} className="text-[11px] px-2 py-1 rounded-lg bg-white/10 hover:bg-emerald-600/40 cursor-pointer">+ {t.l}</button>)}
               </div>
             </div>
-          ))}
-          <button onClick={add} className="text-[11px] text-emerald-400 hover:text-emerald-300 cursor-pointer">+ adicionar campo</button>
-        </div>
-        <div className="flex justify-end gap-2 pt-3">
-          <button onClick={onClose} className="text-xs px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
-          <button onClick={save} disabled={saving} className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-60">{saving ? "Salvando…" : "Salvar formulário"}</button>
+          </div>
+
+          {/* PREVIEW ao vivo */}
+          <div className="overflow-y-auto custom-scroll p-4 bg-black/20">
+            <p className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Prévia</p>
+            <div className="rounded-2xl p-4 bg-black/30 border-t-4 space-y-3" style={{ borderTopColor: theme }}>
+              <p className="font-bold text-sm">Cadastro</p>
+              {["Nome / Razão social *", "Telefone", "CNPJ / CPF", "E-mail"].map((p) => (
+                <input key={p} disabled placeholder={p} className={inputCls} />
+              ))}
+              {fields.map((f) => (
+                <div key={f.id}>
+                  <label className="block text-xs mb-1 text-gray-300">{f.label} {f.required && <span style={{ color: theme }}>*</span>}</label>
+                  {f.type === "long_text" ? <textarea disabled rows={2} className={`${inputCls} resize-none`} /> : f.type === "choice" ? (
+                    <select disabled className={inputCls}><option>{(f.options ?? ["—"])[0]}</option></select>
+                  ) : <input disabled type={f.type === "date" ? "date" : "text"} className={inputCls} />}
+                </div>
+              ))}
+              <button disabled className="w-full py-2.5 rounded-lg text-white text-sm font-medium" style={{ backgroundColor: theme }}>Enviar cadastro</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

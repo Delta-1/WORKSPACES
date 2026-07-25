@@ -17,10 +17,11 @@ export async function POST(request: Request) {
   if (!code) return NextResponse.json({ ok: false, reason: "notfound" });
 
   const { data: login } = await svc.rpc("third_party_login", { p_code: code, p_email: email ?? "", p_password: password ?? "" });
-  const l = login as { ok: boolean; reason?: string; id?: string; name?: string; company_id?: string; needs_login?: boolean; perms?: { info: boolean; folders: boolean; remote: boolean } } | null;
+  const l = login as { ok: boolean; reason?: string; id?: string; name?: string; company_id?: string; needs_login?: boolean; perms?: { info: boolean; folders: boolean; remote: boolean }; visible_folders?: string[] } | null;
   if (!l?.ok) return NextResponse.json({ ok: false, reason: l?.reason ?? "invalid", needs_login: l?.reason === "invalid" });
 
   const perms = l.perms ?? { info: true, folders: false, remote: false };
+  const allowedFolders = (l.visible_folders ?? []).map((s) => s.toLowerCase()); // vazio = todas
   const { data: companyRow } = await svc.from("companies").select("name").eq("id", l.company_id!).maybeSingle();
   const { data: clientsRaw } = await svc
     .from("clients")
@@ -46,11 +47,17 @@ export async function POST(request: Request) {
       // Árvore de pastas/arquivos sob a pasta do cliente + URLs assinadas.
       const tree: FileRow[] = [];
       let frontier = [c.folder_id as string];
+      let rootLevel = true;
       for (let depth = 0; depth < 6 && frontier.length; depth++) {
         const { data: kids } = await svc.from("files").select("id,name,type,parent_id,storage_path,mime").in("parent_id", frontier);
-        const rows = (kids as FileRow[]) ?? [];
+        let rows = (kids as FileRow[]) ?? [];
+        // No 1º nível, se há pastas selecionadas, mostra só as escolhidas.
+        if (rootLevel && allowedFolders.length) {
+          rows = rows.filter((r) => r.type !== "folder" || allowedFolders.includes(r.name.toLowerCase()));
+        }
         tree.push(...rows);
         frontier = rows.filter((r) => r.type === "folder").map((r) => r.id);
+        rootLevel = false;
       }
       const files = tree.filter((r) => r.type === "file" && r.storage_path);
       const signed: Record<string, string> = {};
