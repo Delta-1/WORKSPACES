@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardList, Check, Download, FileSpreadsheet, GripVertical, Link2, Pencil, Plus, Save, Table as TableIcon, Trash2, X } from "lucide-react";
+import { ClipboardList, Check, Download, FileSpreadsheet, GripVertical, Link2, PartyPopper, Pencil, Plus, Save, Table as TableIcon, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { MASKS, type MaskId } from "@/lib/mask";
 import type { Profile } from "@/lib/types";
 
 type FieldType = "short_text" | "long_text" | "number" | "email" | "phone" | "date" | "choice" | "multichoice" | "photo" | "file" | "section";
-type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string };
-type Form = { id: string; company_id: string; title: string; description: string | null; theme: { color?: string; bg?: string } | null; fields: Field[]; ai_agent_id?: string | null; created_at: string };
+type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string; mask?: MaskId };
+type Form = { id: string; company_id: string; title: string; description: string | null; theme: { color?: string; bg?: string; celebrate?: boolean } | null; fields: Field[]; ai_agent_id?: string | null; created_at: string };
 type Response = { id: string; data: Record<string, unknown>; created_at: string };
 
 const TYPE_LABEL: Record<FieldType, string> = {
@@ -103,6 +104,7 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   const [title, setTitle] = useState(form.title);
   const [description, setDescription] = useState(form.description ?? "");
   const [color, setColor] = useState(form.theme?.color ?? "#10b981");
+  const [celebrate, setCelebrate] = useState<boolean>(form.theme?.celebrate ?? true);
   const [fields, setFields] = useState<Field[]>(Array.isArray(form.fields) ? form.fields : []);
   const [aiAgent, setAiAgent] = useState<string>(form.ai_agent_id ?? "");
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
@@ -137,7 +139,7 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   async function save() {
     if (!supabase) return;
     setSaving(true);
-    await supabase.from("forms").update({ title: title.trim() || "Formulário sem título", description: description.trim() || null, theme: { color, bg: "#0b0f16" }, fields, ai_agent_id: aiAgent || null, updated_at: new Date().toISOString() }).eq("id", form.id);
+    await supabase.from("forms").update({ title: title.trim() || "Formulário sem título", description: description.trim() || null, theme: { color, bg: "#0b0f16", celebrate }, fields, ai_agent_id: aiAgent || null, updated_at: new Date().toISOString() }).eq("id", form.id);
     setSaving(false);
     onClose();
   }
@@ -170,6 +172,10 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
               </select>
             </div>
           </div>
+          <label className="flex items-center gap-2 mt-2 text-[11px] text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={celebrate} onChange={(e) => setCelebrate(e.target.checked)} className="accent-emerald-500" />
+            <PartyPopper size={13} className="text-amber-400" /> Comemorar com confete ao enviar
+          </label>
           <p className="text-[10px] text-gray-500 mt-1">Vinculando um agente, a IA pode preencher esta planilha a partir das conversas no WhatsApp (coleta e registro de dados).</p>
         </div>
 
@@ -212,6 +218,11 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
                     <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer">
                       <input type="checkbox" checked={!!f.required} onChange={(e) => patchField(f.id, { required: e.target.checked })} className="accent-emerald-500" /> Obrigatório
                     </label>
+                  )}
+                  {(f.type === "short_text" || f.type === "number") && (
+                    <select value={f.mask ?? "none"} onChange={(e) => patchField(f.id, { mask: e.target.value as MaskId })} title="Máscara de digitação" className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer">
+                      {MASKS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
                   )}
                   <input value={f.category ?? ""} onChange={(e) => patchField(f.id, { category: e.target.value || undefined })} placeholder="Categoria (opcional)" className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none w-32" />
                 </div>

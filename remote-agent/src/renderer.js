@@ -601,6 +601,7 @@ async function onSignal(msg) {
 }
 
 let videoSender = null;
+let audioSender = null;
 let screens = [];
 let currentSourceId = null;
 let currentQuality = "alta";
@@ -660,15 +661,18 @@ async function tuneVideoSender(game) {
 async function setQuality(level) {
   if (!QUALITY[level] || !videoSender || !currentSourceId) return;
   currentQuality = level;
+  const oldStream = stream;
   try {
     const newStream = await captureScreen(currentSourceId);
     const newTrack = newStream.getVideoTracks()[0];
     await videoSender.replaceTrack(newTrack);
-    try {
-      stream?.getTracks().forEach((t) => t.stop());
-    } catch {
-      /* ignore */
-    }
+    // MANTÉM O ÁUDIO em qualquer qualidade: troca também a trilha de áudio (antes
+    // ela era descartada e o áudio morria ao mudar a qualidade).
+    const newAudio = newStream.getAudioTracks()[0] || null;
+    if (audioSender && newAudio) { try { await audioSender.replaceTrack(newAudio); } catch { /* ignore */ } }
+    else if (!audioSender && newAudio && pc) { try { audioSender = pc.addTrack(newAudio, newStream); } catch { /* ignore */ } }
+    // Só agora para as trilhas antigas (já substituídas).
+    try { oldStream?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
     stream = newStream;
     tuneVideoSender(level === "game");
     setStatus("Qualidade: " + level);
@@ -694,6 +698,7 @@ async function startStreaming() {
   stream.getTracks().forEach((t) => {
     const sender = pc.addTrack(t, stream);
     if (t.kind === "video") videoSender = sender;
+    if (t.kind === "audio") audioSender = sender;
   });
   tuneVideoSender(currentQuality === "game");
 

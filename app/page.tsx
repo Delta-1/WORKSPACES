@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Wallet } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -38,6 +38,7 @@ import LabsTab from "@/components/tabs/LabsTab";
 import Orb from "@/components/Orb";
 import LogTab from "@/components/tabs/LogTab";
 import MessagesTab from "@/components/tabs/MessagesTab";
+import GroupTab from "@/components/tabs/GroupTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
@@ -51,6 +52,7 @@ const APPS: AppDef[] = [
   { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "calendario", label: "Calendário", icon: CalendarDays, accent: "bg-rose-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "group", label: "Group", icon: Users2, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -484,6 +486,7 @@ export default function Home() {
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "calendario" && <CalendarTab profile={profile} />}
+        {tab === "group" && <GroupTab profile={profile} />}
         {tab === "mensagens" && <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
