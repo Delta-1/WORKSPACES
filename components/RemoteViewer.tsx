@@ -696,7 +696,16 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   function norm(e: React.MouseEvent) {
     const v = videoRef.current!;
     const r = v.getBoundingClientRect();
-    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+    // Com object-contain o vídeo pode ter "tarjas" (letterbox) dentro do elemento.
+    // Mapeamos a posição do mouse para a ÁREA REAL do vídeo, senão o clique fica
+    // deslocado (o cursor não cai onde a pessoa aponta).
+    const vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
+    const scale = Math.min(r.width / vw, r.height / vh) || 1;
+    const dispW = vw * scale, dispH = vh * scale;
+    const offX = (r.width - dispW) / 2, offY = (r.height - dispH) / 2;
+    const x = (e.clientX - r.left - offX) / dispW;
+    const y = (e.clientY - r.top - offY) / dispH;
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   }
 
   // --- Trackpad do celular (movimento relativo do cursor) ---
@@ -893,7 +902,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
             ref={videoRef}
             autoPlay
             playsInline
-            className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "max-w-full max-h-full"} ${isTouch ? "" : "cursor-none"}`}
+            className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "w-full h-full object-contain"} ${isTouch ? "" : "cursor-none"}`}
             onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
             onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
             onMouseUp={(e) => !isTouch && sendInput({ kind: "up", button: e.button, ...norm(e) })}
