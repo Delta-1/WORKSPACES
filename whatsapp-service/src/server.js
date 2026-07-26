@@ -18,6 +18,7 @@ import makeWASocket, {
 } from "baileys";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+import { generateWork, buildDocx, buildPdf, generateDeck, buildPptx, fileName as studioFileName } from "./studio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
@@ -1223,6 +1224,16 @@ const COPILOT_TOOLS = [
     description: "Procura um programa/app na LOJA oficial (App Hub) e devolve o link de download oficial. Use ANTES de mandar procurar na internet quando pedirem para baixar/instalar algo (ex.: Minecraft, OBS, um navegador). Se não achar, aí sim busque o site oficial.",
     input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   },
+  {
+    name: "gerar_documento",
+    description: "Cria um TRABALHO ACADÊMICO completo (monografia, TCC, trabalho, redação, artigo) e ENVIA os arquivos .docx (editável) e .pdf para a pessoa aqui no WhatsApp. Use quando a pessoa pedir um trabalho e você JÁ tiver o tema. Colete antes (perguntando) o que faltar: tema, instituição, curso, nível, autor, cidade, páginas. Chame esta ferramenta só quando tiver o suficiente.",
+    input_schema: { type: "object", properties: { tema: { type: "string" }, tipo: { type: "string" }, instituicao: { type: "string" }, curso: { type: "string" }, nivel: { type: "string" }, autor: { type: "string" }, cidade: { type: "string" }, ano: { type: "string" }, paginas: { type: "number" }, abnt: { type: "boolean" }, observacoes: { type: "string" } }, required: ["tema"] },
+  },
+  {
+    name: "gerar_apresentacao",
+    description: "Cria uma APRESENTAÇÃO de slides sobre um tema e ENVIA o arquivo .pptx (PowerPoint) para a pessoa aqui no WhatsApp. Use quando pedirem slides/apresentação. Informe o tema e, se disserem, a quantidade de slides.",
+    input_schema: { type: "object", properties: { tema: { type: "string" }, slides: { type: "number" } }, required: ["tema"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1245,6 +1256,32 @@ async function copilotAction(companyId, name, input) {
     if (name === "search_app_hub") {
       const { data } = await supabase.rpc("search_app_hub", { p_query: String(input.query || "") });
       return (data ?? []).map((a) => ({ nome: a.name, categoria: a.category, link: a.link, descricao: a.description }));
+    }
+    if (name === "gerar_documento") {
+      if (!ctx.key) return { ok: false, message: "Sem chave de IA para gerar o documento." };
+      const work = await generateWork(ctx.provider, ctx.key, input);
+      if (!work) return { ok: false, message: "Não consegui montar o trabalho. Confirme o tema e tente de novo." };
+      const base = studioFileName(work.titulo || input.tema);
+      try {
+        const docx = await buildDocx(work, input);
+        files.push({ name: `${base}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: docx });
+      } catch (e) { console.error("docx build failed:", e?.message || e); }
+      try {
+        const pdf = await buildPdf(work, input);
+        files.push({ name: `${base}.pdf`, mime: "application/pdf", buffer: pdf });
+      } catch (e) { console.error("pdf build failed:", e?.message || e); }
+      if (!files.length) return { ok: false, message: "Gerei o texto mas falhei ao montar os arquivos." };
+      return { ok: true, message: `Trabalho "${work.titulo}" pronto. Enviei o .docx (editável) e o .pdf. Diga o que quer ajustar que eu refaço.` };
+    }
+    if (name === "gerar_apresentacao") {
+      if (!ctx.key) return { ok: false, message: "Sem chave de IA para gerar a apresentação." };
+      const deck = await generateDeck(ctx.provider, ctx.key, input);
+      if (!deck) return { ok: false, message: "Não consegui montar a apresentação. Confirme o tema e tente de novo." };
+      try {
+        const pptx = await buildPptx(deck);
+        files.push({ name: `${studioFileName(deck.titulo || input.tema)}.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", buffer: pptx });
+      } catch (e) { console.error("pptx build failed:", e?.message || e); return { ok: false, message: "Falhei ao montar o .pptx." }; }
+      return { ok: true, message: `Apresentação "${deck.titulo}" pronta (${deck.slides.length} slides). Enviei o .pptx.` };
     }
     if (name === "list_forms") {
       const { data } = await supabase.from("forms").select("id,title,fields,ai_agent_id").eq("company_id", companyId).order("created_at", { ascending: false });
@@ -1428,7 +1465,7 @@ async function resolveSendContact(companyId, q) {
 }
 
 // Dispatch comum das ferramentas do copiloto (arquivos + ações + relay).
-async function copilotDispatch(companyId, name, input, files, sends) {
+async function copilotDispatch(companyId, name, input, files, sends, ctx = {}) {
   if (name === "search_files") return await copilotSearchFiles(companyId, input.query);
   if (name === "send_file") {
     const file = await copilotLoadFile(companyId, input.id);
@@ -1570,7 +1607,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   if (!key) return { reply: "Copiloto sem chave de IA configurada (configure em Configurações → Chatbot ou no Labs).", files: [] };
   const name = await companyName(companyId);
   const testMode = chatbot?.test_mode !== false;
-  const system =
+  const gestorSystem =
     `Você é o COPILOTO/assessor pessoal do gestor da empresa "${name}" via WhatsApp. É um assistente forte e direto: ` +
     `responde dúvidas, cria tarefas, cadastra/consulta clientes, publica avisos, abre/encerra atendimentos e TEM ACESSO ` +
     `aos arquivos da empresa. Quando pedirem um arquivo/imagem, use search_files e depois send_file. Para criar tarefa, ` +
@@ -1595,6 +1632,22 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       ? `MODO TESTE ATIVO: antes de EXECUTAR qualquer ação (criar tarefa, enviar arquivo/mensagem, etc.) ou dar um dado importante, PERGUNTE "posso fazer isso?" / "está correto?" e só prossiga após o "sim".`
       : `Aja de forma autônoma, perguntando só o essencial.`) +
     companyContextBlock(await getCompanyInfo(companyId));
+
+  // Bots de atendimento (com capacidades) que NÃO são o copiloto do gestor usam a
+  // PRÓPRIA persona/instruções — não o prompt do assessor do gestor.
+  const isInternalCopilot = fullAccess || chatbot?.slot === "internal";
+  let system = gestorSystem;
+  if (!isInternalCopilot) {
+    const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
+    const brain = await buildBotBrain(chatbot);
+    system =
+      `${persona}\nVocê atende pelo WhatsApp da empresa ${name}. ${chatbot?.instructions || "Responda de forma cordial e humana."}\n` +
+      `VOCÊ TEM FERRAMENTAS: pode gerar TRABALHOS ACADÊMICOS (gerar_documento) e APRESENTAÇÕES (gerar_apresentacao) e ENVIAR os arquivos (.docx, .pdf, .pptx) aqui mesmo na conversa. ` +
+      `Quando pedirem um trabalho ou slides, colete o que faltar (tema, instituição, curso, nível, autor, cidade, páginas) perguntando de forma natural, confirme, e só então chame a ferramenta. Depois de enviar, ofereça correções.\n` +
+      `Mantenha o contexto: NÃO cumprimente de novo nem recomece a cada mensagem; continue de onde parou.` +
+      (chatbot?.knowledge ? `\n\nBase: ${chatbot.knowledge}` : "") + brain +
+      companyContextBlock(await getCompanyInfo(companyId));
+  }
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
@@ -1610,6 +1663,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     finance: ["finance_summary", "add_finance_entry"],
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
+    academico: ["gerar_documento", "gerar_apresentacao"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
@@ -1636,7 +1690,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
         contents.push({ role: "model", parts });
         const responseParts = [];
         for (const c of calls) {
-          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files, sends);
+          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files, sends, { provider, key });
           responseParts.push({ functionResponse: { name: c.functionCall.name, response: { result: out } } });
         }
         contents.push({ role: "user", parts: responseParts });
@@ -1659,7 +1713,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       messages.push({ role: "assistant", content: res.content });
       const results = [];
       for (const tu of toolUses) {
-        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files, sends);
+        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files, sends, { provider, key });
         results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
       }
       messages.push({ role: "user", content: results });
