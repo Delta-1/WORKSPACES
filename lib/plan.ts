@@ -16,6 +16,7 @@ export const FEATURES: { id: FeatureId; label: string; desc: string; price: numb
 // Cada app (aba) depende de uma feature. Apps que não estão aqui vêm sempre.
 export const APP_FEATURE: Record<string, FeatureId> = {
   mensagens: "mensagens",
+  contatos: "mensagens",
   atendimentos: "mensagens",
   remoto: "remoto",
   labs: "labs",

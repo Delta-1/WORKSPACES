@@ -1845,12 +1845,13 @@ async function startSession(numberId) {
 
     sock.ev.on("creds.update", saveCreds);
 
-    // Sincroniza a agenda de contatos do WhatsApp assim que conectar e a cada atualização.
-    sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
+    // Ao conectar, sincroniza SÓ a AGENDA DE CONTATOS do WhatsApp (para a aba de
+    // Contatos). NÃO importamos o histórico antigo de mensagens de propósito: a
+    // conversa começa do zero a partir do momento em que o QR foi lido — só as
+    // mensagens novas (messages.upsert) entram no histórico.
+    sock.ev.on("messaging-history.set", async ({ contacts }) => {
       const { number } = await getNumberConfig(numberId);
-      const cid = number?.company_id ?? null;
-      await syncContacts(contacts, cid);
-      await ingestHistory(messages, numberId, cid, number?.sector_id ?? null);
+      await syncContacts(contacts, number?.company_id ?? null);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
