@@ -589,11 +589,20 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     };
     setMessages((prev) => [...prev, temp]);
     scrollBottom();
+    // Salva a mídia no banco JÁ (não some) e manda o id ao serviço (sem duplicar).
+    let messageId: string | null = null;
+    const cid = (selConv as { company_id?: string | null }).company_id ?? profile?.company_id ?? null;
+    if (supabase) {
+      const { data: row } = await supabase.from("whatsapp_messages")
+        .insert({ conversation_id: selConv.id, direction: "out", text: caption || null, media_type: media.type, media_url: media.url, media_name: media.name, media_mime: media.mime, company_id: cid, sender_id: profile?.id ?? null })
+        .select("id").single();
+      messageId = row?.id ?? null;
+    }
     const headers = await authHeaders();
     await fetch("/api/whatsapp/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, media, text: caption || undefined }),
+      body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, media, text: caption || undefined, messageId }),
     });
   }
 
@@ -617,6 +626,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const text = input.trim();
     const to = selConv.contacts.jid || selConv.contacts.phone;
     const numberId = selConv.number_id;
+    const cid = (selConv as { company_id?: string | null }).company_id ?? profile?.company_id ?? null;
     setInput("");
     // Bolha otimista: aparece NA HORA (não espera o servidor nem o realtime).
     const temp: WhatsappMessageRow = {
@@ -635,16 +645,25 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     scrollBottom();
     (async () => {
       try {
+        // 1) SALVA a mensagem no banco JÁ (não some mais, mesmo se o WhatsApp estiver
+        // instável). 2) manda pro serviço com o id, que só atualiza o wa_id (sem duplicar).
+        let messageId: string | null = null;
+        if (supabase) {
+          const { data: row } = await supabase.from("whatsapp_messages")
+            .insert({ conversation_id: selConv.id, direction: "out", text, company_id: cid, sender_id: profile?.id ?? null })
+            .select("id").single();
+          messageId = row?.id ?? null;
+        }
         const headers = await authHeaders();
         const res = await fetch("/api/whatsapp/send", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...headers },
-          body: JSON.stringify({ to, text, senderId: profile?.id, numberId }),
+          body: JSON.stringify({ to, text, senderId: profile?.id, numberId, messageId }),
         });
         const data = await res.json();
-        if (!data.success) {
+        if (!data.success && !messageId) {
           alert(data.message ?? "Erro ao enviar. Algum número conectado?");
-          setInput((cur) => cur || text); // devolve o texto se falhou
+          setInput((cur) => cur || text); // devolve o texto se nem salvou
         }
       } catch {
         alert("Erro ao enviar a mensagem.");

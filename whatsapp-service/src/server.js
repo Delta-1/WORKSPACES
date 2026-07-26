@@ -2256,8 +2256,13 @@ async function disconnectSession(numberId) {
 
 // Espelha no site as mensagens que VOCÊ mandou pelo app oficial do WhatsApp
 // (multi-dispositivo). O eco chega em messages.upsert com key.fromMe = true.
+// wa_ids de mensagens enviadas pelo SITE (com messageId): o eco não deve criar
+// outra linha — a web já salvou e o /send atualiza o wa_id nessa linha.
+const webSentWaIds = new Set();
+
 async function logOutgoingEcho(sock, numberId, msg, jid) {
   try {
+    if (msg?.key?.id && webSentWaIds.has(msg.key.id)) return; // já salvo pela web
     const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
     const mediaKind = inner.imageMessage
       ? "image"
@@ -2323,7 +2328,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
   }
 }
 
-async function sendMessage(numberId, to, text, senderId, media) {
+async function sendMessage(numberId, to, text, senderId, media, messageId = null) {
   // Se o número informado não estiver conectado, usa qualquer número conectado.
   let s = numberId ? getSession(numberId) : null;
   if (!s || !s.sock || s.state.status !== "connected") {
@@ -2362,12 +2367,24 @@ async function sendMessage(numberId, to, text, senderId, media) {
     const mimetype = media.mime || undefined;
     let content;
     if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
-    else if (media.type === "audio") content = { audio: buf, mimetype: mimetype || "audio/mp4", ptt: true };
+    else if (media.type === "audio") {
+      // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
+      // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).
+      const ogg = await mp3ToOpusOgg(buf).catch(() => null); // ffmpeg detecta o formato de entrada
+      content = ogg
+        ? { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true }
+        : { audio: buf, mimetype: mimetype || "audio/ogg; codecs=opus", ptt: true };
+    }
     else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
     else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
     sent = await s.sock.sendMessage(jid, content);
   } else {
     sent = await s.sock.sendMessage(jid, { text });
+  }
+  // Envio pelo site: marca o wa_id para o eco não duplicar a linha já salva.
+  if (messageId && sent?.key?.id) {
+    webSentWaIds.add(sent.key.id);
+    setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
   }
 
   const phone = jid.split("@")[0];
@@ -2396,7 +2413,15 @@ async function sendMessage(numberId, to, text, senderId, media) {
       conversationId = created?.id ?? null;
     }
     if (conversationId) {
-      await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
+      if (messageId) {
+        // A web já SALVOU a mensagem no banco (não some mais). Aqui só marcamos o
+        // wa_id (evita duplicar com o eco) e a mídia, se houver.
+        const patch = { wa_id: sent?.key?.id ?? null };
+        if (media) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
+        await supabase.from("whatsapp_messages").update(patch).eq("id", messageId).then(() => {}, () => {});
+      } else {
+        await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
+      }
       // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
       if (senderId) {
         await supabase
@@ -2483,12 +2508,12 @@ app.post("/disconnect", async (req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { numberId, to, text, senderId, media } = req.body ?? {};
+  const { numberId, to, text, senderId, media, messageId } = req.body ?? {};
   if (!to || (!text && !media?.url)) {
     return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
   }
   try {
-    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media);
+    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });

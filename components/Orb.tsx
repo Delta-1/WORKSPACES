@@ -169,6 +169,9 @@ export default function Orb({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakingRef = useRef(false);
+  // Evita processar o MESMO comando repetidas vezes (o reconhecimento contínuo às
+  // vezes reentrega a mesma frase e o Orb ficava tentando abrir o YouTube N vezes).
+  const lastCmdRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
   function browserSpeak(text: string, done: () => void) {
     try {
       window.speechSynthesis?.cancel();
@@ -320,6 +323,12 @@ export default function Orb({
     // WhatsApp"). Se sobrou só o chamado, responde presente e fica ouvindo.
     const stripped = t.replace(WAKE, "").replace(/^[\s,.:!?-]+/, "").trim();
     if (!stripped) { showFloat("Oi! Pode falar."); if (voiceOn) speak("Oi! Estou aqui, pode falar."); return; }
+    // Dedup: ignora o mesmo comando (ou quase igual) repetido em até 6s — impede o
+    // loop de "abre o YouTube" várias vezes seguidas.
+    const norm = stripped.toLowerCase().replace(/[^\wà-ú\s]/gi, "").replace(/\s+/g, " ").trim();
+    const now = Date.now();
+    if (norm && norm === lastCmdRef.current.text && now - lastCmdRef.current.at < 6000) return;
+    lastCmdRef.current = { text: norm, at: now };
     ask(stripped);
   }
 
