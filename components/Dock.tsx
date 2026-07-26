@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Grid3x3, LucideIcon, X } from "lucide-react";
 
 export default function Dock({
@@ -13,6 +13,7 @@ export default function Dock({
   onPin,
   onUnpin,
   onReorder,
+  wheelApps,
 }: {
   apps: { id: string; label: string; icon: LucideIcon }[];
   active: string;
@@ -23,8 +24,24 @@ export default function Dock({
   onPin?: (id: string) => void;
   onUnpin?: (id: string) => void;
   onReorder?: (id: string, beforeId: string) => void;
+  wheelApps?: { id: string }[]; // lista completa para navegar com o scroll do mouse
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const lastWheel = useRef(0);
+
+  // Rolar o mouse SOBRE a barra passa de um app para o outro (roda a lista toda).
+  function onWheel(e: React.WheelEvent) {
+    if (pinMode) return;
+    const list = (wheelApps && wheelApps.length ? wheelApps : apps).map((a) => a.id);
+    if (list.length < 2) return;
+    const now = Date.now();
+    if (now - lastWheel.current < 140) return; // evita pular vários de uma vez
+    lastWheel.current = now;
+    const dir = e.deltaY > 0 ? 1 : -1;
+    const idx = list.indexOf(active);
+    const next = idx < 0 ? (dir > 0 ? 0 : list.length - 1) : (idx + dir + list.length) % list.length;
+    onSelect(list[next]);
+  }
 
   return (
     // No modo edição (pinMode) a barra fica ACIMA do fundo borrado para arrastar.
@@ -35,6 +52,7 @@ export default function Dock({
         </p>
       )}
       <div
+        onWheel={onWheel}
         onDragOver={(e) => {
           if (!pinMode) return;
           e.preventDefault();

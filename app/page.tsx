@@ -42,6 +42,7 @@ import GroupTab from "@/components/tabs/GroupTab";
 import AcademicTab from "@/components/tabs/AcademicTab";
 import StudioTab from "@/components/tabs/StudioTab";
 import SlidesTab from "@/components/tabs/SlidesTab";
+import ContactsTab from "@/components/tabs/ContactsTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
@@ -60,6 +61,7 @@ const APPS: AppDef[] = [
   { id: "estudio", label: "Estúdio", icon: FileText, accent: "bg-blue-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "apresentacoes", label: "Apresentações", icon: Presentation, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "contatos", label: "Contatos", icon: Users, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -497,6 +499,7 @@ export default function Home() {
         {tab === "estudio" && <StudioTab profile={profile} />}
         {tab === "apresentacoes" && <SlidesTab profile={profile} />}
         {tab === "mensagens" && <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />}
+        {tab === "contatos" && <ContactsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
         {tab === "arquivos" && <FilesGraphTab profile={profile} />}
@@ -547,6 +550,7 @@ export default function Home() {
 
       <Dock
         apps={dockApps}
+        wheelApps={visibleApps}
         active={tab}
         onSelect={setTab}
         onOpenDrawer={() => setDrawerOpen((v) => { const next = !v; if (!next) setEditApps(false); return next; })}
