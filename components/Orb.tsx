@@ -14,8 +14,8 @@ type Msg = { role: "user" | "assistant"; text: string };
 type Rec = {
   lang: string; continuous: boolean; interimResults: boolean;
   start: () => void; stop: () => void;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onend: (() => void) | null; onerror: (() => void) | null;
+  onresult: ((e: { resultIndex?: number; results: ArrayLike<{ isFinal?: boolean } & ArrayLike<{ transcript: string }>> }) => void) | null;
+  onend: (() => void) | null; onerror: ((e: { error?: string }) => void) | null;
 };
 
 // Assistente estilo JARVIS que aparece durante o acesso remoto. Mini chat +
@@ -329,27 +329,56 @@ export default function Orb({
     if (!Ctor) { alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome."); return null; }
     const rec = new Ctor();
     rec.lang = "pt-BR";
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.onresult = (e) => { const t = e.results[e.results.length - 1][0].transcript?.trim(); if (t) onFinal(t); };
-    rec.onend = () => {
-      setListening(false);
-      // No modo "sempre ativo" (controle remoto) reinicia; no push-to-talk não.
-      if (auto && activeRef.current && !speakingRef.current) {
-        setTimeout(() => { try { rec.start(); } catch { /* ignore */ } }, 250);
+    // Mãos-livres (auto): sessão CONTÍNUA e com parciais — assim o mic não fica
+    // ligando/desligando a cada frase. Push-to-talk: escuta uma fala e para.
+    rec.continuous = auto;
+    rec.interimResults = auto;
+    rec.onresult = (e) => {
+      // Só age nas frases FINAIS (ignora os resultados parciais).
+      const from = typeof e.resultIndex === "number" ? e.resultIndex : e.results.length - 1;
+      for (let i = from; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r && (r.isFinal ?? true)) { const t = r[0]?.transcript?.trim(); if (t) onFinal(t); }
       }
     };
-    rec.onerror = () => setListening(false);
+    rec.onend = () => {
+      setListening(false);
+      // Mãos-livres: religa sozinho (o Chrome encerra a sessão sozinho de tempos em
+      // tempos). Não religa enquanto o Orb está FALANDO (pra não se ouvir).
+      if (auto && activeRef.current && !speakingRef.current) {
+        setTimeout(() => { try { rec.start(); setListening(true); } catch { /* ignore */ } }, 150);
+      }
+    };
+    rec.onerror = (ev) => {
+      const err = ev?.error || "";
+      // Permissão negada: não adianta religar (evita loop de pedido de permissão).
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        activeRef.current = false; setListening(false);
+        alert("Para falar com o Orb, permita o microfone neste site (cadeado ao lado do endereço).");
+        return;
+      }
+      // no-speech / network / aborted / audio-capture: deixa o onend religar sozinho.
+      setListening(false);
+    };
     return rec;
   }
 
-  // Push-to-talk: clicar na bola escuta UMA fala (sem ficar ligando/desligando o
-  // mic o tempo todo — corta o barulho de "escutando/parou" no celular).
-  function listenOnce() {
+  // Bola: toca para LIGAR o mic mãos-livres (fica ouvindo continuamente) e toca de
+  // novo para desligar. Assim dá pra conversar sem o mic cortar toda hora.
+  function toggleHandsFree() {
+    if (activeRef.current) {
+      activeRef.current = false;
+      try { recRef.current?.stop(); } catch { /* ignore */ }
+      recRef.current = null;
+      setListening(false);
+      return;
+    }
     if (speakingRef.current) { try { audioRef.current?.pause(); } catch {} }
-    const rec = makeRec((t) => handleTranscript(t), false);
+    const rec = makeRec((t) => handleTranscript(t), true);
     if (!rec) return;
     recRef.current = rec;
+    activeRef.current = true;
+    setVoiceOn(true); // conversa por voz → responde falando
     setListening(true);
     try { rec.start(); } catch { setListening(false); }
   }
@@ -397,8 +426,8 @@ export default function Orb({
               <X size={15} />
             </button>
             <button
-              onClick={listenOnce}
-              title={listening ? "Ouvindo…" : "Toque para falar"}
+              onClick={toggleHandsFree}
+              title={activeRef.current ? "Ouvindo — toque para parar" : "Toque para falar (fica ouvindo)"}
               className={`relative w-16 h-16 rounded-full cursor-pointer flex items-center justify-center ${speaking ? "orb-speaking" : listening ? "orb-listening" : "orb-float"}`}
             >
               <span className="absolute inset-0 rounded-full orb-glow" />
