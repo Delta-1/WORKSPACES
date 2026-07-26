@@ -25,6 +25,8 @@ export default function AppDrawer({
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState(20);
   const touchX = useRef<number | null>(null);
+  const lastWheel = useRef(0);
+  const wheelAccum = useRef(0);
 
   // Apps por página (celular mostra menos por linha). Só mede no cliente.
   useEffect(() => {
@@ -65,6 +67,23 @@ export default function AppDrawer({
     touchX.current = null;
   }
 
+  // Trackpad de notebook: arrastar com DOIS DEDOS gera deltaX no evento de wheel
+  // (o navegador traduz o gesto de rolagem horizontal). Acumula até passar um
+  // limite para trocar de página, com um intervalo mínimo entre trocas.
+  function onWheel(e: React.WheelEvent) {
+    if (editMode || !multi) return;
+    const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0;
+    if (!dx) return;
+    wheelAccum.current += dx;
+    const now = Date.now();
+    if (now - lastWheel.current < 260) return;
+    if (Math.abs(wheelAccum.current) > 60) {
+      go(current + (wheelAccum.current > 0 ? 1 : -1));
+      wheelAccum.current = 0;
+      lastWheel.current = now;
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center backdrop-blur-2xl bg-black/40" onClick={onClose}>
       <div className="drawer-anim liquid-glass w-full max-w-2xl mb-28 sm:mb-32 rounded-3xl p-5 sm:p-8" onClick={(e) => e.stopPropagation()}>
@@ -84,7 +103,7 @@ export default function AppDrawer({
           {editMode ? (
             <>Arraste um app para a <span className="text-emerald-400">barra de baixo</span> para fixá-lo.</>
           ) : multi ? (
-            <>Deslize para os lados (ou use as setas) para ver mais aplicativos.</>
+            <>Deslize com o dedo, com dois dedos no touchpad, ou use as setas para ver mais aplicativos.</>
           ) : (
             <>Toque num app para abrir. Toque no <span className="text-emerald-400">lápis</span> para personalizar a barra.</>
           )}
@@ -102,32 +121,43 @@ export default function AppDrawer({
             </button>
           )}
 
+          {/* Trilho das páginas: desliza suavemente para a página atual. */}
           <div
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
-            className="grid grid-cols-4 sm:grid-cols-5 gap-4 sm:gap-5 content-start min-h-[8rem]"
+            onWheel={onWheel}
+            className="overflow-hidden"
           >
-            {(pages[current] || []).length === 0 && (
-              <p className="col-span-full text-center text-xs text-gray-500 py-6">
-                Todos os aplicativos estão na barra de acesso rápido.
-              </p>
-            )}
-            {(pages[current] || []).map((app) => (
-              <div key={app.id} className="flex flex-col items-center gap-1.5">
-                <button
-                  draggable={editMode}
-                  onDragStart={(e) => editMode && e.dataTransfer.setData("text/app-id", app.id)}
-                  onClick={() => { if (editMode) return; onSelect(app.id); onClose(); }}
-                  className={`w-14 h-14 rounded-2xl flex items-center justify-center border border-white/10 transition-transform hover:scale-105 active:scale-95 ${
-                    editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-                  } ${app.accent}`}
-                  title={editMode ? `${app.label} — arraste pra barra` : `Abrir ${app.label}`}
-                >
-                  <app.icon size={24} className="text-white" />
-                </button>
-                <span className="text-[11px] sm:text-xs text-gray-300 text-center leading-tight line-clamp-2">{app.label}</span>
-              </div>
-            ))}
+            <div
+              className="flex transition-transform duration-350 ease-out"
+              style={{ transform: `translateX(-${current * 100}%)`, transitionDuration: "350ms" }}
+            >
+              {pages.map((pageApps, pi) => (
+                <div key={pi} className="w-full shrink-0 grid grid-cols-4 sm:grid-cols-5 gap-4 sm:gap-5 content-start min-h-[8rem] px-0.5">
+                  {pageApps.length === 0 && (
+                    <p className="col-span-full text-center text-xs text-gray-500 py-6">
+                      Todos os aplicativos estão na barra de acesso rápido.
+                    </p>
+                  )}
+                  {pageApps.map((app) => (
+                    <div key={app.id} className="flex flex-col items-center gap-1.5">
+                      <button
+                        draggable={editMode}
+                        onDragStart={(e) => editMode && e.dataTransfer.setData("text/app-id", app.id)}
+                        onClick={() => { if (editMode) return; onSelect(app.id); onClose(); }}
+                        className={`w-14 h-14 rounded-2xl flex items-center justify-center border border-white/10 transition-transform hover:scale-105 active:scale-95 ${
+                          editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                        } ${app.accent}`}
+                        title={editMode ? `${app.label} — arraste pra barra` : `Abrir ${app.label}`}
+                      >
+                        <app.icon size={24} className="text-white" />
+                      </button>
+                      <span className="text-[11px] sm:text-xs text-gray-300 text-center leading-tight line-clamp-2">{app.label}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
 
           {multi && !editMode && (
