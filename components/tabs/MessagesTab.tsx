@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Check, Download, Eye, EyeOff, FileText, Hash, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, Columns3, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 import RemoteViewer from "@/components/RemoteViewer";
+import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
 
 type Group = { id: string; name: string; position: number };
 type ContactReport = {
@@ -49,6 +50,13 @@ function mediaTypeFromMime(mime: string): WhatsappMediaType {
 }
 
 const EMOJIS = "😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😉 🙂 😢 😭 😡 👍 👎 🙏 👏 🙌 💪 🔥 ✅ ❌ ⚠️ 🎉 ❤️ 💚 💙 💛 ⭐ 💯 👀 🤝 🫡 😴 🥳 😱 🤦 🤷 👌 ✌️ 🤙 📌 📎 📞 💬 ⏰ 💰 🚀".split(" ");
+
+type MsgLayout = "classic" | "kanban" | "crm";
+const LAYOUTS: { id: MsgLayout; label: string; desc: string }[] = [
+  { id: "classic", label: "WhatsApp clássico", desc: "Lista de conversas à esquerda e o chat à direita — como você já conhece." },
+  { id: "kanban", label: "Fluxo (Kanban)", desc: "Colunas de atendimento: A fazer → Em andamento → conversa. Ideal para equipes de atendimento." },
+  { id: "crm", label: "CRM (fluxo automático)", desc: "Conversas + um construtor de fluxo (estilo n8n) para automatizar o atendimento." },
+];
 
 export default function MessagesTab({ profile, openTarget, onTargetHandled }: { profile: Profile | null; openTarget?: { phone: string; name: string } | null; onTargetHandled?: () => void }) {
   const [server, setServer] = useState<string>("whatsapp"); // "whatsapp" | "equipe" | <groupId>
@@ -104,6 +112,18 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setHidden(new Set(s));
     try { localStorage.setItem("msg:hidden", JSON.stringify([...s])); } catch { /* ignore */ }
   }
+  // Layout do Mensagens (por pessoa; a empresa define um padrão). 3 opções:
+  // "classic" (WhatsApp normal), "kanban" (fluxo de atendimento) e "crm" (fluxo n8n).
+  const [layout, setLayoutState] = useState<MsgLayout>(() => {
+    try { const s = localStorage.getItem("msg:layout"); if (s === "classic" || s === "kanban" || s === "crm") return s; } catch { /* ignore */ }
+    return "classic";
+  });
+  const [showLayoutPicker, setShowLayoutPicker] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0); // 0 = sem tutorial
+  const [asCompanyDefault, setAsCompanyDefault] = useState(false); // gestor: definir padrão da equipe
+  function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
+  const isGestor = profile?.role === "gestor";
+
   const [messages, setMessages] = useState<WhatsappMessageRow[]>([]);
   const [internal, setInternal] = useState<InternalMessage[]>([]);
   const [input, setInput] = useState("");
@@ -145,6 +165,36 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     loadConversations();
     loadSide();
   }, [loadConversations, loadSide]);
+
+  // Primeira vez no Mensagens: pergunta o layout (semeando com o padrão da empresa)
+  // e depois mostra um tutorial rápido.
+  useEffect(() => {
+    if (!supabase || !profile?.company_id) return;
+    let onboarded = false;
+    try { onboarded = localStorage.getItem("msg:onboarded") === "1"; } catch { /* ignore */ }
+    supabase.from("company_settings").select("messages_layout").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
+      const cl = data?.messages_layout as MsgLayout | null;
+      if (!onboarded) {
+        if (cl === "classic" || cl === "kanban" || cl === "crm") setLayout(cl);
+        setShowLayoutPicker(true);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.company_id]);
+
+  // Robustez: ao voltar o foco para a aba/janela, revalida conversas e mensagens
+  // (garante que respostas do bot e mensagens novas apareçam mesmo se o realtime
+  // tiver perdido algum evento).
+  useEffect(() => {
+    const refresh = () => {
+      loadConversations();
+      const id = selConvRef.current;
+      if (id && supabase) supabase.from("whatsapp_messages").select("*").eq("conversation_id", id).order("at").then(({ data }) => { if (data) setMessages(data); });
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, [loadConversations]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -693,6 +743,29 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   const hiddenCount = useMemo(() => conversations.filter((c) => hidden.has(c.id)).length, [conversations, hidden]);
 
+  // Cartão de conversa reutilizável (lista clássica e colunas do Kanban).
+  function convCard(c: ConvRow, compact = false) {
+    return (
+      <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-2 py-1.5 px-2 text-left rounded-lg cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
+        {c.contacts?.avatar_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={c.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">{contactLabel(c.contacts).charAt(0).toUpperCase()}</div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
+          {!compact && (c.status === "espera" || c.status === "atendendo" ? <div className="mt-0.5"><StatusTag status={c.status} small /></div> : <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>)}
+          {compact && <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>}
+        </div>
+        {(unread[c.id] || 0) > 0 && <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">{unread[c.id] > 99 ? "99+" : unread[c.id]}</span>}
+      </button>
+    );
+  }
+  // Agrupamento para o Kanban.
+  const kanbanTodo = useMemo(() => visibleConvs.filter((c) => c.status === "espera" || (!c.status && (unread[c.id] || 0) > 0)), [visibleConvs, unread]);
+  const kanbanDoing = useMemo(() => visibleConvs.filter((c) => c.status === "atendendo"), [visibleConvs]);
+
   const currentGroupName = activeNumberId
     ? numbers.find((n) => n.id === activeNumberId)?.label ?? "Número"
     : server === "whatsapp"
@@ -761,10 +834,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         <ServerIcon active={false} onClick={newGroup} title="Novo grupo">
           <Plus size={18} />
         </ServerIcon>
+        <div className="mt-auto pt-2 border-t border-white/10 w-full flex justify-center">
+          <button onClick={() => setShowLayoutPicker(true)} title="Trocar o layout do Mensagens" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
+            {layout === "kanban" ? <Columns3 size={18} /> : layout === "crm" ? <Workflow size={18} /> : <LayoutGrid size={18} />}
+          </button>
+        </div>
       </div>
 
-      {/* Coluna de canais/contatos */}
-      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
+      {/* Coluna de canais/contatos (clássico e CRM) */}
+      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${layout === "kanban" ? "hidden" : hasSel ? "hidden md:flex" : "flex"}`}>
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
@@ -892,13 +970,35 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         </div>
       </div>
 
-      {/* Chat */}
+      {/* Layout KANBAN: colunas de atendimento (A fazer / Em andamento) */}
+      {layout === "kanban" && (
+        <div className={`shrink-0 flex gap-0 overflow-x-auto border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
+          {([["A fazer", kanbanTodo, "bg-amber-500"], ["Em andamento", kanbanDoing, "bg-emerald-500"]] as [string, ConvRow[], string][]).map(([title, list, dot]) => (
+            <div key={title} className="w-[46vw] sm:w-60 shrink-0 flex flex-col border-r border-white/10 last:border-r-0">
+              <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2 shrink-0">
+                <span className={`w-2 h-2 rounded-full ${dot}`} />
+                <span className="text-xs font-bold">{title}</span>
+                <span className="text-[10px] text-gray-500">({list.length})</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scroll p-1.5 space-y-1.5">
+                {list.length === 0 ? <p className="text-[11px] text-gray-600 text-center py-6">Vazio</p> : list.map((c) => convCard(c, true))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Chat (clássico e kanban). No CRM, o espaço vazio vira o construtor de fluxo. */}
       <div className={`flex-1 flex-col overflow-hidden bg-[#0b0f16]/40 ${hasSel ? "flex" : "hidden md:flex"}`}>
         {!selConv && !selColleague ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
-            <MessageSquare size={40} className="opacity-30" />
-            <p className="text-sm">Selecione uma conversa.</p>
-          </div>
+          layout === "crm" ? (
+            <CrmFlowArea companyId={profile?.company_id ?? null} activeNumberId={activeNumberId} numbers={numbers} />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
+              <MessageSquare size={40} className="opacity-30" />
+              <p className="text-sm">Selecione uma conversa.</p>
+            </div>
+          )
         ) : (
           <>
             <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2.5 shrink-0">
@@ -1196,6 +1296,111 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           </div>
         </div>
       )}
+
+      {/* Escolher o layout do Mensagens (1ª vez ou pelo botão). */}
+      {showLayoutPicker && (
+        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowLayoutPicker(false)}>
+          <div className="w-full max-w-lg bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold mb-1">Como você quer usar o Mensagens?</h3>
+            <p className="text-[11px] text-gray-400 mb-4">Escolha o layout. Você pode trocar quando quiser no botão de layout, na barra da esquerda.</p>
+            <div className="space-y-2">
+              {LAYOUTS.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => {
+                    setLayout(l.id);
+                    try { localStorage.setItem("msg:onboarded", "1"); } catch { /* ignore */ }
+                    if (asCompanyDefault && isGestor && supabase && profile?.company_id) {
+                      supabase.from("company_settings").update({ messages_layout: l.id }).eq("company_id", profile.company_id);
+                    }
+                    setShowLayoutPicker(false);
+                    setTutorialStep(1);
+                  }}
+                  className={`w-full text-left rounded-xl border p-3 cursor-pointer transition ${layout === l.id ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:border-white/25 hover:bg-white/5"}`}
+                >
+                  <div className="flex items-center gap-2 font-semibold text-sm">
+                    {l.id === "kanban" ? <Columns3 size={15} className="text-amber-400" /> : l.id === "crm" ? <Workflow size={15} className="text-sky-400" /> : <LayoutGrid size={15} className="text-emerald-400" />}
+                    {l.label}
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">{l.desc}</p>
+                </button>
+              ))}
+            </div>
+            {isGestor && (
+              <label className="flex items-center gap-2 mt-3 text-[11px] text-gray-300 cursor-pointer">
+                <input type="checkbox" checked={asCompanyDefault} onChange={(e) => setAsCompanyDefault(e.target.checked)} className="accent-emerald-500" />
+                Definir o layout escolhido como <b>padrão da equipe</b> (novos funcionários já começam com ele).
+              </label>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tutorial rápido após escolher o layout. */}
+      {tutorialStep > 0 && (
+        <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 text-center">
+            {(() => {
+              const steps = layout === "kanban"
+                ? ["No layout Fluxo (Kanban), as conversas novas caem na coluna A fazer.", "Quando alguém começa a atender, a conversa vai para Em andamento.", "Clique numa conversa para abrir o chat ao lado. Ao Finalizar, ela sai de Em andamento e só volta se o cliente mandar mensagem de novo."]
+                : layout === "crm"
+                ? ["No layout CRM, suas conversas ficam à esquerda.", "No espaço vazio você monta um FLUXO (estilo n8n) que automatiza o atendimento do número.", "Clique em salvar no construtor de fluxo para ativar. Selecione uma conversa a qualquer momento para responder na mão."]
+                : ["Este é o layout clássico do WhatsApp: conversas à esquerda, chat à direita.", "O bot responde sozinho quando ligado (Bot ON) — e as respostas dele aparecem no chat.", "Pronto! Pode usar normalmente. Troque de layout quando quiser no botão da barra esquerda."];
+              const last = tutorialStep >= steps.length;
+              return (
+                <>
+                  <div className="w-12 h-12 rounded-full bg-emerald-600/20 border border-emerald-500 flex items-center justify-center mx-auto mb-3">
+                    <MessageSquare size={22} className="text-emerald-400" />
+                  </div>
+                  <p className="text-sm text-gray-200 min-h-[3rem]">{steps[tutorialStep - 1]}</p>
+                  <div className="flex items-center justify-center gap-1.5 my-3">
+                    {steps.map((_, i) => <span key={i} className={`h-1.5 rounded-full ${i === tutorialStep - 1 ? "w-4 bg-emerald-400" : "w-1.5 bg-white/20"}`} />)}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setTutorialStep(0)} className="flex-1 text-xs py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">Pular</button>
+                    <button onClick={() => setTutorialStep(last ? 0 : tutorialStep + 1)} className="flex-1 text-xs py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer">{last ? "Começar" : "Próximo"}</button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Área de CRM: monta um fluxo (n8n) para o bot do número ativo (ou o 1º bot da empresa).
+function CrmFlowArea({ companyId, activeNumberId, numbers }: { companyId: string | null; activeNumberId: string | null; numbers: WhatsappNumber[] }) {
+  const [bot, setBot] = useState<Chatbot | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!supabase || !companyId) { setLoading(false); return; }
+    (async () => {
+      setLoading(true);
+      const numBotId = activeNumberId ? (numbers.find((n) => n.id === activeNumberId)?.chatbot_id ?? null) : null;
+      let b: Chatbot | null = null;
+      if (numBotId) { const { data } = await supabase!.from("chatbots").select("*").eq("id", numBotId).maybeSingle(); b = data as Chatbot | null; }
+      if (!b) { const { data } = await supabase!.from("chatbots").select("*").eq("company_id", companyId).neq("slot", "internal").order("created_at").limit(1).maybeSingle(); b = data as Chatbot | null; }
+      setBot(b); setLoading(false);
+    })();
+  }, [companyId, activeNumberId, numbers]);
+
+  if (loading) return <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Carregando fluxo…</div>;
+  if (!bot) return (
+    <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2 p-6 text-center">
+      <Workflow size={38} className="opacity-30" />
+      <p className="text-sm">Para o CRM, conecte um número de WhatsApp e crie um agente (em Labs) para este número. O fluxo do agente é editado aqui.</p>
+    </div>
+  );
+  return (
+    <div className="flex-1 overflow-hidden">
+      <BotFlowBuilder
+        agentId={bot.id}
+        agentName={bot.name}
+        initial={(bot.flow as BotFlow) ?? null}
+        onClose={() => { /* embutido no CRM */ }}
+      />
     </div>
   );
 }
