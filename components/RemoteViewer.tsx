@@ -168,6 +168,21 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     if (click) ghostClickRef.current += 1;
     setGhost({ x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), click: ghostClickRef.current });
   }
+  // Posição em PIXELS do ponto normalizado dentro da ÁREA REAL do vídeo (respeita
+  // as tarjas do object-contain) — assim a bolinha verde cai exatamente onde o
+  // mouse vai clicar (antes ela ficava um pouco deslocada do cursor).
+  function ghostPx(nx: number, ny: number): { left: number; top: number } {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) {
+      const r = v?.getBoundingClientRect();
+      return { left: nx * (r?.width ?? 0), top: ny * (r?.height ?? 0) };
+    }
+    const cw = v.clientWidth, ch = v.clientHeight;
+    const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight) || 1;
+    const dispW = v.videoWidth * scale, dispH = v.videoHeight * scale;
+    const offX = (cw - dispW) / 2, offY = (ch - dispH) / 2;
+    return { left: offX + nx * dispW, top: offY + ny * dispH };
+  }
 
   // MODO ENSINAR (treino por demonstração): enquanto você controla a máquina, cada
   // clique/digitação vira um PASSO com um print — no fim vira um passo a passo que
@@ -943,7 +958,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
           {ghost && (
             <div
               className="pointer-events-none absolute z-[95] -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ease-out"
-              style={{ left: `${ghost.x * 100}%`, top: `${ghost.y * 100}%` }}
+              style={{ left: `${ghostPx(ghost.x, ghost.y).left}px`, top: `${ghostPx(ghost.x, ghost.y).top}px` }}
             >
               <span className="block w-4 h-4 rounded-full bg-emerald-400/90 shadow-[0_0_14px_4px_rgba(16,185,129,0.7)] ring-2 ring-white/70" />
               <span key={ghost.click} className="absolute inset-0 rounded-full ring-2 ring-emerald-300/80 animate-ping" style={{ animationIterationCount: 1 }} />

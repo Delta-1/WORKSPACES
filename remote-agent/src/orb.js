@@ -5,8 +5,10 @@ const { ipcRenderer } = require("electron");
 
 let cfg = { appUrl: "", accessCode: "", agentName: "" };
 let listening = false;
+let speaking = false;
 let rec = null;
 const history = [];
+const lastCmd = { text: "", at: 0 }; // dedup: não repetir o mesmo comando
 
 const ball = document.getElementById("ball");
 const mic = document.getElementById("mic");
@@ -28,12 +30,35 @@ function say(who, text, keep) {
   if (!keep) hideTimer = setTimeout(() => bubble.classList.remove("show"), 9000);
 }
 
+// Escolhe UMA voz em português e mantém sempre a mesma (evita misturar com a voz
+// padrão do sistema/Google e a resposta sair "bugada" com duas vozes).
+let ptVoice = null;
+function pickVoice() {
+  try {
+    const vs = window.speechSynthesis.getVoices() || [];
+    ptVoice =
+      vs.find((v) => /pt.?BR/i.test(v.lang) && /google/i.test(v.name)) ||
+      vs.find((v) => /pt.?BR/i.test(v.lang)) ||
+      vs.find((v) => /^pt/i.test(v.lang)) ||
+      null;
+  } catch { /* ignore */ }
+}
+try { pickVoice(); if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = pickVoice; } catch { /* ignore */ }
+
 function speak(text) {
   try {
-    window.speechSynthesis.cancel();
+    const synth = window.speechSynthesis;
+    synth.cancel(); // corta qualquer fala anterior — nunca sobrepõe duas vozes
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "pt-BR";
-    window.speechSynthesis.speak(u);
+    if (ptVoice) u.voice = ptVoice;
+    u.rate = 1; u.pitch = 1;
+    // Enquanto fala, PAUSA o microfone (senão ele se ouve e vira loop).
+    speaking = true;
+    if (rec) { try { rec.stop(); } catch { /* ignore */ } }
+    const resume = () => { speaking = false; if (listening) { try { rec && rec.start(); } catch { /* ignore */ } } };
+    u.onend = resume; u.onerror = resume;
+    synth.speak(u);
   } catch { /* sem voz */ }
 }
 
@@ -60,24 +85,40 @@ async function ask(text) {
 }
 
 // --- Voz ---
+// No PC o Orb fica MÃOS-LIVRES: clica no microfone e ele fica ouvindo direto;
+// clica de novo e para. Ele NÃO para a cada frase — segue ouvindo o próximo
+// comando — e ignora o mesmo comando repetido (fim do loop de "abre o YouTube").
 function startListening() {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Ctor) { toggleType(true); say("Assistente", "Sem microfone aqui — pode escrever."); return; }
   rec = new Ctor();
   rec.lang = "pt-BR";
-  rec.continuous = false;
+  rec.continuous = true;   // sessão contínua — não corta a cada frase
   rec.interimResults = true;
   rec.onresult = (e) => {
-    const t = Array.from(e.results).map((r) => r[0].transcript).join(" ").trim();
-    say("Você", t || "…", true); // texto flutuante do que está falando
-    if (e.results[e.results.length - 1].isFinal && t) { stopListening(); ask(t); }
+    const from = typeof e.resultIndex === "number" ? e.resultIndex : e.results.length - 1;
+    for (let i = from; i < e.results.length; i++) {
+      const r = e.results[i];
+      const t = (r[0] && r[0].transcript ? r[0].transcript : "").trim();
+      if (!r.isFinal) { if (t) say("Você", t, true); continue; }
+      if (!t || speaking) continue; // ignora o que capturou enquanto o Orb falava
+      const norm = t.toLowerCase().replace(/[^\wà-ú\s]/gi, "").replace(/\s+/g, " ").trim();
+      const now = Date.now();
+      if (norm && norm === lastCmd.text && now - lastCmd.at < 6000) continue; // dedup
+      lastCmd.text = norm; lastCmd.at = now;
+      ask(t); // segue ouvindo (não para)
+    }
   };
-  rec.onerror = () => stopListening();
-  rec.onend = () => { if (listening) { try { rec.start(); } catch {} } };
+  rec.onerror = (ev) => {
+    const err = ev && ev.error;
+    if (err === "not-allowed" || err === "service-not-allowed") { stopListening(); say("Assistente", "Permita o microfone para eu ouvir."); }
+    // no-speech/network/aborted: deixa o onend religar.
+  };
+  rec.onend = () => { if (listening && !speaking) { try { rec.start(); } catch { /* ignore */ } } };
   listening = true;
   ball.classList.add("listening");
-  say("Assistente", "Estou ouvindo…", true);
-  try { rec.start(); } catch {}
+  say("Assistente", "Estou ouvindo — pode falar.", true);
+  try { rec.start(); } catch { /* ignore */ }
 }
 function stopListening() {
   listening = false;
