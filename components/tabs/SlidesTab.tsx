@@ -158,7 +158,7 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Rail de slides */}
-        <div className="w-40 border-r border-white/10 overflow-y-auto custom-scroll p-2 space-y-2 bg-black/20">
+        <div className="w-24 sm:w-40 border-r border-white/10 overflow-y-auto custom-scroll p-2 space-y-2 bg-black/20 shrink-0">
           {deck.slides.map((sl, i) => (
             <div key={i} onClick={() => setCur(i)} className={`rounded-lg overflow-hidden cursor-pointer border ${i === cur ? "border-amber-500" : "border-white/10"}`}>
               <div className="h-16 text-[8px] p-1.5 flex flex-col justify-center relative" style={{ background: th.bg, color: th.title, borderTop: `2px solid ${th.accent}` }}>
@@ -220,7 +220,7 @@ function NinaSlides({ onDeck }: { onDeck: (d: Deck) => void }) {
   }
 
   return (
-    <div className="w-72 border-l border-white/10 flex flex-col bg-[#0b0f16] p-3 gap-2">
+    <div className="fixed sm:static inset-x-0 bottom-0 z-40 max-h-[70vh] sm:max-h-none w-full sm:w-72 border-t sm:border-t-0 sm:border-l border-white/10 flex flex-col bg-[#0b0f16] p-3 gap-2 rounded-t-2xl sm:rounded-none shadow-2xl sm:shadow-none overflow-y-auto">
       <div className="text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-amber-400" /> Nina — criar slides</div>
       <p className="text-[11px] text-gray-400">Descreva o tema e a Nina monta a apresentação inteira.</p>
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Ex.: Energia solar no Brasil, para uma aula do ensino médio" className="bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none resize-none" />

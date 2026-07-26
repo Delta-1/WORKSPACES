@@ -183,7 +183,7 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
       </div>
 
       {/* Barra de ferramentas (Word) */}
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-white/10 flex-wrap bg-black/20">
+      <div className="flex items-center gap-1 px-2 py-1 border-b border-white/10 flex-nowrap overflow-x-auto no-scrollbar sm:flex-wrap sm:overflow-visible bg-black/20">
         <select value={font} onChange={(e) => applyFont(e.target.value)} className="bg-black/30 border border-white/10 rounded px-1.5 py-1 text-xs outline-none cursor-pointer" style={{ minWidth: 120 }}>
           {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
@@ -275,7 +275,7 @@ function NinaPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
   }
 
   return (
-    <div className="w-80 border-l border-white/10 flex flex-col bg-[#0b0f16]">
+    <div className="fixed sm:static inset-x-0 bottom-0 z-40 h-[58vh] sm:h-auto w-full sm:w-80 border-t sm:border-t-0 sm:border-l border-white/10 flex flex-col bg-[#0b0f16] rounded-t-2xl sm:rounded-none shadow-2xl sm:shadow-none">
       <div className="px-3 py-2 border-b border-white/10 text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-blue-400" /> Nina — criação com IA</div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">
         {msgs.map((m, i) => (
