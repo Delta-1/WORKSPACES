@@ -677,6 +677,9 @@ function sanitizeForSpeech(text) {
   let t = String(text || "");
   // "áudio"/"audio" no comecinho (rótulo) — remove.
   t = t.replace(/^\s*[áa]udio[:\-–.\s]+/i, "");
+  // "áudio" solto como rótulo em qualquer linha (ex.: linha só com "Áudio:") — remove.
+  t = t.replace(/(^|\n)\s*[áa]udio\s*[:\-–]\s*/gi, "$1");
+  t = t.replace(/^\s*[áa]udio\s*$/i, "");
   // Risadas descritas -> som de risada real.
   t = t.replace(/[([]\s*(risada[s]?|rindo|risos|gargalhada[s]?|kk+|haha[ha]*)\s*[)\]]/gi, "hahaha");
   // Outras rubricas entre parênteses/colchetes (pausa, suspiro, tom, voz...) — remove.
@@ -685,6 +688,18 @@ function sanitizeForSpeech(text) {
   t = t.replace(/\[[^\]]*\]/g, "");
   // Espaços/limpeza final.
   return t.replace(/\s{2,}/g, " ").trim();
+}
+
+// Remove uma saudação repetida no começo da resposta quando o bot JÁ falou antes
+// (ou já mandou a saudação de abertura) — acaba o "olá, tudo bem?" toda mensagem.
+function stripRepeatedGreeting(reply, history, greetedOnOpen) {
+  const botSpokeBefore = greetedOnOpen || (Array.isArray(history) && history.some((h) => h && h.role === "assistant" && h.text));
+  if (!botSpokeBefore) return reply;
+  const stripped = String(reply || "").replace(
+    /^\s*(ol[áa]|oi+|e a[íi]|opa|bom dia|boa tarde|boa noite)[\s,!.]*(tudo\s+bem\??|tudo\s+certo\??|como\s+(vai|est[áa])\??|beleza\??)?[\s,!.]*/i,
+    ""
+  ).trimStart();
+  return stripped || reply; // se sobrar vazio (era só saudação), mantém original
 }
 
 // Detecta LISTAGEM: quando a resposta é uma lista de itens/opções/etapas, é melhor
@@ -868,6 +883,19 @@ function modeGuidance(mode) {
   }
 }
 
+// REGRAS GERAIS de todas as IAs de mensagem (valem para TODOS os bots, de todos
+// os usuários — atuais e novos). Consertam vícios chatos (falar "áudio",
+// recomeçar/repetir saudação) e deixam as respostas mais humanas e úteis.
+const SYSTEM_RULES =
+  "\n\n=== REGRAS GERAIS (SEMPRE seguir) ===\n" +
+  "1. NUNCA escreva nem fale a palavra \"áudio\" como rótulo (nada de começar com \"Áudio:\"). Vá direto à resposta.\n" +
+  "2. NÃO repita saudação. Cumprimente UMA vez por conversa; se já cumprimentou (ex.: \"olá, tudo bem\"), NÃO cumprimente de novo — continue de onde parou.\n" +
+  "3. Nunca repita a mesma frase/resposta que você já mandou antes na conversa. Varie e avance.\n" +
+  "4. Use o histórico: não peça de novo dados que a pessoa já deu (nome, empresa, tema, etc.).\n" +
+  "5. Seja objetivo, natural e humano — como uma pessoa real no WhatsApp.\n" +
+  "6. Listas/opções vão em TEXTO organizado (a pessoa lê com calma), não em áudio.\n" +
+  "7. Seja proativo: quando fizer sentido, ANTECIPE o que a pessoa precisa e ofereça 1–2 sugestões úteis do que você pode fazer.";
+
 async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null) {
   const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
@@ -875,7 +903,7 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
   const companyBlock = companyContextBlock(await getCompanyInfo(companyId));
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${SYSTEM_RULES}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
@@ -1648,6 +1676,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       (chatbot?.knowledge ? `\n\nBase: ${chatbot.knowledge}` : "") + brain +
       companyContextBlock(await getCompanyInfo(companyId));
   }
+  system += SYSTEM_RULES;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
@@ -2110,6 +2139,9 @@ async function startSession(numberId) {
               const agentImage = imageBuffer ? { buffer: imageBuffer, mime: node?.mimetype || "image/jpeg" } : null;
               reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage);
             }
+            // Se o bot já falou antes nesta conversa (ou já mandamos a saudação de
+            // abertura), tira uma saudação repetida no começo da resposta.
+            if (reply) reply = stripRepeatedGreeting(reply, history, created && !!chatbot?.greeting);
             // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
             for (const s of copilotSends) {
               try {
@@ -2156,6 +2188,15 @@ async function startSession(numberId) {
               }
             }
             if (reply) {
+              // Split opcional: a IA pode marcar "[[TEXTO]]" (ou "[[LISTA]]") para
+              // FALAR a parte de cima por áudio e mandar a parte de baixo por TEXTO
+              // (ex.: Nina se apresenta por voz e manda a listinha de funções em texto).
+              let textAfter = null;
+              const splitIdx = reply.search(/\[\[\s*(texto|lista)\s*\]\]/i);
+              if (splitIdx >= 0) {
+                textAfter = reply.slice(splitIdx).replace(/\[\[\s*(texto|lista)\s*\]\]/i, "").trim();
+                reply = reply.slice(0, splitIdx).trim() || reply;
+              }
               // Responde por áudio conforme a preferência (copiloto) ou se o cliente falou por áudio.
               // Exceção: se a resposta for uma LISTAGEM, manda por TEXTO (mais fácil de ler).
               let sentAsAudio = false;
@@ -2181,6 +2222,11 @@ async function startSession(numberId) {
               if (!sentAsAudio) {
                 const st = await sock.sendMessage(jid, { text: reply });
                 await logMessage(conversation.id, "out", reply, null, null, cid, st?.key?.id ?? null);
+              }
+              // Parte marcada como texto (ex.: a listinha de funções) — sempre por TEXTO.
+              if (textAfter) {
+                const gt = await sock.sendMessage(jid, { text: textAfter });
+                await logMessage(conversation.id, "out", textAfter, null, null, cid, gt?.key?.id ?? null);
               }
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
