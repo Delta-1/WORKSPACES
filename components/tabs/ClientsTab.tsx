@@ -621,6 +621,7 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
   const [error, setError] = useState<string | null>(null);
   const [manage, setManage] = useState<ThirdParty | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [allFolders, setAllFolders] = useState<string[]>(DEFAULT_CLIENT_SUBFOLDERS);
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
@@ -628,6 +629,18 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
     setTps((data as ThirdParty[]) ?? []);
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
+
+  // Carrega TODAS as pastas do servidor (nomes distintos) para o gestor escolher
+  // quais o terceiro enxerga — a de "Documentos" já vem marcada por padrão.
+  useEffect(() => {
+    if (!supabase || !companyId) return;
+    supabase.from("files").select("name").eq("company_id", companyId).eq("type", "folder").then(({ data }) => {
+      const names = Array.from(new Set([...(data ?? []).map((f) => f.name as string).filter(Boolean), ...DEFAULT_CLIENT_SUBFOLDERS]));
+      // "Documentos" primeiro, o resto em ordem alfabética.
+      names.sort((a, b) => (a === "Documentos" ? -1 : b === "Documentos" ? 1 : a.localeCompare(b, "pt-BR")));
+      setAllFolders(names);
+    });
+  }, [companyId]);
 
   async function add() {
     if (!supabase || !name.trim()) return;
@@ -718,15 +731,17 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
                     <button onClick={() => { const p = prompt("Nova senha para este terceiro (deixe vazio para manter):"); if (p) savePerms(t, {}, p); }} className="text-emerald-400 hover:text-emerald-300 cursor-pointer">trocar senha</button>
                   </div>
                   {t.can_view_folders && (
-                    <div className="flex items-center gap-2 flex-wrap mb-3 text-[11px] text-gray-300 bg-black/20 rounded-lg p-2">
-                      <span className="text-gray-500">Pastas visíveis:</span>
-                      {DEFAULT_CLIENT_SUBFOLDERS.map((folder) => {
-                        const on = !t.visible_folders || t.visible_folders.length === 0 || t.visible_folders.includes(folder);
-                        return (
-                          <label key={folder} className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={on} onChange={() => saveFolders(t, folder)} className="accent-emerald-500" /> {folder}</label>
-                        );
-                      })}
-                      <span className="text-[10px] text-gray-500">(nada marcado = todas)</span>
+                    <div className="mb-3 text-[11px] text-gray-300 bg-black/20 rounded-lg p-2">
+                      <span className="text-gray-500">Pastas do servidor que este terceiro pode ver (a de Documentos já vem marcada):</span>
+                      <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap mt-1.5 max-h-32 overflow-y-auto custom-scroll">
+                        {allFolders.map((folder) => {
+                          const on = !t.visible_folders || t.visible_folders.length === 0 || t.visible_folders.includes(folder);
+                          return (
+                            <label key={folder} className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={on} onChange={() => saveFolders(t, folder)} className="accent-emerald-500" /> {folder}</label>
+                          );
+                        })}
+                      </div>
+                      <span className="text-[10px] text-gray-500 mt-1 block">Nada marcado = todas as pastas. Marque só as que ele deve enxergar.</span>
                     </div>
                   )}
                   <p className="text-[11px] text-gray-400 mb-2">Marque os clientes que este terceiro pode visualizar:</p>
