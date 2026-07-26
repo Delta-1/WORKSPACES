@@ -391,18 +391,21 @@ function Chamada({ group, profile }: { group: Group; profile: Profile | null }) 
       </div>
     );
   }
+  // A chamada abre em tela cheia (overlay fixo) para nunca vazar/cortar — funciona
+  // igual no computador e no celular, ocupando exatamente a tela disponível.
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-700 bg-black">
-      <div className="flex items-center justify-between bg-slate-800 px-3 py-2">
-        <span className="text-sm text-slate-300">Chamada — {group.name}</span>
-        <button onClick={() => setOpen(false)} className="rounded bg-rose-600 px-3 py-1 text-xs font-medium text-white hover:bg-rose-500">
-          Sair
+    <div className="fixed inset-0 z-[80] flex flex-col bg-black" style={{ height: "100dvh" }}>
+      <div className="flex items-center justify-between bg-slate-900 px-3 py-2 shrink-0" style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}>
+        <span className="truncate text-sm text-slate-300">Chamada — {group.name}</span>
+        <button onClick={() => setOpen(false)} className="rounded bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500">
+          Sair da chamada
         </button>
       </div>
       <iframe
         src={src}
         allow="camera; microphone; fullscreen; display-capture; autoplay"
-        className="h-[68vh] w-full"
+        className="w-full flex-1 border-0"
+        style={{ minHeight: 0 }}
       />
     </div>
   );

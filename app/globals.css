@@ -151,6 +151,15 @@ html[data-style="paper"] .text-gray-400 {
   border-radius: 3px;
 }
 
+/* Esconde a barra de rolagem (usado no launcher de apps paginado). */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 @keyframes splash-slide-left {
   to {
     transform: translateX(-100%);
