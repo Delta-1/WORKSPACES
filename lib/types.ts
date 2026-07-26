@@ -257,6 +257,7 @@ export type Chatbot = {
   continuous?: boolean | null;
   slot: string | null;
   flow: BotFlow | null;
+  owner_id?: string | null; // se preenchido, o bot é privado (só o dono vê no Labs)
   created_at: string;
   updated_at: string;
 };
