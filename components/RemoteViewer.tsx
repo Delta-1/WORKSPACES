@@ -38,7 +38,7 @@ import type { Profile, RemoteAgent } from "@/lib/types";
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 
 type Entry = { name: string; isDir: boolean; size: number; full?: string };
-type Quality = "alta" | "media" | "baixa";
+type Quality = "alta" | "media" | "baixa" | "game";
 type Progress = { label: string; pct: number } | null;
 type Peer = { id: string; name: string; avatar: string | null; color: string };
 
@@ -92,6 +92,13 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const [orbOpen, setOrbOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
+  // Ao entrar no modo jogo, pede 60 FPS (baixa latência) ao agente; ao sair, volta.
+  const prevQualityRef = useRef<Quality>("alta");
+  useEffect(() => {
+    if (gameMode) { prevQualityRef.current = quality === "game" ? "alta" : quality; changeQuality("game"); }
+    else if (quality === "game") { changeQuality(prevQualityRef.current || "alta"); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameMode]);
   const [fs, setFs] = useState(false); // tela cheia (qualquer acesso, não só game)
   // Ponteiro fantasma animado: quando o Orb mira/clica, um pontinho brilhante
   // desliza até o alvo (parece humano). x,y em fração 0..1 da área do vídeo.
@@ -1168,7 +1175,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
           <Minimize2 size={14} /> Sair da tela cheia
         </button>
       )}
-      {gameMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} onExit={() => setGameMode(false)} />}
+      {gameMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} isTouch={isTouch} onExit={() => setGameMode(false)} />}
     </div>
   );
 }
@@ -1214,11 +1221,12 @@ function Stick({ onVec }: { onVec: (x: number, y: number) => void }) {
 // num menuzinho no canto, latência/FPS e tela cheia. O analógico da esquerda vira
 // MOUSE quando você está no modo "Mouse".
 function GameOverlay({
-  sendInput, pcRef, videoRef, onExit,
+  sendInput, pcRef, videoRef, isTouch, onExit,
 }: {
   sendInput: (ev: object) => void;
   pcRef: React.RefObject<RTCPeerConnection | null>;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  isTouch: boolean;
   onExit: () => void;
 }) {
   const [cfg, setCfg] = useState<GameCfg>(() => {
@@ -1312,6 +1320,56 @@ function GameOverlay({
   }
   const pingColor = ping == null ? "#9ca3af" : ping < 60 ? "#10b981" : ping < 150 ? "#f59e0b" : "#ef4444";
   const saveCfg = (n: GameCfg) => { setCfg(n); try { localStorage.setItem("remote:gameCfg2", JSON.stringify(n)); } catch {} };
+
+  // DESKTOP: nada de controles de toque. Trava o ponteiro (pointer lock) no vídeo
+  // para MIRA relativa estilo FPS, e manda cliques/scroll. O teclado já é enviado
+  // direto (WASD e tudo) pelo handler global do RemoteViewer.
+  const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    if (isTouch) return;
+    const v = videoRef.current; if (!v) return;
+    const onMove = (e: MouseEvent) => { if (document.pointerLockElement === v) sendInput({ kind: "move-rel", dx: e.movementX, dy: e.movementY }); };
+    const onDown = (e: MouseEvent) => { if (document.pointerLockElement === v) { e.preventDefault(); sendInput({ kind: "down", button: e.button }); } };
+    const onUp = (e: MouseEvent) => { if (document.pointerLockElement === v) { e.preventDefault(); sendInput({ kind: "up", button: e.button }); } };
+    const onWheel = (e: WheelEvent) => { if (document.pointerLockElement === v) { e.preventDefault(); sendInput({ kind: "scroll", dy: e.deltaY }); } };
+    const onLockChange = () => setLocked(document.pointerLockElement === v);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("mouseup", onUp);
+    document.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("pointerlockchange", onLockChange);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("wheel", onWheel);
+      document.removeEventListener("pointerlockchange", onLockChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTouch]);
+
+  if (!isTouch) {
+    return (
+      <div className="fixed inset-0 z-[100] pointer-events-none">
+        {/* HUD mínimo — sem controles de toque no computador */}
+        <div className="pointer-events-auto absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/55 backdrop-blur px-3 py-1.5 rounded-full text-[11px] text-white">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: pingColor }} /> {ping != null ? `${ping} ms` : "—"}</span>
+          <span className="text-gray-300">{fps != null ? `${fps} FPS` : "—"}</span>
+          <span className="text-gray-400">|</span>
+          <span className="text-gray-300">{locked ? "🎮 jogando — Esc solta o mouse" : "clique na tela para jogar"}</span>
+          <button onClick={onExit} className="ml-1 px-2 py-0.5 rounded-full bg-red-600/80 hover:bg-red-600 text-white cursor-pointer">Sair</button>
+        </div>
+        {/* Camada que captura o clique inicial para travar o ponteiro no vídeo. */}
+        {!locked && (
+          <div className="pointer-events-auto absolute inset-0 flex items-center justify-center cursor-pointer" onClick={() => { try { videoRef.current?.requestPointerLock(); } catch { /* ignore */ } }}>
+            <div className="bg-black/50 backdrop-blur px-5 py-3 rounded-2xl text-white text-sm text-center">
+              🎮 <b>Modo Jogo</b> — clique para capturar o mouse e o teclado.<br /><span className="text-gray-300 text-xs">60 FPS · baixa latência · WASD e mouse direto · Esc para sair</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const Btn = ({ label, color, on }: { label: string; color: string; on: () => void }) => (
     <button onTouchStart={(e) => { e.preventDefault(); on(); }} className="w-16 h-16 rounded-full border-2 border-white/40 text-white text-2xl font-bold flex items-center justify-center active:brightness-125" style={{ background: color }}>{label}</button>
