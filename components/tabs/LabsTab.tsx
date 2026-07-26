@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, BrainCircuit, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FileText, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
@@ -479,8 +479,9 @@ function TeachModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [genning, setGenning] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })); }, [msgs, busy]);
+  useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })); }, [msgs, busy, genning]);
 
   async function send() {
     const text = input.trim();
@@ -497,12 +498,35 @@ function TeachModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
     } finally { setBusy(false); }
   }
 
+  // Transforma toda a conversa de treino num TUTORIAL passo a passo e salva como
+  // arquivo na memória do agente (fica clicável no grafo de Arquivos).
+  async function generateTutorial() {
+    if (genning) return;
+    setGenning(true);
+    setMsgs((m) => [...m, { role: "assistant", text: "📝 Montando o tutorial passo a passo a partir do que você me ensinou…" }]);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/labs/tutorial", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ agentId: agent.id, history: msgs.slice(-24) }) });
+      const data = await res.json();
+      if (data.error) { setMsgs((m) => [...m, { role: "assistant", text: `Não consegui gerar: ${data.error}` }]); return; }
+      const saved = data.fileName ? `\n\n✅ Salvei como **${data.fileName}** na minha memória — dá pra abrir em Arquivos e clicar pra ler quando bater dúvida.` : "";
+      setMsgs((m) => [...m, { role: "assistant", text: `${data.tutorial}${saved}` }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema ao gerar o tutorial. Tenta de novo?" }]);
+    } finally { setGenning(false); }
+  }
+
   return (
     <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div className="w-full max-w-lg h-[80vh] flex flex-col bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <h3 className="text-sm font-bold flex items-center gap-2"><BrainCircuit size={15} className="text-emerald-400" /> Treinar {agent.name}</h3>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={generateTutorial} disabled={genning || busy} title="Transformar o que foi ensinado num tutorial passo a passo (salvo como arquivo)" className="text-[11px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer disabled:opacity-50">
+              <FileText size={13} /> {genning ? "gerando…" : "Gerar tutorial"}
+            </button>
+            <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+          </div>
         </div>
         <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-3 space-y-2">
           {msgs.map((m, i) => (
@@ -516,7 +540,7 @@ function TeachModal({ agent, onClose }: { agent: Agent; onClose: () => void }) {
           <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Ensine algo ao agente…" className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
           <button onClick={send} disabled={busy || !input.trim()} className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50"><Save size={15} /></button>
         </div>
-        <p className="text-[10px] text-gray-500 px-3 pb-2 -mt-1">Tudo que você ensina fica salvo em <b>treinamento.md</b> na memória do agente (aparece no grafo).</p>
+        <p className="text-[10px] text-gray-500 px-3 pb-2 -mt-1">Tudo que você ensina fica salvo em <b>treinamento.md</b>. Clique em <b>Gerar tutorial</b> para virar um passo a passo salvo como arquivo (aparece no grafo e a equipe clica pra ler).</p>
       </div>
     </div>
   );

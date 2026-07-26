@@ -21,9 +21,32 @@ function iconFor(f: Field) {
 }
 type Form = { ok: boolean; id?: string; title?: string; description?: string | null; theme?: { color?: string; celebrate?: boolean } | null; fields?: Field[] };
 
-const MAX_FILE = 3 * 1024 * 1024; // 3 MB por arquivo (guardado embutido na resposta)
+const MAX_FILE = 5 * 1024 * 1024; // 5 MB por arquivo (guardado embutido na resposta)
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+}
+
+// Comprime fotos no próprio navegador antes de enviar: redimensiona para no máx.
+// 1280px no maior lado e recompacta em JPEG. Fotos de celular (5–10 MB) caem para
+// ~100–300 KB, ficam leves na planilha e não estouram o limite.
+async function compressImage(file: File, maxSide = 1280, quality = 0.72): Promise<string> {
+  if (!file.type.startsWith("image/")) return fileToDataUrl(file);
+  const dataUrl = await fileToDataUrl(file);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
 }
 
 // Página PÚBLICA de preenchimento de formulário. Renderiza os campos criados na
@@ -157,7 +180,14 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
                     <label className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl cursor-pointer text-white font-medium" style={{ background: `color-mix(in srgb, ${color} 85%, black)` }}>
                       {f.type === "photo" ? <Camera size={16} /> : <Upload size={16} />} {v ? "Trocar" : (f.type === "photo" ? "Tirar/enviar foto" : "Enviar arquivo")}
                       <input type="file" accept={f.type === "photo" ? "image/*" : undefined} capture={f.type === "photo" ? "environment" : undefined} className="hidden"
-                        onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; if (file.size > MAX_FILE) { setError("Arquivo muito grande (máx 3 MB)."); return; } set(f.id, await fileToDataUrl(file)); }} />
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]; if (!file) return;
+                          setError(null);
+                          // Fotos são comprimidas no navegador; outros arquivos vão como estão (máx 5 MB).
+                          if (f.type === "photo" || file.type.startsWith("image/")) { set(f.id, await compressImage(file)); return; }
+                          if (file.size > MAX_FILE) { setError("Arquivo muito grande (máx 5 MB)."); return; }
+                          set(f.id, await fileToDataUrl(file));
+                        }} />
                     </label>
                     {typeof v === "string" && v.startsWith("data:image") && <img src={v} alt="" className="w-14 h-14 rounded-lg object-cover ring-2 ring-white/10" />}
                     {typeof v === "string" && v.startsWith("data:") && !v.startsWith("data:image") && <span className="text-[12px]" style={{ color }}>arquivo anexado ✓</span>}
