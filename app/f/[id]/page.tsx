@@ -1,11 +1,23 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { Camera, Check, Loader2, Upload } from "lucide-react";
+import { AlignLeft, AtSign, Calendar, Camera, Check, Hash, Loader2, Paperclip, Phone, Type, Upload, User } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 type FieldType = "short_text" | "long_text" | "number" | "email" | "phone" | "date" | "choice" | "multichoice" | "photo" | "file" | "section";
 type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string };
+
+// Ícone por tipo/rótulo do campo (estilo do design de referência).
+function iconFor(f: Field) {
+  const l = f.label.toLowerCase();
+  if (f.type === "email" || l.includes("e-mail") || l.includes("email")) return AtSign;
+  if (f.type === "phone" || l.includes("telefone") || l.includes("whats") || l.includes("celular")) return Phone;
+  if (f.type === "number" || l.includes("cnpj") || l.includes("cpf")) return Hash;
+  if (f.type === "date" || l.includes("data") || l.includes("nascimento")) return Calendar;
+  if (f.type === "long_text") return AlignLeft;
+  if (l.includes("nome")) return User;
+  return Type;
+}
 type Form = { ok: boolean; id?: string; title?: string; description?: string | null; theme?: { color?: string } | null; fields?: Field[] };
 
 const MAX_FILE = 3 * 1024 * 1024; // 3 MB por arquivo (guardado embutido na resposta)
@@ -60,6 +72,9 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
       .wf-card:focus-within{border-color:color-mix(in srgb, var(--wf) 55%, transparent)}
       .wf-opt{display:flex;align-items:center;gap:.6rem;font-size:.9rem;cursor:pointer;padding:.5rem .7rem;border-radius:11px;border:1px solid transparent;transition:background .15s,border-color .15s}
       .wf-opt:hover{background:rgba(255,255,255,.05)}
+      .wf-optcard{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;font-size:.86rem;color:#e2e8f0;cursor:pointer;padding:.65rem .8rem;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);transition:all .2s cubic-bezier(.4,0,.2,1)}
+      .wf-optcard:hover{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.06)}
+      .wf-dot{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s}
       .wf-orb{position:absolute;width:46vw;height:46vw;max-width:620px;max-height:620px;border-radius:50%;filter:blur(90px);opacity:.22}
       .wf-orb1{top:-14vw;left:-10vw;animation:wfFloat 14s ease-in-out infinite}
       .wf-orb2{bottom:-16vw;right:-12vw;opacity:.16;animation:wfFloat 18s ease-in-out infinite reverse}
@@ -113,17 +128,27 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
                   <textarea rows={3} value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)} className="wf-input resize-none" />
                 ) : f.type === "choice" ? (
                   <div className="space-y-1">
-                    {(f.options ?? []).map((op) => (
-                      <label key={op} className="wf-opt" style={v === op ? { borderColor: color, background: `color-mix(in srgb, ${color} 12%, transparent)` } : undefined}><input type="radio" name={f.id} checked={v === op} onChange={() => set(f.id, op)} style={{ accentColor: color }} /> {op}</label>
-                    ))}
+                    <div className="grid grid-cols-2 gap-2">
+                      {(f.options ?? []).map((op) => (
+                        <button key={op} type="button" onClick={() => set(f.id, op)} className="wf-optcard" style={v === op ? { borderColor: color, background: `color-mix(in srgb, ${color} 14%, transparent)`, transform: "translateY(-2px)", boxShadow: `0 0 18px -4px ${color}` } : undefined}>
+                          <span className="wf-dot" style={v === op ? { borderColor: color, background: color } : undefined}>{v === op && <Check size={11} className="text-white" />}</span>
+                          {op}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : f.type === "multichoice" ? (
                   <div className="space-y-1">
-                    {(f.options ?? []).map((op) => {
-                      const arr = Array.isArray(v) ? (v as string[]) : [];
-                      const on = arr.includes(op);
-                      return <label key={op} className="wf-opt" style={on ? { borderColor: color, background: `color-mix(in srgb, ${color} 12%, transparent)` } : undefined}><input type="checkbox" checked={on} onChange={(e) => set(f.id, e.target.checked ? [...arr, op] : arr.filter((x) => x !== op))} style={{ accentColor: color }} /> {op}</label>;
-                    })}
+                    <div className="grid grid-cols-2 gap-2">
+                      {(f.options ?? []).map((op) => {
+                        const arr = Array.isArray(v) ? (v as string[]) : [];
+                        const on = arr.includes(op);
+                        return <button key={op} type="button" onClick={() => set(f.id, on ? arr.filter((x) => x !== op) : [...arr, op])} className="wf-optcard" style={on ? { borderColor: color, background: `color-mix(in srgb, ${color} 14%, transparent)`, transform: "translateY(-2px)", boxShadow: `0 0 18px -4px ${color}` } : undefined}>
+                          <span className="wf-dot" style={{ borderRadius: 6, ...(on ? { borderColor: color, background: color } : {}) }}>{on && <Check size={11} className="text-white" />}</span>
+                          {op}
+                        </button>;
+                      })}
+                    </div>
                   </div>
                 ) : f.type === "photo" || f.type === "file" ? (
                   <div className="flex items-center gap-3">
@@ -136,10 +161,15 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
                     {typeof v === "string" && v.startsWith("data:") && !v.startsWith("data:image") && <span className="text-[12px]" style={{ color }}>arquivo anexado ✓</span>}
                   </div>
                 ) : (
-                  <input
-                    type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"}
-                    value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)}
-                    className="wf-input" />
+                  (() => { const Ic = iconFor(f); return (
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none"><Ic size={16} /></span>
+                      <input
+                        type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"}
+                        value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)}
+                        className="wf-input" style={{ paddingLeft: "2.4rem" }} />
+                    </div>
+                  ); })()
                 )}
               </div>
             );

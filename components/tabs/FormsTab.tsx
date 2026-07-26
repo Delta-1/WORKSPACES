@@ -108,11 +108,24 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [dragId, setDragId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
     supabase.from("chatbots").select("id,name").eq("company_id", form.company_id).order("name").then(({ data }) => setAgents((data as { id: string; name: string }[])?.filter((a) => a.name) ?? []));
   }, [form.company_id]);
+
+  // Arrastar para reordenar: quando o card arrastado passa por cima de outro, ele
+  // troca de posição na hora.
+  function reorderTo(overId: string) {
+    if (!dragId || dragId === overId) return;
+    setFields((fs) => {
+      const from = fs.findIndex((f) => f.id === dragId);
+      const to = fs.findIndex((f) => f.id === overId);
+      if (from < 0 || to < 0) return fs;
+      const c = [...fs]; const [m] = c.splice(from, 1); c.splice(to, 0, m); return c;
+    });
+  }
 
   const link = typeof window !== "undefined" ? `${window.location.origin}/f/${form.id}` : "";
   function addField(type: FieldType) { setFields((f) => [...f, { id: uid(), label: type === "section" ? "Nova seção" : "Nova pergunta", type, required: false, options: (type === "choice" || type === "multichoice") ? ["Opção 1"] : undefined }]); }
@@ -161,11 +174,21 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
         </div>
 
         {fields.map((f) => (
-          <div key={f.id} className="rounded-xl p-3 bg-black/20 border border-white/10">
+          <div
+            key={f.id}
+            onDragOver={(e) => { e.preventDefault(); reorderTo(f.id); }}
+            className={`rounded-xl p-3 bg-black/20 border transition-all ${dragId === f.id ? "border-emerald-500 opacity-60" : "border-white/10"}`}
+          >
             <div className="flex items-start gap-2">
-              <div className="flex flex-col gap-0.5 pt-1 text-gray-500">
+              <div className="flex flex-col items-center gap-0.5 pt-1 text-gray-500">
                 <button onClick={() => move(f.id, -1)} className="hover:text-white cursor-pointer text-[10px]">▲</button>
-                <GripVertical size={12} />
+                <span
+                  draggable
+                  onDragStart={() => setDragId(f.id)}
+                  onDragEnd={() => setDragId(null)}
+                  title="Arraste para reordenar"
+                  className="cursor-grab active:cursor-grabbing text-gray-500 hover:text-white"
+                ><GripVertical size={14} /></span>
                 <button onClick={() => move(f.id, 1)} className="hover:text-white cursor-pointer text-[10px]">▼</button>
               </div>
               <div className="flex-1 min-w-0 space-y-2">
