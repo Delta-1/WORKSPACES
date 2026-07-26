@@ -70,10 +70,14 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     setActiveScreen(sourceId);
     channelRef.current?.send({ type: "broadcast", event: "signal", payload: { to: "agent", type: "select-screen", sourceId } });
   }
-  function changeQuality(level: Quality) {
-    setQuality(level);
+  function sendQuality(level: Quality) {
     channelRef.current?.send({ type: "broadcast", event: "signal", payload: { to: "agent", type: "set-quality", level } });
   }
+  function changeQuality(level: Quality) {
+    setQuality(level);
+    sendQuality(level);
+  }
+  const [autoQ, setAutoQ] = useState(true); // AUTO: melhor qualidade p/ a latência
 
   // Gerenciador de arquivos remoto
   const [showFiles, setShowFiles] = useState(false);
@@ -92,6 +96,23 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const [orbOpen, setOrbOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
+  // AUTO: escolhe a melhor qualidade para a latência atual (entra já bom e adapta).
+  const autoQRef = useRef<Quality>("alta");
+  useEffect(() => {
+    if (!autoQ || gameMode) return;
+    const pick = async () => {
+      const pc = pcRef.current; if (!pc) return;
+      let rtt: number | null = null;
+      try { const st = await pc.getStats(); st.forEach((r) => { if (r.type === "candidate-pair" && (r.state === "succeeded" || r.nominated) && typeof r.currentRoundTripTime === "number") rtt = Math.round(r.currentRoundTripTime * 1000); }); } catch { /* ignore */ }
+      const best: Quality = rtt == null ? "alta" : rtt < 80 ? "alta" : rtt < 170 ? "media" : "baixa";
+      if (best !== autoQRef.current) { autoQRef.current = best; setQuality(best); sendQuality(best); }
+    };
+    pick();
+    const id = setInterval(pick, 4000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoQ, gameMode]);
+
   // Ao entrar no modo jogo, pede 60 FPS (baixa latência) ao agente; ao sair, volta.
   const prevQualityRef = useRef<Quality>("alta");
   useEffect(() => {
@@ -776,10 +797,11 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
           <div className="flex items-center gap-1.5" title="Resolução / qualidade da imagem">
             <Gauge size={14} className="text-gray-400" />
             <select
-              value={quality}
-              onChange={(e) => changeQuality(e.target.value as Quality)}
+              value={autoQ ? "auto" : quality}
+              onChange={(e) => { const v = e.target.value; if (v === "auto") { setAutoQ(true); } else { setAutoQ(false); changeQuality(v as Quality); } }}
               className="text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 outline-none cursor-pointer"
             >
+              <option value="auto">Auto{autoQ && quality !== "game" ? ` (${quality})` : ""}</option>
               <option value="alta">Alta (nítida)</option>
               <option value="media">Média</option>
               <option value="baixa">Baixa (menos lag)</option>

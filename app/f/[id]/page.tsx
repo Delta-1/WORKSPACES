@@ -3,9 +3,10 @@
 import { use, useEffect, useState } from "react";
 import { AlignLeft, AtSign, Calendar, Camera, Check, Hash, Loader2, Paperclip, Phone, Type, Upload, User } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { applyMask, celebrate as fireConfetti, type MaskId } from "@/lib/mask";
 
 type FieldType = "short_text" | "long_text" | "number" | "email" | "phone" | "date" | "choice" | "multichoice" | "photo" | "file" | "section";
-type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string };
+type Field = { id: string; label: string; type: FieldType; required?: boolean; options?: string[]; category?: string; mask?: MaskId };
 
 // Ícone por tipo/rótulo do campo (estilo do design de referência).
 function iconFor(f: Field) {
@@ -18,7 +19,7 @@ function iconFor(f: Field) {
   if (l.includes("nome")) return User;
   return Type;
 }
-type Form = { ok: boolean; id?: string; title?: string; description?: string | null; theme?: { color?: string } | null; fields?: Field[] };
+type Form = { ok: boolean; id?: string; title?: string; description?: string | null; theme?: { color?: string; celebrate?: boolean } | null; fields?: Field[] };
 
 const MAX_FILE = 3 * 1024 * 1024; // 3 MB por arquivo (guardado embutido na resposta)
 function fileToDataUrl(file: File): Promise<string> {
@@ -54,7 +55,8 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
     setSaving(true); setError(null);
     const { error } = await supabase.rpc("submit_form_response", { p_form_id: id, p_data: values });
     setSaving(false);
-    if (error) setError(error.message); else setDone(true);
+    if (error) setError(error.message);
+    else { setDone(true); if (form?.theme?.celebrate !== false) fireConfetti(color); }
   }
 
   const shellStyle = { ["--wf" as string]: color } as React.CSSProperties;
@@ -165,8 +167,8 @@ export default function FillForm({ params }: { params: Promise<{ id: string }> }
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none"><Ic size={16} /></span>
                       <input
-                        type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"}
-                        value={(v as string) ?? ""} onChange={(e) => set(f.id, e.target.value)}
+                        type={f.mask && f.mask !== "none" ? "tel" : f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "phone" ? "tel" : f.type === "date" ? "date" : "text"}
+                        value={(v as string) ?? ""} onChange={(e) => set(f.id, f.mask && f.mask !== "none" ? applyMask(f.mask, e.target.value) : e.target.value)}
                         className="wf-input" style={{ paddingLeft: "2.4rem" }} />
                     </div>
                   ); })()
