@@ -686,6 +686,19 @@ function sanitizeForSpeech(text) {
   return t.replace(/\s{2,}/g, " ").trim();
 }
 
+// Detecta LISTAGEM: quando a resposta é uma lista de itens/opções/etapas, é melhor
+// mandar por TEXTO (a pessoa lê com calma) do que ler tudo em áudio. Regra: 3+
+// linhas começando com marcador (número, hífen, bullet ou emoji).
+function looksLikeList(text) {
+  const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 3) return false;
+  let marked = 0;
+  for (const l of lines) {
+    if (/^(\d+[.)\-]|[-*•▪◦●·]|\p{Extended_Pictographic})/u.test(l)) marked++;
+  }
+  return marked >= 3;
+}
+
 // ElevenLabs Text-to-Speech (gera a resposta do robô em áudio). Retorna Buffer mp3.
 async function synthesizeSpeech(text, key, voiceId) {
   const apiKey = key || elevenKey;
@@ -2089,8 +2102,9 @@ async function startSession(numberId) {
             }
             if (reply) {
               // Responde por áudio conforme a preferência (copiloto) ou se o cliente falou por áudio.
+              // Exceção: se a resposta for uma LISTAGEM, manda por TEXTO (mais fácil de ler).
               let sentAsAudio = false;
-              if (wantVoice) {
+              if (wantVoice && !looksLikeList(reply)) {
                 const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, agentForReply?.elevenlabs_voice_id);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;

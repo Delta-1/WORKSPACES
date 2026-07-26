@@ -120,9 +120,12 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
         list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? list;
       }
     }
+    // Agentes privados (owner_id preenchido) só aparecem para o próprio dono.
+    const me = profile?.id ?? null;
+    list = list.filter((a) => { const o = (a as { owner_id?: string | null }).owner_id; return !o || o === me; });
     setAgents(list);
     setNumbers(((await supabase.from("whatsapp_numbers").select("*").order("created_at")).data as WhatsappNumber[]) ?? []);
-  }, [canManage, profile?.company_id]);
+  }, [canManage, profile?.company_id, profile?.id]);
 
   useEffect(() => {
     load();
@@ -320,6 +323,8 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       continuous: f.continuous ?? false,
       flow: f.flow ?? null,
       company_id: profile?.company_id ?? null,
+      // Privado: só o dono vê no Labs (owner_id preenchido = privado).
+      owner_id: f.owner_id ?? null,
     };
     let agentId = f.id;
     if (f.id) {
@@ -434,6 +439,12 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
 
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={f.enabled ?? true} onChange={(e) => set({ enabled: e.target.checked })} className="accent-indigo-500" /> Agente ativo
+        </label>
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-fuchsia-500/30 bg-fuchsia-950/20 px-3 py-2">
+          <input type="checkbox" checked={!!f.owner_id} onChange={(e) => set({ owner_id: e.target.checked ? (f.owner_id || profile?.id || null) : null })} className="accent-fuchsia-500 mt-0.5" />
+          <span>
+            <b className="text-fuchsia-300">Privado (só eu vejo)</b> — este agente aparece apenas para você no Labs, mesmo com outras pessoas na empresa.
+          </span>
         </label>
         <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
           <input type="checkbox" checked={f.continuous ?? false} onChange={(e) => set({ continuous: e.target.checked })} className="accent-emerald-500 mt-0.5" />
