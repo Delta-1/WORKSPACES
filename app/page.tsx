@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -41,6 +41,7 @@ import MessagesTab from "@/components/tabs/MessagesTab";
 import GroupTab from "@/components/tabs/GroupTab";
 import AcademicTab from "@/components/tabs/AcademicTab";
 import StudioTab from "@/components/tabs/StudioTab";
+import SlidesTab from "@/components/tabs/SlidesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
@@ -57,6 +58,7 @@ const APPS: AppDef[] = [
   { id: "group", label: "Group", icon: Users2, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "academico", label: "Estúdio Acadêmico", icon: GraduationCap, accent: "bg-indigo-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "estudio", label: "Estúdio", icon: FileText, accent: "bg-blue-900/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "apresentacoes", label: "Apresentações", icon: Presentation, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -493,6 +495,7 @@ export default function Home() {
         {tab === "group" && <GroupTab profile={profile} />}
         {tab === "academico" && <AcademicTab profile={profile} />}
         {tab === "estudio" && <StudioTab profile={profile} />}
+        {tab === "apresentacoes" && <SlidesTab profile={profile} />}
         {tab === "mensagens" && <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />}
         {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
         {tab === "chat" && <ChatTab />}
