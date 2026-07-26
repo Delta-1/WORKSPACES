@@ -609,6 +609,9 @@ const QUALITY = {
   alta: { maxWidth: 2560, maxHeight: 1440, maxFrameRate: 30 },
   media: { maxWidth: 1600, maxHeight: 900, maxFrameRate: 30 },
   baixa: { maxWidth: 1280, maxHeight: 720, maxFrameRate: 20 }, // menos lag em rede fraca
+  // MODO JOGO: 60 FPS, fluido e com baixa latência (para jogar remoto). Resolução
+  // moderada para caber a banda e priorizar a resposta em vez da nitidez.
+  game: { maxWidth: 1600, maxHeight: 900, maxFrameRate: 60 },
 };
 
 async function captureScreen(sourceId) {
@@ -625,14 +628,32 @@ async function captureScreen(sourceId) {
   // Tenta capturar também o ÁUDIO DO SISTEMA (o som que SAI da máquina — o que
   // toca no computador). NÃO é o microfone/ambiente. Se o SO não permitir o
   // loopback, cai para vídeo-só sem quebrar a transmissão.
+  let ms;
   try {
-    return await navigator.mediaDevices.getUserMedia({
+    ms = await navigator.mediaDevices.getUserMedia({
       audio: { mandatory: { chromeMediaSource: "desktop" } },
       video,
     });
   } catch {
-    return navigator.mediaDevices.getUserMedia({ audio: false, video });
+    ms = await navigator.mediaDevices.getUserMedia({ audio: false, video });
   }
+  // Dica ao codificador: priorizar MOVIMENTO/FPS (bom p/ jogo) em vez de nitidez.
+  try { const vt = ms.getVideoTracks()[0]; if (vt) vt.contentHint = "motion"; } catch { /* ignore */ }
+  return ms;
+}
+
+// Ajusta o envio de vídeo: no modo jogo, mantém o FPS (não trava o framerate) e
+// libera mais banda para ficar fluido; nos outros, deixa o padrão.
+async function tuneVideoSender(game) {
+  if (!videoSender) return;
+  try {
+    const p = videoSender.getParameters();
+    p.degradationPreference = game ? "maintain-framerate" : "balanced";
+    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = game ? 10_000_000 : 5_000_000;
+    p.encodings[0].maxFramerate = game ? 60 : 30;
+    await videoSender.setParameters(p);
+  } catch { /* alguns navegadores não deixam mexer — segue o padrão */ }
 }
 
 // Troca a resolução/qualidade da transmissão sem reconectar (menos lag).
@@ -649,6 +670,7 @@ async function setQuality(level) {
       /* ignore */
     }
     stream = newStream;
+    tuneVideoSender(level === "game");
     setStatus("Qualidade: " + level);
   } catch (e) {
     setStatus("Falha ao mudar qualidade: " + e.message);
@@ -673,6 +695,7 @@ async function startStreaming() {
     const sender = pc.addTrack(t, stream);
     if (t.kind === "video") videoSender = sender;
   });
+  tuneVideoSender(currentQuality === "game");
 
   const control = pc.createDataChannel("control");
   control.onmessage = (ev) => {
