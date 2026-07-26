@@ -122,7 +122,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     if (makeServer && !pwFor.graph_folder_id) {
       const { data: folder } = await supabase
         .from("files")
-        .insert({ name: `Servidor: ${pwFor.name}`, type: "folder", parent_id: null })
+        .insert({ name: `Servidor: ${pwFor.name}`, type: "folder", parent_id: null, company_id: companyId })
         .select("id")
         .single();
       if (folder) patch.graph_folder_id = folder.id;
