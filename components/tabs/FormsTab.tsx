@@ -23,7 +23,8 @@ export default function FormsTab({ profile }: { profile: Profile | null }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Form | null>(null);
   const [viewing, setViewing] = useState<Form | null>(null);
-  const [picking, setPicking] = useState<Form | null>(null); // balão: planilha x editar
+  const [picking, setPicking] = useState<Form | null>(null); // balão: copiar link x planilha x editar
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const companyId = profile?.company_id ?? null;
   const canManage = profile?.role === "gestor" || profile?.role === "gerente" || !!(profile?.tool_access?.formularios);
 
@@ -89,6 +90,17 @@ export default function FormsTab({ profile }: { profile: Profile | null }) {
             </div>
             <p className="text-sm text-gray-400 mb-4">O que você quer fazer?</p>
             <div className="grid grid-cols-1 gap-2">
+              <button
+                onClick={() => {
+                  const link = `${window.location.origin}/f/${picking.id}`;
+                  navigator.clipboard?.writeText(link);
+                  setCopiedId(picking.id);
+                  setTimeout(() => setCopiedId(null), 1600);
+                }}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 cursor-pointer"
+              >
+                {copiedId === picking.id ? <><Check size={16} className="text-emerald-400" /> Link copiado!</> : <><Link2 size={16} /> Copiar link do formulário</>}
+              </button>
               <button onClick={() => { setViewing(picking); setPicking(null); }} className="flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"><FileSpreadsheet size={16} /> Ver a planilha (respostas)</button>
               {canManage && <button onClick={() => { setEditing(picking); setPicking(null); }} className="flex items-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 cursor-pointer"><Pencil size={16} /> Editar o formulário</button>}
             </div>
@@ -130,7 +142,7 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
   }
 
   const link = typeof window !== "undefined" ? `${window.location.origin}/f/${form.id}` : "";
-  function addField(type: FieldType) { setFields((f) => [...f, { id: uid(), label: type === "section" ? "Nova seção" : "Nova pergunta", type, required: false, options: (type === "choice" || type === "multichoice") ? ["Opção 1"] : undefined }]); }
+  function addField(type: FieldType) { setFields((f) => [...f, { id: uid(), label: type === "section" ? "Nova seção" : TYPE_LABEL[type], type, required: false, options: (type === "choice" || type === "multichoice") ? ["Opção 1"] : undefined }]); }
   function patchField(id: string, up: Partial<Field>) { setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...up } : f))); }
   function removeField(id: string) { setFields((fs) => fs.filter((f) => f.id !== id)); }
   function move(id: string, dir: -1 | 1) {
@@ -249,7 +261,12 @@ function FormBuilder({ form, onClose }: { form: Form; onClose: () => void }) {
 function FormResponses({ form, onClose }: { form: Form; onClose: () => void }) {
   const [rows, setRows] = useState<Response[]>([]);
   const [loading, setLoading] = useState(true);
-  const cols = useMemo(() => (form.fields || []).filter((f) => f.type !== "section"), [form.fields]);
+  const cols = useMemo(
+    () => (form.fields || [])
+      .filter((f) => f.type !== "section")
+      .map((f, i) => ({ ...f, label: (f.label || "").trim() || `Campo ${i + 1}` })),
+    [form.fields]
+  );
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -264,15 +281,26 @@ function FormResponses({ form, onClose }: { form: Form; onClose: () => void }) {
     return () => { if (supabase) supabase.removeChannel(ch); };
   }, [load, form.id]);
 
+  // Resolve o valor da coluna: as respostas novas são gravadas pela ID do campo,
+  // mas algumas origens (ex.: extras do cadastro de clientes) gravam pelo rótulo.
+  // Tentamos as duas chaves para nunca aparecer coluna vazia à toa.
+  function valueFor(data: Record<string, unknown>, c: Field): unknown {
+    if (data == null) return null;
+    if (c.id in data && data[c.id] != null && data[c.id] !== "") return data[c.id];
+    if (c.label in data && data[c.label] != null && data[c.label] !== "") return data[c.label];
+    return data[c.id] ?? data[c.label] ?? null;
+  }
   function cell(v: unknown): string {
     if (v == null) return "";
     if (Array.isArray(v)) return v.join(", ");
+    if (typeof v === "string" && v.startsWith("data:image")) return "[foto]";
     if (typeof v === "string" && v.startsWith("data:")) return "[arquivo]";
+    if (typeof v === "string" && /^https?:\/\//i.test(v)) return v;
     return String(v);
   }
   function exportCsv() {
     const header = ["Data", ...cols.map((c) => c.label)];
-    const lines = rows.map((r) => [new Date(r.created_at).toLocaleString("pt-BR"), ...cols.map((c) => `"${cell(r.data[c.id]).replace(/"/g, '""')}"`)].join(","));
+    const lines = rows.map((r) => [new Date(r.created_at).toLocaleString("pt-BR"), ...cols.map((c) => `"${cell(valueFor(r.data, c)).replace(/"/g, '""')}"`)].join(","));
     const csv = [header.join(","), ...lines].join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = `${form.title}.csv`; a.click(); URL.revokeObjectURL(url);
@@ -304,7 +332,22 @@ function FormResponses({ form, onClose }: { form: Form; onClose: () => void }) {
               ) : rows.map((r) => (
                 <tr key={r.id} className="hover:bg-white/5">
                   <td className="px-3 py-2 border-b border-white/5 text-[11px] text-gray-500 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
-                  {cols.map((c) => <td key={c.id} className="px-3 py-2 border-b border-white/5 text-gray-200 max-w-[240px] truncate">{cell(r.data[c.id])}</td>)}
+                  {cols.map((c) => {
+                    const v = valueFor(r.data, c);
+                    return (
+                      <td key={c.id} className="px-3 py-2 border-b border-white/5 text-gray-200 max-w-[240px] truncate">
+                        {typeof v === "string" && v.startsWith("data:image") ? (
+                          <a href={v} target="_blank" rel="noreferrer"><img src={v} alt="foto" className="w-12 h-12 rounded object-cover ring-1 ring-white/10 inline-block" /></a>
+                        ) : typeof v === "string" && v.startsWith("data:") ? (
+                          <a href={v} download className="text-emerald-400 hover:underline">baixar arquivo</a>
+                        ) : typeof v === "string" && /^https?:\/\//i.test(v) ? (
+                          <a href={v} target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline truncate inline-block max-w-[220px]">{v}</a>
+                        ) : (
+                          cell(v)
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

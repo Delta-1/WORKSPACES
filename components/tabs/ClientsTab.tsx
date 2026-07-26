@@ -142,19 +142,25 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
   const [companyCode, setCompanyCode] = useState<string>("");
   const [subtab, setSubtab] = useState<"clientes" | "terceiros">("clientes");
   const [view, setView] = useState<"cards" | "table">("cards");
+  const [extraCols, setExtraCols] = useState<{ id: string; label: string }[]>([]);
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    const [cRes, aRes, coRes] = await Promise.all([
+    const [cRes, aRes, coRes, sRes] = await Promise.all([
       supabase.from("clients").select("*").eq("company_id", companyId).order("name"),
       supabase.from("remote_agents").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
       supabase.from("companies").select("company_code").eq("id", companyId).maybeSingle(),
+      supabase.from("company_settings").select("client_form_extra").eq("company_id", companyId).maybeSingle(),
     ]);
     setClients((cRes.data as Client[]) ?? []);
     setAgents((aRes.data as RemoteAgent[]) ?? []);
     setCompanyCode((coRes.data?.company_code as string) ?? "");
+    const ex = Array.isArray(sRes.data?.client_form_extra) ? (sRes.data!.client_form_extra as { id: string; label: string; type?: string }[]) : [];
+    // As colunas extras seguem os campos que a empresa adicionou ao formulário de
+    // cadastro (rótulo = nome da coluna). Os dados ficam em clients.custom_data.
+    setExtraCols(ex.filter((f) => f.type !== "section").map((f) => ({ id: f.id, label: (f.label || "").trim() || "Campo" })));
   }, [companyId]);
 
   useEffect(() => {
@@ -266,14 +272,18 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 bg-[#0b0f16]">
               <tr>
-                {["Cliente", "Telefone", "CNPJ/CPF", "E-mail", "Regime", "Máquinas", ""].map((h) => (
+                {["Cliente", "Telefone", "CNPJ/CPF", "E-mail", "Regime", "Máquinas"].map((h) => (
                   <th key={h} className="text-left text-[11px] text-gray-400 font-semibold px-3 py-2 border-b border-white/10 whitespace-nowrap">{h}</th>
                 ))}
+                {extraCols.map((col) => (
+                  <th key={col.id} className="text-left text-[11px] text-gray-400 font-semibold px-3 py-2 border-b border-white/10 whitespace-nowrap">{col.label}</th>
+                ))}
+                <th className="border-b border-white/10 px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7} className="text-center text-gray-500 py-8">Nenhum cliente cadastrado.</td></tr>
+                <tr><td colSpan={7 + extraCols.length} className="text-center text-gray-500 py-8">Nenhum cliente cadastrado.</td></tr>
               ) : filtered.map((c) => {
                 const machines = agents.filter((a) => a.client_id === c.id);
                 return (
@@ -292,6 +302,12 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
                     <td className="px-3 py-2 border-b border-white/5 text-gray-400 truncate max-w-[180px]">{c.email || "—"}</td>
                     <td className="px-3 py-2 border-b border-white/5 text-gray-400 whitespace-nowrap">{c.tax_regime || "—"}</td>
                     <td className="px-3 py-2 border-b border-white/5 text-gray-400 text-center">{machines.length}</td>
+                    {extraCols.map((col) => {
+                      const cd = (c.custom_data ?? {}) as Record<string, unknown>;
+                      const raw = cd[col.label] ?? cd[col.id];
+                      const val = raw == null ? "" : Array.isArray(raw) ? raw.join(", ") : String(raw);
+                      return <td key={col.id} className="px-3 py-2 border-b border-white/5 text-gray-300 max-w-[200px] truncate" title={val}>{val || "—"}</td>;
+                    })}
                     <td className="px-3 py-2 border-b border-white/5 whitespace-nowrap">
                       <span className="flex items-center gap-1.5">
                         {c.phone && onOpenMessages && (
@@ -767,7 +783,7 @@ function ClientFormEditor({ companyId, onClose }: { companyId: string | null; on
   }, [companyId]);
 
   const uid = () => Math.random().toString(36).slice(2, 9);
-  function addType(type: string) { setFields((f) => [...f, { id: uid(), label: "Nova pergunta", type, required: false, options: type === "choice" ? ["Opção 1"] : undefined }]); }
+  function addType(type: string) { setFields((f) => [...f, { id: uid(), label: FIELD_TYPES.find((t) => t.v === type)?.l ?? "Campo", type, required: false, options: type === "choice" ? ["Opção 1"] : undefined }]); }
   function patch(id: string, up: Partial<ExtraField>) { setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...up } : f))); }
   function remove(id: string) { setFields((fs) => fs.filter((f) => f.id !== id)); }
   function move(id: string, dir: -1 | 1) {

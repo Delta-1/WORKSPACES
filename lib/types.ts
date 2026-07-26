@@ -122,6 +122,7 @@ export type Client = {
   created_at: string;
   third_party_id?: string | null;
   status?: string | null;
+  custom_data?: Record<string, unknown> | null;
 };
 
 export type CalendarEvent = {
