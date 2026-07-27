@@ -595,15 +595,24 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     // wa_id dedup: evita registrar duas vezes a mesma mensagem (envio pelo site
     // + eco do messages.upsert, ou a mesma mensagem chegando por vários eventos).
     row.wa_id = waId;
-    const { data: inserted } = await supabase
+    const { data: inserted, error: upErr } = await supabase
       .from("whatsapp_messages")
       .upsert(row, { onConflict: "wa_id", ignoreDuplicates: true })
       .select("id");
-    if (!inserted || inserted.length === 0) return; // já existia → não duplica
+    // IMPORTANTE: erros aqui eram engolidos em silêncio — a mensagem do bot era
+    // enviada no WhatsApp mas NÃO aparecia no app Mensagens. Agora o erro é logado
+    // (visível no Railway) para não haver mais "resposta que some".
+    if (upErr) console.error("logMessage upsert(wa_id) falhou:", upErr.message || upErr);
+    if (!inserted || inserted.length === 0) return; // já existia (ou erro) → não duplica
   }
   let insertedId = null;
   if (!waId) {
-    const { data: ins } = await supabase.from("whatsapp_messages").insert(row).select("id").maybeSingle();
+    const { data: ins, error: insErr } = await supabase
+      .from("whatsapp_messages")
+      .insert(row)
+      .select("id")
+      .maybeSingle();
+    if (insErr) console.error("logMessage insert falhou:", insErr.message || insErr);
     insertedId = ins?.id ?? null;
   }
   // Mantém a conversa "no topo" (mais recente) e com a última mensagem/hora.
@@ -613,6 +622,45 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     .update({ last_message: row.text ?? "", last_message_at: now, updated_at: now })
     .eq("id", conversationId);
   return insertedId;
+}
+
+// Envia uma mensagem DO BOT e a registra em TEMPO REAL no app Mensagens.
+//
+// Estratégia "log-first" (pedido do cliente: "a resposta passa pelo nosso site
+// ANTES de ser enviada e depois é enviada"): grava a linha no Supabase ANTES de
+// mandar pelo WhatsApp. Assim o Supabase Realtime empurra a resposta para o app
+// Mensagens no mesmo instante — o usuário vê o que o bot está mandando na hora,
+// sem esperar o ida-e-volta do WhatsApp e sem depender do "eco" chegar.
+//
+// Depois do envio, carimba o wa_id na MESMA linha (para o eco do messages.upsert
+// não criar uma segunda linha) e registra o wa_id em webSentWaIds (dedup imediato,
+// cobrindo a corrida em que o eco chega antes do update do wa_id).
+//
+// `content` é o payload do Baileys (ex.: { text }, { audio, ptt }, { document }).
+// `media` é o registro de mídia para o histórico (type/url/name/mime), se houver.
+async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media = null, content = null } = {}) {
+  // 1) REGISTRA JÁ — aparece em tempo real no Mensagens.
+  const rowId = await logMessage(conversationId, "out", text, null, media, cid);
+  // 2) ENVIA pelo WhatsApp.
+  let sent = null;
+  try {
+    sent = await sock.sendMessage(jid, content || { text });
+  } catch (e) {
+    console.error("sendBotMessage: envio no WhatsApp falhou:", e?.message || e);
+  }
+  // 3) Carimba o wa_id na linha já gravada (dedup contra o eco fromMe).
+  if (sent?.key?.id) {
+    webSentWaIds.add(sent.key.id);
+    setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
+    if (rowId) {
+      await supabase
+        .from("whatsapp_messages")
+        .update({ wa_id: sent.key.id })
+        .eq("id", rowId)
+        .then(() => {}, () => {});
+    }
+  }
+  return sent;
 }
 
 // Logger silencioso para o downloadMediaMessage do Baileys.
@@ -1035,8 +1083,7 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
   };
   const send = async (text) => {
     if (!text) return;
-    const g = await sock.sendMessage(jid, { text });
-    await logMessage(conversation.id, "out", text, null, null, cid, g?.key?.id ?? null);
+    await sendBotMessage(sock, jid, conversation.id, cid, { text });
   };
   const info = await getCompanyInfo(conversation.company_id);
 
@@ -2033,8 +2080,7 @@ async function startSession(numberId) {
               const replies = await handleConfigia({ jid: contactJid, text, numberId, number, companyId: cid });
               if (replies && replies.length) {
                 for (const r of replies) {
-                  const g = await sock.sendMessage(contactJid, { text: r });
-                  await logMessage(conversation.id, "out", r, null, null, cid, g?.key?.id ?? null);
+                  await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
                 }
                 continue; // tratado pelo /configia; pula o bot normal
               }
@@ -2118,8 +2164,7 @@ async function startSession(numberId) {
               const info = await getCompanyInfo(cid);
               let msg = "Perfeito, vou encerrar nosso atendimento então. Muito obrigado pelo contato! 😊";
               if (info?.review_link) msg += `\n\nSe puder, avalie nosso atendimento: ${info.review_link}`;
-              const g = await sock.sendMessage(jid, { text: msg });
-              await logMessage(conversation.id, "out", msg, null, null, cid, g?.key?.id ?? null);
+              await sendBotMessage(sock, jid, conversation.id, cid, { text: msg });
               await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true, closing_sent: true }).eq("id", conversation.id);
               void generateContactReport({ ...conversation, status: "fechado" });
               return;
@@ -2128,8 +2173,7 @@ async function startSession(numberId) {
             // se houver fluxograma, é ELE que abre a conversa).
             const hasFlow = !isCopilot && Array.isArray(chatbot?.flow?.nodes) && chatbot.flow.nodes.length > 0;
             if (!isCopilot && created && chatbot?.greeting && !hasFlow) {
-              const g = await sock.sendMessage(jid, { text: chatbot.greeting });
-              await logMessage(conversation.id, "out", chatbot.greeting, null, null, cid, g?.key?.id ?? null);
+              await sendBotMessage(sock, jid, conversation.id, cid, { text: chatbot.greeting });
             }
             // Puxa as últimas mensagens p/ dar contexto ao bot. IA CONTÍNUA lembra
             // de TODAS as conversas anteriores do contato (memória entre atendimentos);
@@ -2218,19 +2262,16 @@ async function startSession(numberId) {
             for (const f of copilotFiles) {
               try {
                 const isImg = (f.mime || "").startsWith("image/");
-                const sf = isImg
-                  ? await sock.sendMessage(jid, { image: f.buffer, caption: f.name })
-                  : await sock.sendMessage(jid, { document: f.buffer, fileName: f.name, mimetype: f.mime });
+                // Sobe o arquivo ANTES para registrar a linha com a mídia (log-first),
+                // então a entrega já aparece no Mensagens em tempo real.
                 const url = await uploadMedia(f.buffer, f.mime, "out");
-                await logMessage(
-                  conversation.id,
-                  "out",
-                  f.name,
-                  null,
-                  url ? { type: isImg ? "image" : "document", url, name: f.name, mime: f.mime } : null,
-                  cid,
-                  sf?.key?.id ?? null
-                );
+                await sendBotMessage(sock, jid, conversation.id, cid, {
+                  text: f.name,
+                  media: url ? { type: isImg ? "image" : "document", url, name: f.name, mime: f.mime } : null,
+                  content: isImg
+                    ? { image: f.buffer, caption: f.name }
+                    : { document: f.buffer, fileName: f.name, mimetype: f.mime },
+                });
               } catch (e) {
                 console.error("copilot send file failed:", e);
               }
@@ -2253,28 +2294,22 @@ async function startSession(numberId) {
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
                 if (ogg) {
-                  const sa = await sock.sendMessage(jid, { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true });
+                  // Sobe o áudio ANTES para já registrar a linha com a mídia (log-first).
                   const audioUrl = await uploadMedia(ogg, "audio/ogg", "out");
-                  await logMessage(
-                    conversation.id,
-                    "out",
-                    reply,
-                    null,
-                    audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/ogg" } : null,
-                    cid,
-                    sa?.key?.id ?? null
-                  );
+                  await sendBotMessage(sock, jid, conversation.id, cid, {
+                    text: reply,
+                    media: audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/ogg" } : null,
+                    content: { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true },
+                  });
                   sentAsAudio = true;
                 }
               }
               if (!sentAsAudio) {
-                const st = await sock.sendMessage(jid, { text: reply });
-                await logMessage(conversation.id, "out", reply, null, null, cid, st?.key?.id ?? null);
+                await sendBotMessage(sock, jid, conversation.id, cid, { text: reply });
               }
               // Parte marcada como texto (ex.: a listinha de funções) — sempre por TEXTO.
               if (textAfter) {
-                const gt = await sock.sendMessage(jid, { text: textAfter });
-                await logMessage(conversation.id, "out", textAfter, null, null, cid, gt?.key?.id ?? null);
+                await sendBotMessage(sock, jid, conversation.id, cid, { text: textAfter });
               }
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
@@ -2286,8 +2321,7 @@ async function startSession(numberId) {
                 const info2 = await getCompanyInfo(cid);
                 if (info2?.review_link && !/avali/i.test(reply)) {
                   const rv = `Se puder, avalie nosso atendimento: ${info2.review_link}`;
-                  const g = await sock.sendMessage(jid, { text: rv }).catch(() => null);
-                  await logMessage(conversation.id, "out", rv, null, null, cid, g?.key?.id ?? null);
+                  await sendBotMessage(sock, jid, conversation.id, cid, { text: rv });
                 }
                 await supabase
                   .from("conversations")
