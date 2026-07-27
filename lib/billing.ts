@@ -1,21 +1,51 @@
 // Cobrador — helpers de cobrança (template de mensagem + datas).
 
 export const BILLING_DEFAULT_TEMPLATE =
-  "Olá {nome}! 👋 Passando para avisar da sua cobrança de {valor}, com vencimento em {vencimento}.\n\n" +
+  "Olá {nome}! 👋 Passando para avisar da sua cobrança de {valor}, com vencimento em {vencimento}.\n" +
+  "{extrato}\n" +
   "Para pagar via Pix, use a chave abaixo:\n{pix}\n\n" +
   "Assim que fizer o pagamento, é só me enviar o comprovante aqui por mensagem que eu confirmo para você. 🙏\n\n" +
   "Obrigado!\n— {empresa}";
 
-export type TemplateVars = { nome?: string; valor?: number | string; vencimento?: string; pix?: string; empresa?: string };
+export type BillingItem = { descricao: string; valor: number | string };
+export type TemplateVars = { nome?: string; valor?: number | string; vencimento?: string; pix?: string; empresa?: string; extrato?: string; motivo?: string };
+
+const brl = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+
+// Soma os itens do extrato.
+export function itemsTotal(itens?: BillingItem[] | null): number {
+  return (itens || []).reduce((a, b) => a + (Number(b.valor) || 0), 0);
+}
+
+// Monta o texto do extrato (itens + total). Vazio se não houver itens.
+export function renderExtrato(itens?: BillingItem[] | null, motivo?: string | null): string {
+  const list = (itens || []).filter((i) => (i.descricao || "").trim() || Number(i.valor));
+  const lines: string[] = [];
+  if (motivo && motivo.trim()) lines.push(`Referente a: ${motivo.trim()}`);
+  if (list.length) {
+    lines.push("Itens inclusos:");
+    for (const i of list) lines.push(`• ${i.descricao || "Item"} — ${brl(Number(i.valor) || 0)}`);
+    lines.push(`Total: ${brl(itemsTotal(list))}`);
+  }
+  return lines.length ? "\n" + lines.join("\n") + "\n" : "";
+}
 
 export function fillTemplate(tpl: string, v: TemplateVars): string {
-  const valor = typeof v.valor === "number" ? `R$ ${v.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : (v.valor || "");
-  return (tpl || BILLING_DEFAULT_TEMPLATE)
+  const valor = typeof v.valor === "number" ? brl(v.valor) : (v.valor || "");
+  let out = (tpl || BILLING_DEFAULT_TEMPLATE)
     .replace(/\{nome\}/g, v.nome || "")
     .replace(/\{valor\}/g, String(valor))
     .replace(/\{vencimento\}/g, v.vencimento || "")
     .replace(/\{pix\}/g, v.pix || "(informe a chave Pix nas configurações)")
-    .replace(/\{empresa\}/g, v.empresa || "");
+    .replace(/\{empresa\}/g, v.empresa || "")
+    .replace(/\{motivo\}/g, v.motivo || "")
+    .replace(/\{extrato\}/g, v.extrato || "");
+  // Se o extrato não foi usado no template mas existe, acrescenta antes da chave Pix.
+  if (v.extrato && !/\{extrato\}/.test(tpl || "") && !out.includes(v.extrato)) {
+    out = out.replace(/(\n?Para pagar via Pix)/i, `\n${v.extrato}$1`);
+    if (!out.includes(v.extrato)) out += `\n${v.extrato}`;
+  }
+  return out.replace(/\n{3,}/g, "\n\n");
 }
 
 // Próxima data com o dia de vencimento informado (neste mês se ainda não passou,
