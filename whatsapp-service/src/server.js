@@ -194,6 +194,7 @@ function configiaMenuText(number, botName) {
     `2️⃣ Trocar o bot que atende este número\n` +
     `3️⃣ ${number?.bot_mode === "label" ? "Sair do" : "Entrar no"} modo só-etiqueta\n` +
     `4️⃣ Ver status do número\n` +
+    `5️⃣ ${number?.is_copilot ? "Desativar" : "Ativar"} este número como *linha do Copiloto*\n` +
     `0️⃣ Sair`
   );
 }
@@ -281,7 +282,17 @@ async function handleConfigia({ jid, text, numberId, number, companyId }) {
     if (t === "4") {
       return [configiaMenuText(n, chatbot?.name)];
     }
-    return ["Opção inválida. Mande *1*, *2*, *3*, *4* ou *0* para sair."];
+    if (t === "5") {
+      await supabase.from("whatsapp_numbers").update({ is_copilot: !n?.is_copilot }).eq("id", numberId);
+      const { number: n2, chatbot: c2 } = await getNumberConfig(numberId);
+      return [
+        n2?.is_copilot
+          ? "✅ Este número agora é a *linha do Copiloto*. Quem mandar mensagem aqui será atendido pelo copiloto (com login: e-mail, senha e código da empresa)."
+          : "✅ Este número deixou de ser a linha do Copiloto (volta a ser atendimento normal).",
+        configiaMenuText(n2, c2?.name),
+      ];
+    }
+    return ["Opção inválida. Mande *1*, *2*, *3*, *4*, *5* ou *0* para sair."];
   }
 
   if (s.stage === "pick_bot") {
@@ -294,6 +305,72 @@ async function handleConfigia({ jid, text, numberId, number, companyId }) {
     return [`✅ Agora quem atende é *${pick.name}*.`, configiaMenuText(n2, c2?.name)];
   }
 
+  return null;
+}
+
+// ===== Acesso ao COPILOTO por WhatsApp (linha do copiloto) =====
+// Quando alguém manda mensagem para a LINHA DO COPILOTO (número marcado como
+// is_copilot) e ainda não tem acesso, o copiloto pede LOGIN: e-mail, senha e
+// código da empresa. Validando, libera o copiloto para aquele contato e amarra o
+// PERFIL da pessoa — assim o copiloto respeita as permissões dela.
+const copilotAuthSessions = new Map(); // jid -> { stage, attempts, email, password, lockedUntil }
+const COPILOT_MAX_ATTEMPTS = 4;
+const COPILOT_LOCK_MINUTES = 15;
+
+async function copilotAuthorize(userId, companyId, companyCode) {
+  if (!supabase || !userId) return { ok: false };
+  const { data: prof } = await supabase.from("profiles").select("id,email,role,full_name,company_id,tool_access").eq("id", userId).maybeSingle();
+  if (!prof) return { ok: false };
+  let isSuper = false;
+  if (prof.email) {
+    const { data: sa } = await supabase.from("super_admins").select("email").ilike("email", prof.email).maybeSingle();
+    isSuper = !!sa;
+  }
+  if (isSuper) return { ok: true, isSuper: true, role: "gestor", name: prof.full_name };
+  // Precisa pertencer a ESTA empresa e o código informado tem que bater.
+  if (!prof.company_id || prof.company_id !== companyId) return { ok: false };
+  const { data: comp } = await supabase.from("companies").select("company_code").eq("id", companyId).maybeSingle();
+  const codeOk = comp?.company_code && String(comp.company_code).trim().toLowerCase() === String(companyCode || "").trim().toLowerCase();
+  if (!codeOk) return { ok: false, badCode: true };
+  return { ok: true, isSuper: false, role: prof.role, name: prof.full_name };
+}
+
+async function handleCopilotAuth({ jid, text, numberId, number, companyId, contact }) {
+  const t = (text || "").trim();
+  let s = copilotAuthSessions.get(jid);
+  const lockMsg = () => {
+    const when = new Date(s.lockedUntil).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+    return `🚫 Muitas tentativas. Tente novamente às *${when}* (horário de Brasília).`;
+  };
+  if (s?.lockedUntil && Date.now() < s.lockedUntil) return [lockMsg()];
+  if (!s) {
+    s = { stage: "await_email", attempts: 0 };
+    copilotAuthSessions.set(jid, s);
+    const info = await getCompanyInfo(companyId);
+    return [`🔐 Olá! Sou o *Copiloto${info?.name ? " da " + info.name : ""}*.\nPara liberar seu acesso, me diga seu *e-mail* de acesso ao Workspace.`];
+  }
+  if (t.toLowerCase() === "/sair") { copilotAuthSessions.delete(jid); return ["👋 Ok! Mande qualquer mensagem quando quiser entrar de novo."]; }
+  if (s.stage === "await_email") { s.email = t; s.stage = "await_password"; return ["🔑 Agora sua *senha*."]; }
+  if (s.stage === "await_password") { s.password = t; s.stage = "await_code"; return ["🏢 Por fim, o *código da empresa*."]; }
+  if (s.stage === "await_code") {
+    const cred = await verifyCredentials(s.email, s.password);
+    const auth = cred ? await copilotAuthorize(cred.id, companyId, t) : null;
+    if (cred && auth?.ok) {
+      await supabase.from("contacts").update({ copilot_access: true, copilot_profile_id: cred.id }).eq("id", contact.id);
+      copilotAuthSessions.delete(jid);
+      const extra = auth.role && auth.role !== "gestor" && !auth.isSuper ? `\n\nVou te ajudar dentro das suas permissões (${auth.role}).` : "";
+      return [`✅ Acesso liberado${auth.name ? ", " + auth.name.split(" ")[0] : ""}! Sou seu copiloto. Como posso ajudar?${extra}`];
+    }
+    s.attempts = (s.attempts || 0) + 1;
+    const left = COPILOT_MAX_ATTEMPTS - s.attempts;
+    if (left <= 0) {
+      s.lockedUntil = Date.now() + COPILOT_LOCK_MINUTES * 60000;
+      s.stage = "await_email"; s.email = null; s.password = null;
+      return [lockMsg()];
+    }
+    s.stage = "await_email"; s.email = null; s.password = null;
+    return [`❌ Dados incorretos${auth?.badCode ? " (código da empresa não confere)" : ""}. Você tem *${left}* tentativa(s). Me diga seu *e-mail* novamente.`];
+  }
   return null;
 }
 
@@ -1798,7 +1875,7 @@ async function copilotLoadFile(companyId, id) {
 
 // Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
 // (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
-async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false) {
+async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null) {
   // Provedor: o do agente (se tiver chave própria); senão o do agente mesmo, e a
   // chave cai no fallback (env ou de outro chatbot da empresa com o mesmo provedor).
   const provider = chatbot?.provider || "anthropic";
@@ -1868,7 +1945,25 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
-  const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
+  let allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
+  // ESCOPO POR PERMISSÃO: quando a pessoa entrou por login na linha do copiloto e
+  // NÃO é gestor/super, o copiloto fica restrito a ferramentas seguras (consulta e
+  // tarefas do dia a dia) — nada de finanças, cadastros, exclusões ou acesso remoto.
+  if (actor && actor.scoped) {
+    const SAFE = new Set([
+      "search_files", "send_file", "list_folder", "graph_overview",
+      "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
+      "cobranca_pendentes", "cobranca_status_cliente",
+      "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
+    ]);
+    allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
+    system +=
+      `\n\nATENÇÃO — VOCÊ ESTÁ ATENDENDO ${actor.name || "um funcionário"} (cargo: ${actor.role || "funcionario"}). ` +
+      `Só faça o que o cargo permite: NÃO acesse finanças/DRE, NÃO crie, edite ou exclua cadastros, NÃO faça cobranças nem acesso remoto, e NÃO exponha dados de gestão. ` +
+      `Ajude com consultas de arquivos, tarefas e informações do dia a dia. Se pedirem algo fora da permissão, explique com educação que é preciso ser gestor.`;
+  } else if (actor && actor.name) {
+    system += `\n\nVocê está atendendo ${actor.name} (cargo: ${actor.role || "gestor"}) — acesso completo.`;
+  }
   const tools = allowedNames ? COPILOT_TOOLS.filter((t) => allowedNames.has(t.name)) : COPILOT_TOOLS;
 
   try {
@@ -2194,8 +2289,38 @@ async function startSession(numberId) {
             }
           }
 
-          // Contato liberado pelo gestor → COPILOTO (assessor com acesso total).
+          // LINHA DO COPILOTO: número marcado como is_copilot. Se o contato ainda
+          // NÃO tem acesso, conduz o LOGIN (e-mail, senha, código da empresa) antes
+          // de liberar — o bot de atendimento NÃO responde nessa linha.
+          if (number?.is_copilot === true && contact?.copilot_access !== true) {
+            try {
+              const replies = await handleCopilotAuth({ jid: contactJid, text, numberId, number, companyId: cid, contact });
+              if (replies && replies.length) {
+                for (const r of replies) await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
+                continue; // ainda autenticando (ou acabou de liberar) — não aciona o bot de atendimento
+              }
+            } catch (e) {
+              console.error("copilot auth failed:", e?.message || e);
+            }
+          }
+
+          // Contato liberado (pelo gestor no app OU por login na linha do copiloto)
+          // → COPILOTO. O bot de atendimento comum NÃO é o copiloto.
           const isCopilot = contact?.copilot_access === true;
+          // Escopo por PERMISSÃO: se a pessoa entrou por login na linha do copiloto
+          // (copilot_profile_id), o copiloto respeita o cargo/permissões dela.
+          let actor = null;
+          if (isCopilot && contact?.copilot_profile_id) {
+            const { data: ap } = await supabase.from("profiles").select("role,full_name,email,tool_access").eq("id", contact.copilot_profile_id).maybeSingle();
+            if (ap) {
+              let apSuper = false;
+              if (ap.email) { const { data: sa } = await supabase.from("super_admins").select("email").ilike("email", ap.email).maybeSingle(); apSuper = !!sa; }
+              const privileged = apSuper || ap.role === "gestor";
+              actor = { role: ap.role, name: ap.full_name, tools: ap.tool_access, scoped: !privileged };
+            }
+          }
+          // Acesso total do copiloto: gestor/super OU contato liberado no app (sem perfil amarrado).
+          const copilotFullAccess = isCopilot && (!actor || !actor.scoped);
           // Quando o contato é copiloto, quem responde é o AGENTE COPILOTO da
           // empresa (adm, slot 'internal', todas as capacidades) — não o bot de
           // atendimento do número (ex.: "Vitor"). Se não existir, cai no do número.
@@ -2327,7 +2452,7 @@ async function startSession(numberId) {
             let copilotSends = [];
             let reply = null;
             if (customerText && useTools) {
-              const out = await runCopilotReply(cid, agentForReply, customerText, history, isCopilot);
+              const out = await runCopilotReply(cid, agentForReply, customerText, history, copilotFullAccess, actor);
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];
