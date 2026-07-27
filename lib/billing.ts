@@ -7,6 +7,37 @@ export const BILLING_DEFAULT_TEMPLATE =
   "Assim que fizer o pagamento, é só me enviar o comprovante aqui por mensagem que eu confirmo para você. 🙏\n\n" +
   "Obrigado!\n— {empresa}";
 
+// Modelitos prontos de mensagem/extrato — a pessoa escolhe e edita se quiser.
+export const BILLING_TEMPLATES: { id: string; label: string; template: string }[] = [
+  { id: "padrao", label: "Padrão (amigável)", template: BILLING_DEFAULT_TEMPLATE },
+  {
+    id: "curto",
+    label: "Curto e direto",
+    template: "Oi {nome}! Sua cobrança de {valor} vence em {vencimento}.{extrato}\nPix: {pix}\nMe manda o comprovante quando pagar. 🙏",
+  },
+  {
+    id: "formal",
+    label: "Formal",
+    template:
+      "Prezado(a) {nome},\n\nInformamos a cobrança no valor de {valor}, com vencimento em {vencimento}.{extrato}\n" +
+      "Pagamento via Pix pela chave: {pix}\n\nApós o pagamento, favor encaminhar o comprovante. Atenciosamente, {empresa}.",
+  },
+  {
+    id: "extrato",
+    label: "Com extrato detalhado",
+    template:
+      "Olá {nome}! 👋 Segue o detalhamento da sua cobrança (vencimento {vencimento}):\n{extrato}\n" +
+      "Para pagar via Pix, use a chave: {pix}\n\nAssim que pagar, me envie o comprovante que eu confirmo. Obrigado!\n— {empresa}",
+  },
+  {
+    id: "lembrete",
+    label: "Lembrete gentil",
+    template:
+      "Oi {nome}, tudo bem? 😊 Passando só pra lembrar da cobrança de {valor} (vence {vencimento}).{extrato}\n" +
+      "Pix: {pix}\nQualquer dúvida é só chamar!",
+  },
+];
+
 export type BillingItem = { descricao: string; valor: number | string };
 export type TemplateVars = { nome?: string; valor?: number | string; vencimento?: string; pix?: string; empresa?: string; extrato?: string; motivo?: string };
 

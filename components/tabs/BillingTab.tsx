@@ -12,10 +12,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import { BILLING_DEFAULT_TEMPLATE, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
+import { BILLING_DEFAULT_TEMPLATE, BILLING_TEMPLATES, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
 
 type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string; itens?: BillingItem[] | null; motivo?: string | null };
-type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null; itens?: BillingItem[] | null; motivo?: string | null };
+type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null; itens?: BillingItem[] | null; motivo?: string | null; inadimplente?: boolean | null; multa?: number | null };
 type Contact = { id: string; name: string | null; phone: string | null; jid: string | null };
 type Agent = { id: string; name: string };
 type WNumber = { id: string; label: string | null; phone_number: string | null };
@@ -159,8 +159,9 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
                 <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold shrink-0">{(t.name || "?").slice(0, 1)}</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{t.name || t.phone}</div>
-                  <div className="text-[11px] text-gray-400">{money(t.valor)} · vence {fmtDatePt(t.due_date)} · {t.tipo === "api" ? "Mercado Pago" : "Pix"}</div>
+                  <div className="text-[11px] text-gray-400">{money(t.valor)}{Number(t.multa) > 0 ? ` (inclui multa ${money(Number(t.multa))})` : ""} · vence {fmtDatePt(t.due_date)} · {t.tipo === "api" ? "Mercado Pago" : "Pix"}</div>
                 </div>
+                {t.inadimplente && <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 bg-red-500/20 text-red-300">inadimplente</span>}
                 <span className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${STATUS[t.status]?.cls || ""}`}>{STATUS[t.status]?.label}</span>
                 <div className="flex items-center gap-1 shrink-0">
                   {t.comprovante_url && <button onClick={() => setComprovante(t)} title="Ver comprovante" className="p-1.5 rounded-lg hover:bg-white/10 text-sky-400"><FileImage size={15} /></button>}
@@ -235,9 +236,22 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
   cid: string | null; contacts: Contact[]; agents: Agent[]; numbers: WNumber[]; settings: Settings;
   onClose: () => void; onSaved: () => void; onContactsChanged: () => void;
 }) {
-  const [f, setF] = useState({ name: "", tipo: "pix", valor: "", recorrencia: "mensal", dia_vencimento: "5", antecedencia_dias: "2", agent_id: "", number_id: numbers[0]?.id || "" });
+  const [f, setF] = useState({ name: "", tipo: "pix", valor: "", recorrencia: "mensal", dia_vencimento: "5", antecedencia_dias: "2", agent_id: "", number_id: numbers[0]?.id || "", followup_minutes: "0", multa_atraso: "" });
   const [template, setTemplate] = useState(settings.template || BILLING_DEFAULT_TEMPLATE);
+  const [followupAudio, setFollowupAudio] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [uploadingImg, setUploadingImg] = useState(false);
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  async function uploadImage(file: File) {
+    if (!supabase || !cid || !file.type.startsWith("image/")) return;
+    setUploadingImg(true);
+    try {
+      const ext = (file.name.split(".").pop() || "png").toLowerCase().slice(0, 5);
+      const path = `billing/${cid}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("company-files").upload(path, file, { contentType: file.type, upsert: true });
+      if (!error) { const { data } = supabase.storage.from("company-files").getPublicUrl(path); setImageUrl(data?.publicUrl ?? null); }
+    } finally { setUploadingImg(false); }
+  }
   // Extrato: itens (descrição + valor) e o "porquê" da cobrança.
   const [motivo, setMotivo] = useState("");
   const [itens, setItens] = useState<BillingItem[]>([]);
@@ -273,7 +287,7 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
     const num = numbers.find((n) => n.id === f.number_id);
     const to = num?.phone_number;
     if (!to) { alert("Nenhum número de WhatsApp conectado para o teste."); return; }
-    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: `🧪 (teste do Cobrador)\n\n${previewText}`, numberId: f.number_id }) });
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: `🧪 (teste do Cobrador)\n\n${previewText}`, numberId: f.number_id, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
     alert("Mensagem de teste enviada para o próprio número conectado.");
   }
 
@@ -285,13 +299,14 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
       company_id: cid, name: f.name.trim(), tipo: f.tipo, valor: valorFinal, recorrencia: f.recorrencia,
       dia_vencimento: Number(f.dia_vencimento) || 5, antecedencia_dias: Number(f.antecedencia_dias) || 2,
       template, agent_id: f.agent_id || null, number_id: f.number_id || null, status: "ativa",
-      itens: cleanItens, motivo: motivo || null,
+      itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null,
+      followup_minutes: Number(f.followup_minutes) || 0, followup_as_audio: followupAudio, multa_atraso: Number(f.multa_atraso) || 0,
     }).select("id").maybeSingle();
     if (charge?.id) {
       const due = nextDueDate(Number(f.dia_vencimento) || 5);
       const rows = selected.map((id) => {
         const c = contacts.find((x) => x.id === id);
-        return { company_id: cid, charge_id: charge.id, contact_id: id, name: c?.name || null, phone: (c?.phone || c?.jid || "").replace(/@.*/, "") || null, tipo: f.tipo, valor: valorFinal, due_date: due, status: "pendente", itens: cleanItens, motivo: motivo || null };
+        return { company_id: cid, charge_id: charge.id, contact_id: id, name: c?.name || null, phone: (c?.phone || c?.jid || "").replace(/@.*/, "") || null, tipo: f.tipo, valor: valorFinal, due_date: due, status: "pendente", itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null };
       });
       await supabase.from("billing_targets").insert(rows);
     }
@@ -334,9 +349,35 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
               <label className="block"><span className="lbl">Agente (opcional)</span><select className="in" value={f.agent_id} onChange={(e) => set("agent_id", e.target.value)}><option value="">Sem IA (mensagem programada)</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
               <label className="block"><span className="lbl">Número de envio</span><select className="in" value={f.number_id} onChange={(e) => set("number_id", e.target.value)}>{numbers.map((n) => <option key={n.id} value={n.id}>{n.label || n.phone_number || "WhatsApp"}</option>)}</select></label>
             </div>
-            <label className="block"><span className="lbl">Mensagem programada</span><textarea className="in" rows={6} value={template} onChange={(e) => setTemplate(e.target.value)} /></label>
-            <div className="flex gap-2">
-              <button onClick={sendTest} className="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 flex items-center gap-1"><Send size={13} /> Enviar teste</button>
+            <label className="block"><span className="lbl">Modelito de mensagem</span>
+              <select className="in" onChange={(e) => { const m = BILLING_TEMPLATES.find((x) => x.id === e.target.value); if (m) setTemplate(m.template); }} defaultValue="">
+                <option value="" disabled>Escolher um modelo…</option>
+                {BILLING_TEMPLATES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </label>
+            <label className="block"><span className="lbl">Mensagem programada (edite à vontade)</span><textarea className="in" rows={6} value={template} onChange={(e) => setTemplate(e.target.value)} /></label>
+            {/* Imagem opcional que o bot envia (em vez do texto ou junto com ele). */}
+            <div className="flex items-center gap-2">
+              <label className={`text-xs px-3 py-2 rounded-lg cursor-pointer ${uploadingImg ? "bg-white/5 text-gray-500" : "bg-white/10 hover:bg-white/15"}`}>
+                {uploadingImg ? "Enviando…" : imageUrl ? "Trocar imagem" : "Anexar imagem"}
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => { const fi = e.target.files?.[0]; if (fi) uploadImage(fi); e.currentTarget.value = ""; }} />
+              </label>
+              {imageUrl && <><span className="text-[11px] text-emerald-400">imagem anexada</span><button onClick={() => setImageUrl(null)} className="text-[11px] text-gray-500 hover:text-red-400">remover</button></>}
+              <button onClick={sendTest} className="ml-auto text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 flex items-center gap-1"><Send size={13} /> Enviar teste</button>
+            </div>
+            {imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={imageUrl} alt="cobrança" className="max-h-32 rounded-lg border border-white/10" />
+            )}
+            {/* Follow-up automático + multa por inadimplência. */}
+            <div className="bg-white/5 border border-white/10 rounded-lg p-2.5 space-y-2">
+              <div className="text-[11px] text-gray-400 font-semibold">Se o cliente não responder</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block"><span className="lbl">Reforçar após (min, 0 = não)</span><input className="in" type="number" value={f.followup_minutes} onChange={(e) => set("followup_minutes", e.target.value)} /></label>
+                <label className="block"><span className="lbl">Multa se ficar inadimplente (R$)</span><input className="in" type="number" value={f.multa_atraso} onChange={(e) => set("multa_atraso", e.target.value)} /></label>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-300"><input type="checkbox" checked={followupAudio} onChange={(e) => setFollowupAudio(e.target.checked)} /> Mandar o reforço por áudio (precisa de agente com voz)</label>
+              <p className="text-[10px] text-gray-500">O reforço é 1x por dia. Persistindo o silêncio, o bot para de insistir, marca como inadimplente e soma a multa na próxima cobrança. Ao pagar a inadimplência (comprovante), volta a “em dia” e não cobra a mais.</p>
             </div>
             <div className="bg-black/30 border border-white/10 rounded-lg p-2.5 text-[12px] text-gray-300 whitespace-pre-wrap">{previewText}</div>
           </div>
