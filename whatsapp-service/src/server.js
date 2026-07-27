@@ -3135,10 +3135,13 @@ async function billingSweep() {
       (ags || []).forEach((a) => (agentsById[a.id] = a));
     }
     // 1) Envia lembretes / cobranças (só cobranças por Pix ou mensagem; 'api' é conciliado à parte).
-    const { data: targets } = await supabase.from("billing_targets").select("*").in("status", ["pendente", "lembrete", "enviado", "atrasado"]).limit(300);
+    // Traz o contato junto para enviar pelo JID/telefone REAL — assim a mensagem cai
+    // na conversa que já existe (aparece no Mensagens) e NÃO duplica o chat.
+    const { data: targets } = await supabase.from("billing_targets").select("*, contacts(jid,phone)").in("status", ["pendente", "lembrete", "enviado", "atrasado"]).limit(300);
     for (const t of targets || []) {
       const ch = chById[t.charge_id];
-      if (!ch || !t.phone || !t.due_date) continue;
+      const to = t.contacts?.jid || t.contacts?.phone || t.phone;
+      if (!ch || !to || !t.due_date) continue;
       if (ch.tipo === "api" || ch.tipo === "boleto") continue; // pagamento por API — não manda chave Pix
       const due = new Date(t.due_date + "T00:00:00");
       const daysUntil = Math.round((due - startOfToday) / 86400000);
@@ -3153,13 +3156,13 @@ async function billingSweep() {
       const baseMsg = fillBillingTemplate(tpl, { nome: t.name, valor: t.valor, vencimento: t.due_date, pix, empresa });
       // Lembrete X dias antes (uma vez).
       if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
-        await sendBillingMessage(numId, t.phone, `⏰ ${baseMsg}`, agent);
+        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent);
         await supabase.from("billing_targets").update({ status: t.status === "pendente" ? "lembrete" : t.status, reminder_sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
       // Cobrança no dia do vencimento (uma vez).
       if (daysUntil <= 0 && !t.sent_at) {
-        await sendBillingMessage(numId, t.phone, baseMsg, agent);
+        await sendBillingMessage(numId, to, baseMsg, agent);
         await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }

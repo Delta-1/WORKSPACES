@@ -81,14 +81,17 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
   const totalPago = targets.filter((t) => t.status === "pago").reduce((a, b) => a + (b.valor || 0), 0);
 
   // Envia a mensagem programada AGORA para um alvo (não espera o agendador).
+  // Envia pelo JID/telefone REAL do contato → cai na conversa que já existe no
+  // Mensagens (aparece lá) e NÃO duplica o chat.
   async function sendNow(t: Target) {
-    if (!supabase || !t.phone) { flash("Cliente sem telefone."); return; }
+    const contact = contacts.find((c) => c.id === t.contact_id);
+    const to = contact?.jid || contact?.phone || t.phone;
+    if (!supabase || !to) { flash("Cliente sem telefone."); return; }
     const charge = charges.find((c) => c.id === t.charge_id);
     const text = fillTemplate(charge?.template || settings.template, {
-      nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix: settings.pix_key || "", empresa: profile?.company_id ? undefined : "",
+      nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix: settings.pix_key || "", empresa: settings.pix_name || "",
     });
-    const empresaText = text.replace(/\{empresa\}/g, "");
-    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: t.phone, text: empresaText, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
     await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
     flash("Cobrança enviada no WhatsApp."); load();
   }
@@ -242,11 +245,15 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
   function toggle(id: string) { setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]); }
 
   // Adiciona um cliente novo → cria também o CONTATO (integração com Contatos).
+  // Normaliza o telefone e faz UPSERT (mesmo formato da aba Contatos) para REUSAR
+  // um contato que já exista — nunca duplicar.
   async function addNewContact() {
     if (!supabase || !cid || !newName.trim() || !newPhone.trim()) return;
-    const phone = newPhone.replace(/\D/g, "");
-    const { data } = await supabase.from("contacts").insert({ company_id: cid, name: newName.trim(), phone }).select("id").maybeSingle();
-    if (data?.id) { setSelected((s) => [...s, data.id]); setNewName(""); setNewPhone(""); onContactsChanged(); }
+    const digits = newPhone.replace(/\D/g, "");
+    const finalPhone = digits.startsWith("55") ? digits : `55${digits}`;
+    const jid = `${finalPhone}@s.whatsapp.net`;
+    const { data } = await supabase.from("contacts").upsert({ company_id: cid, name: newName.trim(), phone: finalPhone, jid }, { onConflict: "company_id,phone" }).select("id").maybeSingle();
+    if (data?.id) { setSelected((s) => (s.includes(data.id) ? s : [...s, data.id])); setNewName(""); setNewPhone(""); onContactsChanged(); }
   }
 
   const previewText = fillTemplate(template, { nome: "Fulano", valor: Number(f.valor) || 0, vencimento: fmtDatePt(nextDueDate(Number(f.dia_vencimento) || 5)), pix: settings.pix_key || "sua-chave-pix", empresa: settings.pix_name || "" });
