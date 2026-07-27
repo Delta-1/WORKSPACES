@@ -9,6 +9,8 @@ import WhatsappTab from "./WhatsappTab";
 import RemoteViewer from "@/components/RemoteViewer";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
 import { NOTIF_SOUNDS, playNotifSound, type NotifSoundId } from "@/lib/notify-sound";
+import BillingItemsEditor from "@/components/BillingItemsEditor";
+import { renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
 
 type Group = { id: string; name: string; position: number };
 type ContactReport = {
@@ -1984,6 +1986,10 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
   const [valor, setValor] = useState("");
   const [pixKey, setPixKey] = useState("");
   const [busy, setBusy] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [itens, setItens] = useState<BillingItem[]>([]);
+  const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
+  const valorFinal = hasItens ? itemsTotal(itens) : Number(valor) || 0;
   const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
   const fmt = (iso: string | null) => { if (!iso) return "—"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
   const cls: Record<string, string> = { pendente: "bg-zinc-700/40 text-zinc-300", lembrete: "bg-sky-500/15 text-sky-300", enviado: "bg-amber-500/15 text-amber-300", pago: "bg-emerald-500/15 text-emerald-300", atrasado: "bg-red-500/15 text-red-300", cancelado: "bg-zinc-800 text-zinc-500" };
@@ -1999,21 +2005,21 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
 
   // Cobra AGORA: cria a cobrança avulsa + alvo (já contabiliza) e manda a mensagem.
   async function chargeNow() {
-    if (!supabase || !companyId || !valor) return;
+    if (!supabase || !companyId || !valorFinal) return;
     setBusy(true);
     try {
       const nome = contact.name || contact.phone || "";
       const to = contact.jid || contact.phone || "";
       const today = new Date().toISOString().slice(0, 10);
-      const { data: charge } = await supabase.from("billing_charges").insert({ company_id: companyId, name: `Cobrança — ${nome}`, tipo: "pix", valor: Number(valor) || 0, recorrencia: "avulsa", dia_vencimento: new Date().getDate(), antecedencia_dias: 0, status: "ativa" }).select("id").maybeSingle();
-      let targetId: string | null = null;
+      const cleanItens = itens.filter((i) => (i.descricao || "").trim() || Number(i.valor)).map((i) => ({ descricao: i.descricao, valor: Number(i.valor) || 0 }));
+      const { data: charge } = await supabase.from("billing_charges").insert({ company_id: companyId, name: `Cobrança — ${nome}`, tipo: "pix", valor: valorFinal, recorrencia: "avulsa", dia_vencimento: new Date().getDate(), antecedencia_dias: 0, status: "ativa", itens: cleanItens, motivo: motivo || null }).select("id").maybeSingle();
       if (charge?.id) {
-        const { data: tgt } = await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: Number(valor) || 0, due_date: today, status: "enviado", sent_at: new Date().toISOString() }).select("id").maybeSingle();
-        targetId = tgt?.id ?? null;
+        await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: valorFinal, due_date: today, status: "enviado", sent_at: new Date().toISOString(), itens: cleanItens, motivo: motivo || null });
       }
-      const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(Number(valor) || 0)}.\n\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`;
+      const extrato = renderExtrato(cleanItens, motivo);
+      const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
       if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text }) });
-      setValor(""); await load();
+      setValor(""); setMotivo(""); setItens([]); await load();
     } finally { setBusy(false); }
   }
   async function markPaid(id: string) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "pago", paid_at: new Date().toISOString() }).eq("id", id); load(); }
@@ -2023,10 +2029,11 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
     <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm flex items-center gap-2"><DollarSign size={16} className="text-emerald-400" /> Cobrar {contact.name || contact.phone}</h3><button onClick={onClose}><X size={18} /></button></div>
-        <div className="flex gap-2 mb-3">
-          <input type="number" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="Valor R$" className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" />
-          <button onClick={chargeNow} disabled={busy || !valor} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-3 rounded-lg flex items-center gap-1"><Send size={14} /> Cobrar agora</button>
+        <div className="flex gap-2 mb-2">
+          <input type="number" value={hasItens ? String(itemsTotal(itens)) : valor} onChange={(e) => setValor(e.target.value)} disabled={hasItens} placeholder="Valor R$" className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-60" />
+          <button onClick={chargeNow} disabled={busy || !valorFinal} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-3 rounded-lg flex items-center gap-1"><Send size={14} /> Cobrar agora</button>
         </div>
+        <div className="mb-3"><BillingItemsEditor itens={itens} setItens={setItens} motivo={motivo} setMotivo={setMotivo} /></div>
         <p className="text-[11px] text-gray-500 mb-3">Envia a cobrança na hora (mesmo antes do vencimento) e já contabiliza. {pixKey ? "" : "Configure a chave Pix no app Cobrador."}</p>
         <div className="space-y-1.5">
           {rows.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Nenhuma cobrança para este contato ainda.</p>}
