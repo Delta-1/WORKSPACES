@@ -5,7 +5,8 @@ import { Users, Search, Plus, MessageSquare, Trash2, Phone, X, UserPlus, DollarS
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import { applyMask } from "@/lib/mask";
-import { nextDueDate } from "@/lib/billing";
+import { nextDueDate, itemsTotal, type BillingItem } from "@/lib/billing";
+import BillingItemsEditor from "@/components/BillingItemsEditor";
 
 type Contact = { id: string; phone: string; name: string | null; avatar_url: string | null; jid: string | null; company_id: string | null };
 
@@ -136,18 +137,23 @@ function QuickChargeModal({ companyId, contact, onClose }: { companyId: string |
   const [tipo, setTipo] = useState("pix");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [itens, setItens] = useState<BillingItem[]>([]);
+  const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
+  const valorFinal = hasItens ? itemsTotal(itens) : Number(valor) || 0;
   async function save() {
-    if (!supabase || !companyId || !valor) return;
+    if (!supabase || !companyId || !valorFinal) return;
     setBusy(true);
     try {
+      const cleanItens = itens.filter((i) => (i.descricao || "").trim() || Number(i.valor)).map((i) => ({ descricao: i.descricao, valor: Number(i.valor) || 0 }));
       const { data: charge } = await supabase.from("billing_charges").insert({
-        company_id: companyId, name: `Cobrança — ${contact.name || fmtPhone(contact.phone)}`, tipo, valor: Number(valor) || 0,
-        recorrencia: "avulsa", dia_vencimento: Number(dia) || 5, antecedencia_dias: 2, status: "ativa",
+        company_id: companyId, name: `Cobrança — ${contact.name || fmtPhone(contact.phone)}`, tipo, valor: valorFinal,
+        recorrencia: "avulsa", dia_vencimento: Number(dia) || 5, antecedencia_dias: 2, status: "ativa", itens: cleanItens, motivo: motivo || null,
       }).select("id").maybeSingle();
       if (charge?.id) {
         await supabase.from("billing_targets").insert({
           company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: contact.name || null,
-          phone: (contact.phone || "").replace(/\D/g, "") || null, tipo, valor: Number(valor) || 0, due_date: nextDueDate(Number(dia) || 5), status: "pendente",
+          phone: (contact.phone || "").replace(/\D/g, "") || null, tipo, valor: valorFinal, due_date: nextDueDate(Number(dia) || 5), status: "pendente", itens: cleanItens, motivo: motivo || null,
         });
       }
       setDone(true); setTimeout(onClose, 1200);
@@ -159,13 +165,14 @@ function QuickChargeModal({ companyId, contact, onClose }: { companyId: string |
         <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm flex items-center gap-2"><DollarSign size={16} className="text-emerald-400" /> Cobrar {contact.name || fmtPhone(contact.phone)}</h3><button onClick={onClose}><X size={18} /></button></div>
         {done ? <p className="text-sm text-emerald-400 py-4 text-center">Cobrança criada! ✅</p> : (
           <div className="space-y-3">
-            <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Valor (R$)</span><input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" /></label>
+            <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">{hasItens ? "Total (do extrato)" : "Valor (R$)"}</span><input type="number" value={hasItens ? String(itemsTotal(itens)) : valor} onChange={(e) => setValor(e.target.value)} disabled={hasItens} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-60" /></label>
             <div className="grid grid-cols-2 gap-2">
               <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Dia do vencimento</span><input type="number" min={1} max={28} value={dia} onChange={(e) => setDia(e.target.value)} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" /></label>
               <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Forma</span><select value={tipo} onChange={(e) => setTipo(e.target.value)} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm"><option value="pix">Pix</option><option value="api">Mercado Pago</option></select></label>
             </div>
+            <BillingItemsEditor itens={itens} setItens={setItens} motivo={motivo} setMotivo={setMotivo} />
             <p className="text-[11px] text-gray-500">O Cobrador envia a mensagem automaticamente no vencimento (e o lembrete antes). Configure a chave Pix no app Cobrador.</p>
-            <button onClick={save} disabled={busy || !valor} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg">{busy ? "Criando…" : "Criar cobrança"}</button>
+            <button onClick={save} disabled={busy || !valorFinal} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg">{busy ? "Criando…" : "Criar cobrança"}</button>
           </div>
         )}
       </div>
