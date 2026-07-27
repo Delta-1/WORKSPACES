@@ -3153,7 +3153,8 @@ async function attendanceSweep() {
 
 // ============================ COBRADOR (cobranças) ============================
 const DEFAULT_BILLING_TEMPLATE =
-  "Olá {nome}! 👋 Passando para avisar da sua cobrança de {valor}, com vencimento em {vencimento}.\n\n" +
+  "Olá {nome}! 👋 Passando para avisar da sua cobrança de {valor}, com vencimento em {vencimento}.\n" +
+  "{extrato}\n" +
   "Para pagar via Pix, use a chave abaixo:\n{pix}\n\n" +
   "Assim que fizer o pagamento, é só me enviar o comprovante aqui por mensagem que eu confirmo para você. 🙏\n\n— {empresa}";
 
@@ -3162,14 +3163,35 @@ function fmtBrDate(iso) {
   const [y, m, d] = String(iso).slice(0, 10).split("-");
   return `${d}/${m}/${y}`;
 }
+function brlMoney(n) { return `R$ ${(Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`; }
+// Extrato: itens (descrição + valor) + total, e o motivo. Vazio se não houver nada.
+function renderBillingExtrato(itens, motivo) {
+  const list = (Array.isArray(itens) ? itens : []).filter((i) => (i?.descricao || "").trim() || Number(i?.valor));
+  const lines = [];
+  if (motivo && String(motivo).trim()) lines.push(`Referente a: ${String(motivo).trim()}`);
+  if (list.length) {
+    lines.push("Itens inclusos:");
+    for (const i of list) lines.push(`• ${i.descricao || "Item"} — ${brlMoney(i.valor)}`);
+    const total = list.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+    lines.push(`Total: ${brlMoney(total)}`);
+  }
+  return lines.length ? "\n" + lines.join("\n") + "\n" : "";
+}
 function fillBillingTemplate(tpl, v) {
-  const valor = typeof v.valor === "number" ? `R$ ${v.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : v.valor || "";
-  return (tpl || DEFAULT_BILLING_TEMPLATE)
+  const valor = typeof v.valor === "number" ? brlMoney(v.valor) : v.valor || "";
+  let out = (tpl || DEFAULT_BILLING_TEMPLATE)
     .replace(/\{nome\}/g, v.nome || "")
     .replace(/\{valor\}/g, String(valor))
     .replace(/\{vencimento\}/g, fmtBrDate(v.vencimento) || "")
     .replace(/\{pix\}/g, v.pix || "(chave Pix não configurada)")
-    .replace(/\{empresa\}/g, v.empresa || "");
+    .replace(/\{empresa\}/g, v.empresa || "")
+    .replace(/\{motivo\}/g, v.motivo || "")
+    .replace(/\{extrato\}/g, v.extrato || "");
+  if (v.extrato && !/\{extrato\}/.test(tpl || "") && !out.includes(v.extrato)) {
+    out = out.replace(/(\n?Para pagar via Pix)/i, `\n${v.extrato}$1`);
+    if (!out.includes(v.extrato)) out += `\n${v.extrato}`;
+  }
+  return out.replace(/\n{3,}/g, "\n\n");
 }
 async function getBillingSettings(companyId) {
   const { data } = await supabase.from("company_settings").select("billing_pix_key,billing_default_template,name").eq("company_id", companyId).maybeSingle();
@@ -3278,7 +3300,8 @@ async function billingSweep() {
       const numId = ch.number_id || firstConnectedNumberId();
       if (!numId) continue;
       const antecedencia = Number(ch.antecedencia_dias || 2);
-      const baseMsg = fillBillingTemplate(tpl, { nome: t.name, valor: t.valor, vencimento: t.due_date, pix, empresa });
+      const extrato = renderBillingExtrato(t.itens && t.itens.length ? t.itens : ch.itens, t.motivo || ch.motivo);
+      const baseMsg = fillBillingTemplate(tpl, { nome: t.name, valor: t.valor, vencimento: t.due_date, pix, empresa, extrato, motivo: t.motivo || ch.motivo || "" });
       // Lembrete X dias antes (uma vez).
       if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
         await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent);

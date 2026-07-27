@@ -12,10 +12,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import { BILLING_DEFAULT_TEMPLATE, fillTemplate, nextDueDate, fmtDatePt } from "@/lib/billing";
+import { BILLING_DEFAULT_TEMPLATE, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
 
-type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string };
-type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null };
+type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string; itens?: BillingItem[] | null; motivo?: string | null };
+type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null; itens?: BillingItem[] | null; motivo?: string | null };
 type Contact = { id: string; name: string | null; phone: string | null; jid: string | null };
 type Agent = { id: string; name: string };
 type WNumber = { id: string; label: string | null; phone_number: string | null };
@@ -88,8 +88,10 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
     const to = contact?.jid || contact?.phone || t.phone;
     if (!supabase || !to) { flash("Cliente sem telefone."); return; }
     const charge = charges.find((c) => c.id === t.charge_id);
+    const itens = (t.itens && t.itens.length ? t.itens : charge?.itens) || [];
     const text = fillTemplate(charge?.template || settings.template, {
       nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix: settings.pix_key || "", empresa: settings.pix_name || "",
+      extrato: renderExtrato(itens, t.motivo || charge?.motivo), motivo: t.motivo || charge?.motivo || "",
     });
     await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
     await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
@@ -236,6 +238,15 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
   const [f, setF] = useState({ name: "", tipo: "pix", valor: "", recorrencia: "mensal", dia_vencimento: "5", antecedencia_dias: "2", agent_id: "", number_id: numbers[0]?.id || "" });
   const [template, setTemplate] = useState(settings.template || BILLING_DEFAULT_TEMPLATE);
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  // Extrato: itens (descrição + valor) e o "porquê" da cobrança.
+  const [motivo, setMotivo] = useState("");
+  const [itens, setItens] = useState<BillingItem[]>([]);
+  const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
+  const totalItens = itemsTotal(itens);
+  const valorFinal = hasItens ? totalItens : Number(f.valor) || 0;
+  const addItem = () => setItens((s) => [...s, { descricao: "", valor: "" }]);
+  const setItem = (i: number, k: keyof BillingItem, v: string) => setItens((s) => s.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+  const delItem = (i: number) => setItens((s) => s.filter((_, idx) => idx !== i));
   const [selected, setSelected] = useState<string[]>([]);
   const [q, setQ] = useState("");
   const [newName, setNewName] = useState(""); const [newPhone, setNewPhone] = useState("");
@@ -256,7 +267,7 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
     if (data?.id) { setSelected((s) => (s.includes(data.id) ? s : [...s, data.id])); setNewName(""); setNewPhone(""); onContactsChanged(); }
   }
 
-  const previewText = fillTemplate(template, { nome: "Fulano", valor: Number(f.valor) || 0, vencimento: fmtDatePt(nextDueDate(Number(f.dia_vencimento) || 5)), pix: settings.pix_key || "sua-chave-pix", empresa: settings.pix_name || "" });
+  const previewText = fillTemplate(template, { nome: "Fulano", valor: valorFinal, vencimento: fmtDatePt(nextDueDate(Number(f.dia_vencimento) || 5)), pix: settings.pix_key || "sua-chave-pix", empresa: settings.pix_name || "", extrato: renderExtrato(itens, motivo), motivo });
 
   async function sendTest() {
     const num = numbers.find((n) => n.id === f.number_id);
@@ -269,16 +280,18 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
   async function save() {
     if (!supabase || !cid || !f.name.trim() || selected.length === 0) { alert("Informe o nome e escolha ao menos um cliente."); return; }
     setBusy(true);
+    const cleanItens = itens.filter((i) => (i.descricao || "").trim() || Number(i.valor)).map((i) => ({ descricao: i.descricao, valor: Number(i.valor) || 0 }));
     const { data: charge } = await supabase.from("billing_charges").insert({
-      company_id: cid, name: f.name.trim(), tipo: f.tipo, valor: Number(f.valor) || 0, recorrencia: f.recorrencia,
+      company_id: cid, name: f.name.trim(), tipo: f.tipo, valor: valorFinal, recorrencia: f.recorrencia,
       dia_vencimento: Number(f.dia_vencimento) || 5, antecedencia_dias: Number(f.antecedencia_dias) || 2,
       template, agent_id: f.agent_id || null, number_id: f.number_id || null, status: "ativa",
+      itens: cleanItens, motivo: motivo || null,
     }).select("id").maybeSingle();
     if (charge?.id) {
       const due = nextDueDate(Number(f.dia_vencimento) || 5);
       const rows = selected.map((id) => {
         const c = contacts.find((x) => x.id === id);
-        return { company_id: cid, charge_id: charge.id, contact_id: id, name: c?.name || null, phone: (c?.phone || c?.jid || "").replace(/@.*/, "") || null, tipo: f.tipo, valor: Number(f.valor) || 0, due_date: due, status: "pendente" };
+        return { company_id: cid, charge_id: charge.id, contact_id: id, name: c?.name || null, phone: (c?.phone || c?.jid || "").replace(/@.*/, "") || null, tipo: f.tipo, valor: valorFinal, due_date: due, status: "pendente", itens: cleanItens, motivo: motivo || null };
       });
       await supabase.from("billing_targets").insert(rows);
     }
@@ -294,7 +307,23 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
             <label className="block"><span className="lbl">Nome da cobrança</span><input className="in" value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="Ex.: Mensalidade Plano Ouro" /></label>
             <div className="grid grid-cols-2 gap-2">
               <label className="block"><span className="lbl">Forma</span><select className="in" value={f.tipo} onChange={(e) => set("tipo", e.target.value)}><option value="pix">Pix (mensagem)</option><option value="api">Mercado Pago (API)</option><option value="boleto" disabled>Boleto (em breve)</option></select></label>
-              <label className="block"><span className="lbl">Valor (R$)</span><input className="in" type="number" value={f.valor} onChange={(e) => set("valor", e.target.value)} /></label>
+              <label className="block"><span className="lbl">{hasItens ? "Total (do extrato)" : "Valor (R$)"}</span><input className="in" type="number" value={hasItens ? String(totalItens) : f.valor} onChange={(e) => set("valor", e.target.value)} disabled={hasItens} /></label>
+            </div>
+            <label className="block"><span className="lbl">Motivo / referência (opcional)</span><input className="in" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: Mensalidade + taxa de matrícula" /></label>
+            {/* Extrato: itens que compõem o valor. Se houver itens, o total é a soma. */}
+            <div className="bg-white/5 border border-white/10 rounded-lg p-2.5">
+              <div className="flex items-center justify-between mb-1.5"><span className="lbl" style={{ margin: 0 }}>Extrato (o que está incluso)</span><button type="button" onClick={addItem} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 flex items-center gap-1"><Plus size={12} /> item</button></div>
+              {itens.length === 0 && <p className="text-[11px] text-gray-500">Sem itens — cobra o valor único acima. Adicione itens para mostrar um extrato com total.</p>}
+              <div className="space-y-1.5">
+                {itens.map((it, i) => (
+                  <div key={i} className="flex gap-1.5">
+                    <input className="in" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
+                    <input className="in" style={{ width: 90 }} type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
+                    <button type="button" onClick={() => delItem(i)} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400"><X size={14} /></button>
+                  </div>
+                ))}
+              </div>
+              {hasItens && <div className="text-right text-xs mt-1.5 font-semibold text-emerald-400">Total: R$ {totalItens.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>}
             </div>
             <div className="grid grid-cols-3 gap-2">
               <label className="block"><span className="lbl">Recorrência</span><select className="in" value={f.recorrencia} onChange={(e) => set("recorrencia", e.target.value)}><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="avulsa">Avulsa</option></select></label>
