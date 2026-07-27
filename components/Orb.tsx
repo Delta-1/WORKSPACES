@@ -109,6 +109,8 @@ export default function Orb({
   // que aparece ao lado da bola (sem balão) — vibe tecnológica.
   const [speaking, setSpeaking] = useState(false);
   const [listening, setListening] = useState(false);
+  // Memórias do Orb (globais + suas): o que ele já aprendeu a fazer.
+  const [memories, setMemories] = useState<{ title: string; task: string | null; steps: string[] }[]>([]);
   const [floatText, setFloatText] = useState("");
   const floatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showFloat(t: string) {
@@ -136,9 +138,14 @@ export default function Orb({
       hubApps.slice(0, 40).map((a) => `• ${a.name}${a.keywords ? ` (${a.keywords})` : ""} → ${a.link}`).join("\n") + "\n"
     : "";
 
+  const memBlock = memories.length
+    ? `\n\nMEMÓRIAS (o que você JÁ aprendeu a fazer — se a tarefa atual for parecida, siga esses passos que já deram certo, adaptando ao print):\n` +
+      memories.slice(0, 12).map((mm) => `• ${mm.title}${mm.task ? ` (quando: ${mm.task})` : ""}: ${(mm.steps || []).slice(0, 12).join(" → ")}`).join("\n")
+    : "";
   const system = onControl
     ? `Você é o ${name}, copiloto de voz estilo JARVIS que CONTROLA a máquina remota "${contextLabel || ""}" de forma autônoma e PRECISA. ` +
       `Seja BREVE e falado. ENTENDA a intenção e AJA na máquina emitindo comandos entre «» (o sistema executa e você narra):\n` +
+      `0) PENSE O PLANO PRIMEIRO: ao receber uma tarefa nova, em UMA linha curta defina o plano (ex.: "plano: abrir chrome → barra de endereço → digitar youtube.com → enter") e então EXECUTE rápido, um passo por vez. Não fique repetindo o plano nem enrolando — aja. Use as MEMÓRIAS abaixo quando servirem, para ir direto ao certo.\n` +
       `• «digitar: TEXTO» — digita o texto no campo que está EM FOCO.\n` +
       `• «tecla: NOME» — pressiona uma tecla/atalho (enter, tab, esc, copy, paste, save, selectall, home).\n` +
       `• «clique» — clica onde o cursor já está.\n` +
@@ -162,7 +169,8 @@ export default function Orb({
       `   • "abre o WhatsApp e vê as mensagens": PRIMEIRO olhe se há NOTIFICAÇÃO do WhatsApp (canto do relógio / central de notificações) — se tiver, abra por ela. Senão, abra o WhatsApp: se houver WhatsApp Web no navegador (Chrome já logado), «abrir: chrome» e vá em web.whatsapp.com; ou abra o app WhatsApp Desktop pelo «abrir: whatsapp». Leia as conversas não lidas (em negrito) e resuma para a pessoa.\n` +
       `   • Navegador padrão é o que está logado (Chrome) — prefira ele para ver contas/serviços já conectados.\n` +
       `\nQUANDO PERGUNTAR (não adivinhe): se houver DOIS OU MAIS itens com nome parecido/idêntico (ex.: três coisas com "Google" no nome), ou se você NÃO encontrar o ícone/nome no print, PERGUNTE qual a pessoa quer e NÃO emita comando nessa vez — espere a resposta.\n` +
-      `\nQuando a tarefa estiver 100% concluída, diga uma frase curta e termine com «fim». Fale curtinho o que está fazendo a cada passo. Ao ouvir que vão finalizar, despeça-se em uma frase com «fim».`
+      `\nQuando a tarefa estiver 100% concluída, diga uma frase curta e termine com «fim». Fale curtinho o que está fazendo a cada passo. Ao ouvir que vão finalizar, despeça-se em uma frase com «fim».` +
+      memBlock
     : `Você é o ${name}, o copiloto de voz (estilo JARVIS) e ADMINISTRADOR do sistema desta empresa. Tem acesso a TUDO: ` +
       `arquivos, tarefas, clientes, mural, atendimentos e envio no WhatsApp. Seja BREVE e falado, ENTENDA a intenção, ` +
       `guarde o que já foi dito e responda com CONFIANÇA e clareza. Ao ouvir que a pessoa vai encerrar, despeça-se em uma frase.`;
@@ -172,6 +180,24 @@ export default function Orb({
   // Evita processar o MESMO comando repetidas vezes (o reconhecimento contínuo às
   // vezes reentrega a mesma frase e o Orb ficava tentando abrir o YouTube N vezes).
   const lastCmdRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
+  // Registro dos passos da tarefa atual (salvo ao concluir, p/ aperfeiçoar depois).
+  const actionLogRef = useRef<string[]>([]);
+  const taskTextRef = useRef<string>("");
+  useEffect(() => {
+    if (!supabase || !onControl) return;
+    supabase.from("orb_memories").select("title,task,steps").order("created_at", { ascending: false }).limit(40)
+      .then(({ data }) => setMemories((data || []).map((d) => ({ title: d.title as string, task: (d.task as string) ?? null, steps: Array.isArray(d.steps) ? (d.steps as string[]) : [] }))));
+  }, [onControl]);
+  async function saveMemory(task: string, steps: string[]) {
+    if (!supabase || steps.length < 2) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from("orb_memories").insert({
+        title: (task || steps[0] || "Memória").slice(0, 60),
+        task: task || null, steps, scope: "private", created_by: user?.id ?? null,
+      });
+    } catch { /* melhor esforço */ }
+  }
   function browserSpeak(text: string, done: () => void) {
     try {
       window.speechSynthesis?.cancel();
@@ -239,6 +265,7 @@ export default function Orb({
           cmds.push({ kind, x: nums[0] > 1 ? nums[0] / 100 : nums[0], y: nums[1] > 1 ? nums[1] / 100 : nums[1] });
         }
       } else if (low === "clique" || low === "clicar") cmds.push({ kind: "click" });
+      actionLogRef.current.push(raw); // registra o passo (para virar memória)
     }
     for (const c of cmds) {
       try { await onControl(c); } catch { /* segue */ }
@@ -253,6 +280,7 @@ export default function Orb({
     let convo: Msg[] = [...msgs, { role: "user", text }];
     setMsgs(convo);
     setBusy(true);
+    if (onControl) { taskTextRef.current = text; actionLogRef.current = []; } // nova tarefa: começa a gravar os passos
     try {
       // Modo autônomo (acesso remoto): loop passo-a-passo — age, VÊ o resultado
       // num print novo e continua até terminar («fim») ou parar p/ perguntar.
@@ -279,7 +307,12 @@ export default function Orb({
         let count = 0;
         if (onControl) { const r = await runControlCommands(raw); reply = r.text; count = r.count; }
         if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
-        if (!onControl || /«?\s*fim\s*»?/i.test(raw)) break; // terminou de vez
+        if (!onControl || /«?\s*fim\s*»?/i.test(raw)) {
+          // Tarefa concluída no controle remoto → grava a memória (passo a passo)
+          // para aperfeiçoar da próxima vez.
+          if (onControl && /«?\s*fim\s*»?/i.test(raw)) void saveMemory(taskTextRef.current, actionLogRef.current.slice());
+          break; // terminou de vez
+        }
         if (count > 0) { idle = 0; }
         else {
           // Sem comando: se está PERGUNTANDO algo (espera você), para. Senão,
