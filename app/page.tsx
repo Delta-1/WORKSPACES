@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -43,6 +43,7 @@ import AcademicTab from "@/components/tabs/AcademicTab";
 import StudioTab from "@/components/tabs/StudioTab";
 import SlidesTab from "@/components/tabs/SlidesTab";
 import ContactsTab from "@/components/tabs/ContactsTab";
+import MemoriesTab from "@/components/tabs/MemoriesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
@@ -75,6 +76,7 @@ const APPS: AppDef[] = [
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
   { id: "labs", label: "Labs", icon: FlaskConical, accent: "bg-indigo-900/60", roles: ["gestor", "gerente"] },
+  { id: "memorias", label: "Memórias", icon: Brain, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "log", label: "Log", icon: ScrollText, accent: "bg-slate-700/60", roles: ["gestor", "gerente"] },
   { id: "planos", label: "Planos", icon: Wallet, accent: "bg-emerald-900/60", roles: ["gestor"] },
   { id: "config", label: "Configurações", icon: Sliders, accent: "bg-amber-800/60", roles: ["gestor"] },
@@ -517,6 +519,7 @@ export default function Home() {
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
         {tab === "labs" && <LabsTab profile={profile} />}
+        {tab === "memorias" && <MemoriesTab profile={profile} />}
         {tab === "log" && <LogTab profile={profile} />}
         {tab === "config" && (
           <ConfigTab
