@@ -2271,6 +2271,13 @@ async function startSession(numberId) {
               console.error("handleBillingProof failed:", e?.message || e);
             }
           }
+          // COBRADOR: o cliente RESPONDEU → para o follow-up (bot não enche mais o
+          // saco). Marca responded_at nas cobranças em aberto já enviadas a ele.
+          if (contact?.id && cid) {
+            supabase.from("billing_targets").update({ responded_at: new Date().toISOString() })
+              .eq("company_id", cid).eq("contact_id", contact.id).is("responded_at", null)
+              .in("status", ["enviado", "lembrete", "atrasado"]).then(() => {}, () => {});
+          }
 
           // /configia — painel de configuração do número pelo WhatsApp. Intercepta
           // ANTES do bot: se há sessão ativa ou a pessoa mandou "/configia",
@@ -3197,10 +3204,14 @@ async function getBillingSettings(companyId) {
   const { data } = await supabase.from("company_settings").select("billing_pix_key,billing_default_template,name").eq("company_id", companyId).maybeSingle();
   return data || {};
 }
-// Envia a cobrança por TEXTO e, se houver AGENTE com voz, também por ÁUDIO
-// (o bot manda a mensagem). Pedido do cliente: "por áudio e por texto".
-async function sendBillingMessage(numberId, to, text, agent) {
-  await sendMessage(numberId, to, text, null, null).catch((e) => console.error("billing texto:", e?.message || e));
+// Envia a cobrança por TEXTO (ou IMAGEM com legenda) e, se houver AGENTE com voz,
+// também por ÁUDIO. Pedido do cliente: imagem em vez do/junto ao texto + áudio.
+async function sendBillingMessage(numberId, to, text, agent, imageUrl = null) {
+  if (imageUrl) {
+    await sendMessage(numberId, to, text, null, { type: "image", url: imageUrl, name: null, mime: null }).catch((e) => console.error("billing imagem:", e?.message || e));
+  } else {
+    await sendMessage(numberId, to, text, null, null).catch((e) => console.error("billing texto:", e?.message || e));
+  }
   try {
     const key = agent?.elevenlabs_key || elevenKey;
     if (agent && agent.voice_reply !== false && key) {
@@ -3253,13 +3264,16 @@ async function handleBillingProof({ sock, jid, conversation, cid, contactId, med
     const key = await resolveAgentKey(cid, "gemini");
     if (key) dataComp = await extractReceiptDate(imageBuffer, mime, key);
   }
+  // Baixa: pago, sem inadimplência (volta a "em dia") e marca que respondeu.
   await supabase.from("billing_targets").update({
     status: "pago", paid_at: new Date().toISOString(), comprovante_url: media.url || null, comprovante_data: dataComp,
+    inadimplente: false, responded_at: new Date().toISOString(),
   }).eq("id", t.id);
   const nome = (t.name || "").split(" ")[0];
+  const eraInadimplente = t.status === "atrasado";
   const okMsg = dataComp
-    ? `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Identifiquei o pagamento de ${fmtBrDate(dataComp)} e já dei baixa por aqui. Obrigado! 🙏`
-    : `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Pagamento confirmado e baixado por aqui. Obrigado! 🙏`;
+    ? `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Identifiquei o pagamento de ${fmtBrDate(dataComp)} e já dei baixa por aqui.${eraInadimplente ? " Sua situação voltou a ficar em dia. 👍" : ""} Obrigado! 🙏`
+    : `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Pagamento confirmado e baixado por aqui.${eraInadimplente ? " Sua situação voltou a ficar em dia. 👍" : ""} Obrigado! 🙏`;
   await sendBotMessage(sock, jid, conversation.id, cid, { text: okMsg });
   return true;
 }
@@ -3300,17 +3314,43 @@ async function billingSweep() {
       const numId = ch.number_id || firstConnectedNumberId();
       if (!numId) continue;
       const antecedencia = Number(ch.antecedencia_dias || 2);
+      const img = t.image_url || ch.image_url || null;
       const extrato = renderBillingExtrato(t.itens && t.itens.length ? t.itens : ch.itens, t.motivo || ch.motivo);
       const baseMsg = fillBillingTemplate(tpl, { nome: t.name, valor: t.valor, vencimento: t.due_date, pix, empresa, extrato, motivo: t.motivo || ch.motivo || "" });
+
+      // FOLLOW-UP / INADIMPLÊNCIA: já cobrado, sem resposta e sem pagamento.
+      // Reforça 1x por dia (áudio ou reenvio). Persistindo o silêncio (após 3
+      // reforços), para de insistir e marca INADIMPLENTE — a multa entra na próxima.
+      if (t.sent_at && !t.responded_at && t.status !== "pago" && t.status !== "cancelado") {
+        const fmin = Number(ch.followup_minutes || 0);
+        if (fmin > 0) {
+          const sinceSentMin = (Date.now() - new Date(t.sent_at).getTime()) / 60000;
+          const followedToday = t.followup_sent_at && new Date(t.followup_sent_at).toISOString().slice(0, 10) === todayStr;
+          const count = Number(t.followup_count || 0);
+          if (sinceSentMin >= fmin && !followedToday) {
+            if (count >= 3) {
+              if (!t.inadimplente) await supabase.from("billing_targets").update({ inadimplente: true, status: "atrasado" }).eq("id", t.id);
+            } else {
+              const primeiro = (t.name || "").split(" ")[0];
+              const reMsg = `Oi ${primeiro}, tudo bem? 🙂 Vi que a cobrança de ${brlMoney(t.valor)} (vence ${fmtBrDate(t.due_date)}) ainda está em aberto. Consegue dar uma olhadinha?\n\nChave Pix:\n${pix || "(configure a chave Pix no Cobrador)"}`;
+              // Áudio (se marcado e houver agente com voz) OU reenvio por texto/imagem.
+              await sendBillingMessage(numId, to, reMsg, ch.followup_as_audio ? agent : null, ch.followup_as_audio ? null : img);
+              await supabase.from("billing_targets").update({ followup_sent_at: new Date().toISOString(), followup_count: count + 1 }).eq("id", t.id);
+            }
+          }
+        }
+        continue; // este alvo já foi tratado neste ciclo
+      }
+
       // Lembrete X dias antes (uma vez).
       if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
-        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent);
+        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent, img);
         await supabase.from("billing_targets").update({ status: t.status === "pendente" ? "lembrete" : t.status, reminder_sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
       // Cobrança no dia do vencimento (uma vez).
       if (daysUntil <= 0 && !t.sent_at) {
-        await sendBillingMessage(numId, to, baseMsg, agent);
+        await sendBillingMessage(numId, to, baseMsg, agent, img);
         await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
@@ -3319,10 +3359,12 @@ async function billingSweep() {
         await supabase.from("billing_targets").update({ status: "atrasado" }).eq("id", t.id);
       }
     }
-    // 2) Recorrência: cria o próximo ciclo quando o mais recente por contato já venceu.
+    // 2) Recorrência: cria o próximo ciclo quando o mais recente por contato já
+    // venceu. Se o anterior ficou INADIMPLENTE/atrasado (não pago), soma a MULTA
+    // na próxima. Se foi PAGO, volta a "em dia" (sem multa).
     for (const ch of charges) {
       if (ch.recorrencia === "avulsa") continue;
-      const { data: latest } = await supabase.from("billing_targets").select("contact_id,due_date").eq("charge_id", ch.id).order("due_date", { ascending: false });
+      const { data: latest } = await supabase.from("billing_targets").select("contact_id,due_date,status,inadimplente").eq("charge_id", ch.id).order("due_date", { ascending: false });
       const seen = new Set();
       for (const t of latest || []) {
         if (!t.contact_id || seen.has(t.contact_id)) continue;
@@ -3335,10 +3377,14 @@ async function billingSweep() {
         const nextStr = next.toISOString().slice(0, 10);
         const { data: exists } = await supabase.from("billing_targets").select("id").eq("charge_id", ch.id).eq("contact_id", t.contact_id).gte("due_date", todayStr).limit(1);
         if (exists && exists.length) continue;
+        const naoPagou = t.inadimplente === true || t.status === "atrasado";
+        const multa = naoPagou ? Number(ch.multa_atraso || 0) : 0;
         const { data: contact } = await supabase.from("contacts").select("name,phone,jid").eq("id", t.contact_id).maybeSingle();
         await supabase.from("billing_targets").insert({
           company_id: ch.company_id, charge_id: ch.id, contact_id: t.contact_id, name: contact?.name || null,
-          phone: (contact?.phone || contact?.jid || "").replace(/@.*/, "") || null, tipo: ch.tipo, valor: ch.valor, due_date: nextStr, status: "pendente",
+          phone: (contact?.phone || contact?.jid || "").replace(/@.*/, "") || null, tipo: ch.tipo,
+          valor: Number(ch.valor || 0) + multa, multa, inadimplente: naoPagou, due_date: nextStr, status: "pendente",
+          itens: ch.itens || [], motivo: ch.motivo || null, image_url: ch.image_url || null,
         });
       }
     }
