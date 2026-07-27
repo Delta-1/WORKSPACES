@@ -1342,6 +1342,27 @@ const COPILOT_TOOLS = [
     description: "Cria uma APRESENTAÇÃO de slides sobre um tema e ENVIA o arquivo .pptx (PowerPoint) para a pessoa aqui no WhatsApp. Use quando pedirem slides/apresentação. Informe o tema e, se disserem, a quantidade de slides.",
     input_schema: { type: "object", properties: { tema: { type: "string" }, slides: { type: "number" } }, required: ["tema"] },
   },
+  // ---- Logística Internacional (TransLog) ----
+  {
+    name: "logistica_status_carga",
+    description: "Consulta o status/etapa de uma CARGA de exportação (por código #0001 ou nome do cliente/produto). Devolve a etapa atual, rota, veículo e motorista. Use quando perguntarem 'onde está a carga X' ou 'como está o embarque'.",
+    input_schema: { type: "object", properties: { busca: { type: "string", description: "código, cliente ou produto" } }, required: ["busca"] },
+  },
+  {
+    name: "logistica_localizacao_motorista",
+    description: "Entrega a ÚLTIMA LOCALIZAÇÃO (GPS) de um motorista, com link do mapa. Use quando o gestor pedir onde está um motorista/caminhão.",
+    input_schema: { type: "object", properties: { motorista: { type: "string" } }, required: ["motorista"] },
+  },
+  {
+    name: "logistica_listar_motoristas",
+    description: "Lista os motoristas cadastrados na Logística, com telefone e se o GPS está ativo.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "logistica_entregar_documento",
+    description: "Busca um DOCUMENTO aduaneiro/comercial já emitido (DUE, MIC/DTA, CRT, Proforma, Invoice) por número ou tipo e ENVIA um resumo. Use quando pedirem um documento de uma carga.",
+    input_schema: { type: "object", properties: { busca: { type: "string", description: "número ou tipo do documento (ex.: DUE, CRT, PRO-12345)" } }, required: ["busca"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1554,6 +1575,48 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         list.push({ nome: s.name, online, servidor: s.is_server === true, pasta_no_grafo: folder });
       }
       return { computadores: list, total: list.length };
+    }
+    // ---- Logística Internacional (TransLog) ----
+    if (name === "logistica_status_carga") {
+      const q = String(input.busca || "").trim();
+      let sel = supabase.from("logistics_cargas").select("codigo,cliente_nome,produto,origem,destino,pais_destino,stage,cfop,vehicle_id,driver_id").eq("company_id", companyId);
+      const byCode = q.replace(/[^0-9]/g, "");
+      const { data } = byCode
+        ? await sel.ilike("codigo", `%${byCode}%`).limit(5)
+        : await sel.or(`cliente_nome.ilike.%${q}%,produto.ilike.%${q}%`).limit(5);
+      if (!data || !data.length) return { ok: false, message: `Não achei carga para "${q}".` };
+      const stageLbl = { proforma: "Fatura Proforma", pedido: "Pedido/Contas a Pagar", entrada: "Entrada & Romaneio", fumigacao: "Fumigação", documentacao: "Documentação aduaneira", transbordo: "Transbordo na fronteira", exportacao: "Exportação & Invoice", concluido: "Concluído" };
+      const out = [];
+      for (const c of data) {
+        let veh = null, drv = null;
+        if (c.vehicle_id) { const { data: v } = await supabase.from("logistics_vehicles").select("placa").eq("id", c.vehicle_id).maybeSingle(); veh = v?.placa || null; }
+        if (c.driver_id) { const { data: d } = await supabase.from("logistics_drivers").select("nome").eq("id", c.driver_id).maybeSingle(); drv = d?.nome || null; }
+        out.push({ codigo: c.codigo, cliente: c.cliente_nome, produto: c.produto, rota: `${c.origem || "?"} → ${c.destino || "?"}${c.pais_destino ? ` (${c.pais_destino})` : ""}`, etapa: stageLbl[c.stage] || c.stage, cfop: c.cfop, veiculo: veh, motorista: drv });
+      }
+      return { ok: true, cargas: out };
+    }
+    if (name === "logistica_localizacao_motorista") {
+      const q = String(input.motorista || "").trim();
+      const { data } = await supabase.from("logistics_drivers").select("nome,telefone,gps_ativo,last_lat,last_lng,last_ping_at").eq("company_id", companyId).ilike("nome", `%${q}%`).limit(1).maybeSingle();
+      if (!data) return { ok: false, message: `Não achei o motorista "${q}".` };
+      if (data.last_lat == null) return { ok: true, message: `${data.nome} ainda não transmitiu localização (GPS ${data.gps_ativo ? "ligado" : "desligado"}).` };
+      return { ok: true, motorista: data.nome, telefone: data.telefone, gps_ativo: data.gps_ativo, atualizado_em: data.last_ping_at, coordenadas: `${data.last_lat}, ${data.last_lng}`, mapa: `https://www.google.com/maps?q=${data.last_lat},${data.last_lng}` };
+    }
+    if (name === "logistica_listar_motoristas") {
+      const { data } = await supabase.from("logistics_drivers").select("nome,telefone,gps_ativo,last_ping_at").eq("company_id", companyId).order("nome");
+      return (data ?? []).map((d) => ({ nome: d.nome, telefone: d.telefone, gps: d.gps_ativo ? "ativo" : "inativo", ultimo_ping: d.last_ping_at }));
+    }
+    if (name === "logistica_entregar_documento") {
+      const q = String(input.busca || "").trim();
+      const tipos = { due: "due", "mic": "micdta", "dta": "micdta", crt: "crt", proforma: "proforma", invoice: "invoice", fatura: "invoice" };
+      const tipoKey = Object.keys(tipos).find((k) => q.toLowerCase().includes(k));
+      let sel = supabase.from("logistics_documents").select("tipo,numero,dados,created_at").eq("company_id", companyId).order("created_at", { ascending: false });
+      if (tipoKey) sel = sel.eq("tipo", tipos[tipoKey]);
+      else sel = sel.ilike("numero", `%${q}%`);
+      const { data } = await sel.limit(3);
+      if (!data || !data.length) return { ok: false, message: `Não achei documento para "${q}".` };
+      const label = { due: "DUE", micdta: "MIC/DTA", crt: "CRT", proforma: "Fatura Proforma", invoice: "Fatura Comercial" };
+      return { ok: true, documentos: data.map((d) => ({ tipo: label[d.tipo] || d.tipo, numero: d.numero, emitido_em: d.created_at, dados: d.dados })) };
     }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
@@ -1777,6 +1840,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
     academico: ["gerar_documento", "gerar_apresentacao"],
+    logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain, Ship } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -24,6 +24,7 @@ import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
 import FormsTab from "@/components/tabs/FormsTab";
+import LogisticsTab from "@/components/tabs/LogisticsTab";
 import AppHubTab from "@/components/tabs/AppHubTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
@@ -71,6 +72,7 @@ const APPS: AppDef[] = [
   { id: "financeiro", label: "Financeiro", icon: Wallet, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes", label: "Clientes", icon: Building2, accent: "bg-lime-800/60", roles: ["gestor", "gerente"] },
   { id: "formularios", label: "Formulários", icon: FileSpreadsheet, accent: "bg-teal-800/60", roles: ["gestor", "gerente"] },
+  { id: "logistica", label: "Logística Internacional", icon: Ship, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "apphub", label: "App Hub", icon: Store, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes_ia", label: "Work.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
@@ -510,6 +512,7 @@ export default function Home() {
         {tab === "financeiro" && <FinanceTab profile={profile} />}
         {tab === "clientes" && <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "formularios" && <FormsTab profile={profile} />}
+        {tab === "logistica" && <LogisticsTab profile={profile} />}
         {tab === "apphub" && <AppHubTab profile={profile} superAdmin={superAdmin} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
         {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}

@@ -2,7 +2,7 @@
 // Ferramentas "base" (início, tarefas, arquivos, organograma, etc.) vêm sempre.
 // As ferramentas abaixo são opcionais e somam no valor mensal.
 
-export type FeatureId = "mensagens" | "remoto" | "labs" | "financeiro" | "clientes" | "automacao";
+export type FeatureId = "mensagens" | "remoto" | "labs" | "financeiro" | "clientes" | "automacao" | "logistica";
 
 export const FEATURES: { id: FeatureId; label: string; desc: string; price: number }[] = [
   { id: "mensagens", label: "WhatsApp / Mensagens", desc: "Atendimento por WhatsApp com bots e etiquetas", price: 0 /* por número registrado */ },
@@ -11,6 +11,7 @@ export const FEATURES: { id: FeatureId; label: string; desc: string; price: numb
   { id: "financeiro", label: "Financeiro", desc: "Controle de contas da empresa e de casa", price: 20 },
   { id: "clientes", label: "Clientes (CRM)", desc: "Cadastro de clientes, formulário e acesso de terceiros", price: 20 },
   { id: "automacao", label: "Automação de arquivos", desc: "Sincronizar/automatizar pastas de servidores", price: 30 },
+  { id: "logistica", label: "Logística Internacional (Exp/Imp)", desc: "Rastreio de cargas, frota, estoque, fumigação, documentos aduaneiros (DUE/MIC-DTA/CRT), DRE e portal do motorista", price: 90 },
 ];
 
 // Cada app (aba) depende de uma feature. Apps que não estão aqui vêm sempre.
@@ -25,6 +26,7 @@ export const APP_FEATURE: Record<string, FeatureId> = {
   clientes: "clientes",
   clientes_ia: "clientes",
   automacao: "automacao",
+  logistica: "logistica",
 };
 
 // Plano recomendado (já vem marcado): WhatsApp/mensagens, acesso remoto, agentes
