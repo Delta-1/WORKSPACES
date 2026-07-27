@@ -136,6 +136,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [showSoundPicker, setShowSoundPicker] = useState(false);
   const [uploadingSound, setUploadingSound] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
+  const [chargeConv, setChargeConv] = useState<ConvRow | null>(null);
   const notifSoundRef = useRef<NotifSoundId>(notifSound);
   const notifSoundUrlRef = useRef<string | null>(null);
   useEffect(() => { notifSoundRef.current = notifSound; }, [notifSound]);
@@ -1120,6 +1121,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               </button>
               {selConv && (
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {selConv.contacts?.id && (
+                    <button
+                      onClick={() => setChargeConv(selConv)}
+                      title="Cobrar este contato"
+                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer bg-white/5 text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors"
+                    >
+                      <DollarSign size={12} /> Cobrar
+                    </button>
+                  )}
                   {selConv.status !== "fechado" && (
                     <button
                       onClick={finalizeConv}
@@ -1386,6 +1396,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
       {/* Cobranças pendentes (integração com o Cobrador). */}
       {showBilling && <BillingPendingModal companyId={profile?.company_id ?? null} onClose={() => setShowBilling(false)} onOpenConv={(phone) => { setShowBilling(false); const c = conversations.find((x) => (x.contacts?.phone || "").replace(/\D/g, "").endsWith(phone.replace(/\D/g, "").slice(-8))); if (c) openConv(c.id); }} />}
+
+      {/* Cobrança manual direto no chat do contato (cobrar antes do dia, marcar pago). */}
+      {chargeConv?.contacts && <ChatChargeModal companyId={profile?.company_id ?? null} contact={chargeConv.contacts} onClose={() => setChargeConv(null)} />}
 
       {/* Som de notificação: escolher entre vários + a empresa subir o próprio. */}
       {showSoundPicker && (
@@ -1958,6 +1971,76 @@ function BillingPendingModal({ companyId, onClose, onOpenConv }: { companyId: st
           </div>
         )}
         <p className="text-[11px] text-gray-500 mt-3">Gerencie tudo no app <b>Cobrador</b>.</p>
+      </div>
+    </div>
+  );
+}
+
+// Cobrança manual dentro do chat: cobrar agora (mesmo antes do vencimento, já
+// contabiliza) e marcar como pago manualmente. Integra com o Cobrador.
+function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | null; contact: { id: string; name?: string | null; phone?: string | null; jid?: string | null }; onClose: () => void }) {
+  type T = { id: string; valor: number; due_date: string | null; status: string; comprovante_url: string | null };
+  const [rows, setRows] = useState<T[]>([]);
+  const [valor, setValor] = useState("");
+  const [pixKey, setPixKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+  const fmt = (iso: string | null) => { if (!iso) return "—"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
+  const cls: Record<string, string> = { pendente: "bg-zinc-700/40 text-zinc-300", lembrete: "bg-sky-500/15 text-sky-300", enviado: "bg-amber-500/15 text-amber-300", pago: "bg-emerald-500/15 text-emerald-300", atrasado: "bg-red-500/15 text-red-300", cancelado: "bg-zinc-800 text-zinc-500" };
+  const load = useCallback(async () => {
+    if (!supabase || !companyId) return;
+    const { data } = await supabase.from("billing_targets").select("id,valor,due_date,status,comprovante_url").eq("company_id", companyId).eq("contact_id", contact.id).order("due_date", { ascending: false });
+    setRows((data as T[]) ?? []);
+  }, [companyId, contact.id]);
+  useEffect(() => {
+    load();
+    if (supabase && companyId) supabase.from("company_settings").select("billing_pix_key").eq("company_id", companyId).maybeSingle().then(({ data }) => setPixKey((data as { billing_pix_key?: string } | null)?.billing_pix_key || ""));
+  }, [load, companyId]);
+
+  // Cobra AGORA: cria a cobrança avulsa + alvo (já contabiliza) e manda a mensagem.
+  async function chargeNow() {
+    if (!supabase || !companyId || !valor) return;
+    setBusy(true);
+    try {
+      const nome = contact.name || contact.phone || "";
+      const to = contact.jid || contact.phone || "";
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: charge } = await supabase.from("billing_charges").insert({ company_id: companyId, name: `Cobrança — ${nome}`, tipo: "pix", valor: Number(valor) || 0, recorrencia: "avulsa", dia_vencimento: new Date().getDate(), antecedencia_dias: 0, status: "ativa" }).select("id").maybeSingle();
+      let targetId: string | null = null;
+      if (charge?.id) {
+        const { data: tgt } = await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: Number(valor) || 0, due_date: today, status: "enviado", sent_at: new Date().toISOString() }).select("id").maybeSingle();
+        targetId = tgt?.id ?? null;
+      }
+      const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(Number(valor) || 0)}.\n\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`;
+      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text }) });
+      setValor(""); await load();
+    } finally { setBusy(false); }
+  }
+  async function markPaid(id: string) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "pago", paid_at: new Date().toISOString() }).eq("id", id); load(); }
+  async function cancelT(id: string) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "cancelado" }).eq("id", id); load(); }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm flex items-center gap-2"><DollarSign size={16} className="text-emerald-400" /> Cobrar {contact.name || contact.phone}</h3><button onClick={onClose}><X size={18} /></button></div>
+        <div className="flex gap-2 mb-3">
+          <input type="number" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="Valor R$" className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" />
+          <button onClick={chargeNow} disabled={busy || !valor} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-3 rounded-lg flex items-center gap-1"><Send size={14} /> Cobrar agora</button>
+        </div>
+        <p className="text-[11px] text-gray-500 mb-3">Envia a cobrança na hora (mesmo antes do vencimento) e já contabiliza. {pixKey ? "" : "Configure a chave Pix no app Cobrador."}</p>
+        <div className="space-y-1.5">
+          {rows.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Nenhuma cobrança para este contato ainda.</p>}
+          {rows.map((t) => (
+            <div key={t.id} className="flex items-center justify-between gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+              <div><div className="text-sm">{money(t.valor)}</div><div className="text-[10px] text-gray-500">vence {fmt(t.due_date)}</div></div>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cls[t.status] || ""}`}>{t.status}</span>
+                {t.status !== "pago" && t.status !== "cancelado" && <button onClick={() => markPaid(t.id)} title="Marcar como pago" className="p-1 rounded-lg hover:bg-white/10 text-emerald-400"><Check size={14} /></button>}
+                {t.status !== "pago" && t.status !== "cancelado" && <button onClick={() => cancelT(t.id)} title="Cancelar" className="p-1 rounded-lg hover:bg-white/10 text-gray-500"><X size={14} /></button>}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
