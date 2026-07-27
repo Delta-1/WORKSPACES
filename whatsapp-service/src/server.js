@@ -674,6 +674,35 @@ async function transcribeAudio(buffer, mime, key) {
   }
 }
 
+// Transcrição pela IA do próprio bot (Gemini/OpenAI). É o FALLBACK quando não há
+// chave ElevenLabs — sem isso, os áudios do cliente não eram entendidos e o bot
+// ficava mudo (a pessoa via só as mensagens do cliente "respondendo o nada").
+async function transcribeWithAI(buffer, mime, provider, key) {
+  if (!buffer || !key) return null;
+  const b64 = buffer.toString("base64");
+  const prompt = "Transcreva este áudio em português. Responda SOMENTE com o texto falado, sem comentários.";
+  try {
+    if (provider === "openai") {
+      const fd = new FormData();
+      fd.append("model", "whisper-1");
+      fd.append("file", new Blob([buffer], { type: mime || "audio/ogg" }), "audio.ogg");
+      const res = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: fd });
+      const j = await res.json();
+      return j?.text?.trim() || null;
+    }
+    // Gemini (default): multimodal — "ouve" o áudio direto.
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: (mime || "audio/ogg").split(";")[0], data: b64 } }] }] }),
+    });
+    const j = await res.json();
+    return j?.candidates?.[0]?.content?.parts?.map((p) => p.text).join(" ").trim() || null;
+  } catch (err) {
+    console.error("transcribeWithAI failed:", err?.message || err);
+    return null;
+  }
+}
+
 // Limpa o texto antes de virar voz: tira rótulos/rubricas que o TTS leria
 // literalmente ("áudio", "(risada)", "(rindo)", "[pausa]"...) e transforma
 // risadas descritas em risada de verdade ("hahaha").
@@ -2045,6 +2074,13 @@ async function startSession(numberId) {
             let customerText = text;
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
+              // FALLBACK: sem ElevenLabs (ou se falhou), transcreve pela IA do bot
+              // (Gemini/OpenAI). Assim o bot ENTENDE o áudio mesmo sem chave de voz.
+              if (!customerText) {
+                const aiProv = agentForReply?.provider || "gemini";
+                const aiKey = agentForReply?.api_key || (await resolveAgentKey(cid, aiProv));
+                if (aiKey) customerText = await transcribeWithAI(audioBuffer, node?.mimetype, aiProv, aiKey);
+              }
               // Grava a TRANSCRIÇÃO no histórico (antes ficava só "🎵 Áudio" e o bot
               // "esquecia" o que foi dito por áudio). Assim a memória fica correta.
               if (customerText && inMsgId) {
