@@ -28,6 +28,16 @@ const CAPS: { id: string; label: string; desc: string }[] = [
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];
 
+// Vozes prontas (ElevenLabs, multilíngue — funcionam em pt-BR). Dá pra colar qualquer ID.
+const VOICES: { id: string; label: string }[] = [
+  { id: "21m00Tcm4TlvDq8ikWAM", label: "Rachel (feminina)" },
+  { id: "EXAVITQu4vr4xnSDxMaL", label: "Sarah (feminina)" },
+  { id: "AZnzlk1XvdvUeBnXmlld", label: "Domi (feminina)" },
+  { id: "ErXwobaYiN019PkySvjV", label: "Antoni (masculina)" },
+  { id: "pNInz6obpgDQGcFmaJgB", label: "Adam (masculina)" },
+  { id: "TxGEqnHWrfWFTfGW9XjX", label: "Josh (masculina)" },
+];
+
 // Prompt-base já pronto — a pessoa só edita os trechos entre colchetes.
 const TEMPLATE_PERSONA = "[Nome], um assistente [ex.: cordial, objetivo] especialista em [área de atuação da empresa].";
 const TEMPLATE_INSTRUCTIONS =
@@ -325,6 +335,10 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       company_id: profile?.company_id ?? null,
       // Privado: só o dono vê no Labs (owner_id preenchido = privado).
       owner_id: f.owner_id ?? null,
+      // Voz do agente (ElevenLabs): ID da voz, chave própria e se responde por voz.
+      elevenlabs_voice_id: f.elevenlabs_voice_id?.trim() || null,
+      elevenlabs_key: f.elevenlabs_key?.trim() || null,
+      voice_reply: f.voice_reply ?? true,
     };
     let agentId = f.id;
     if (f.id) {
@@ -435,6 +449,40 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
               </label>
             ))}
           </div>
+        </div>
+
+        {/* Voz do agente (cada bot pode ter a sua). */}
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 space-y-2">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="checkbox" checked={f.voice_reply ?? true} onChange={(e) => set({ voice_reply: e.target.checked })} className="accent-indigo-500" />
+            <b className="text-indigo-300">Responder por voz</b> (áudio no WhatsApp)
+          </label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-gray-400">Voz:</span>
+            <select
+              value={VOICES.some((v) => v.id === f.elevenlabs_voice_id) ? f.elevenlabs_voice_id! : (f.elevenlabs_voice_id ? "custom" : "")}
+              onChange={(e) => { const v = e.target.value; if (v === "custom") return; set({ elevenlabs_voice_id: v || null }); }}
+              className="bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none cursor-pointer"
+            >
+              <option value="">— padrão do sistema —</option>
+              {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+              <option value="custom">outra (colar ID)</option>
+            </select>
+            <input
+              value={f.elevenlabs_voice_id ?? ""}
+              onChange={(e) => set({ elevenlabs_voice_id: e.target.value })}
+              placeholder="ID da voz (ElevenLabs)"
+              className="flex-1 min-w-[140px] bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none font-mono"
+            />
+          </div>
+          <input
+            type="password"
+            value={f.elevenlabs_key ?? ""}
+            onChange={(e) => set({ elevenlabs_key: e.target.value })}
+            placeholder="Chave ElevenLabs deste agente (opcional — senão usa a da empresa/sistema)"
+            className="w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none"
+          />
+          <p className="text-[10px] text-gray-500">Cada agente pode ter a própria voz. Sem voz escolhida, usa a voz padrão do sistema. Pegue IDs de voz no painel da ElevenLabs.</p>
         </div>
 
         <label className="flex items-center gap-2 text-xs cursor-pointer">
