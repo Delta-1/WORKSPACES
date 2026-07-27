@@ -1363,6 +1363,17 @@ const COPILOT_TOOLS = [
     description: "Busca um DOCUMENTO aduaneiro/comercial já emitido (DUE, MIC/DTA, CRT, Proforma, Invoice) por número ou tipo e ENVIA um resumo. Use quando pedirem um documento de uma carga.",
     input_schema: { type: "object", properties: { busca: { type: "string", description: "número ou tipo do documento (ex.: DUE, CRT, PRO-12345)" } }, required: ["busca"] },
   },
+  // ---- Cobrador (cobranças) ----
+  {
+    name: "cobranca_pendentes",
+    description: "Lista as COBRANÇAS em aberto (pendentes/atrasadas) da empresa, com cliente, valor e vencimento. Use quando perguntarem quem está devendo ou o que está a receber.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "cobranca_status_cliente",
+    description: "Mostra a situação de cobrança de UM cliente (por nome): valor, vencimento, status (pago/pendente/atrasado) e se enviou comprovante.",
+    input_schema: { type: "object", properties: { cliente: { type: "string" } }, required: ["cliente"] },
+  },
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
@@ -1618,6 +1629,19 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       const label = { due: "DUE", micdta: "MIC/DTA", crt: "CRT", proforma: "Fatura Proforma", invoice: "Fatura Comercial" };
       return { ok: true, documentos: data.map((d) => ({ tipo: label[d.tipo] || d.tipo, numero: d.numero, emitido_em: d.created_at, dados: d.dados })) };
     }
+    // ---- Cobrador ----
+    if (name === "cobranca_pendentes") {
+      const { data } = await supabase.from("billing_targets").select("name,valor,due_date,status").eq("company_id", companyId).in("status", ["pendente", "lembrete", "enviado", "atrasado"]).order("due_date").limit(50);
+      if (!data || !data.length) return { ok: true, message: "Nenhuma cobrança em aberto." };
+      const total = data.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+      return { ok: true, total_a_receber: total, cobrancas: data.map((t) => ({ cliente: t.name, valor: t.valor, vencimento: t.due_date, status: t.status })) };
+    }
+    if (name === "cobranca_status_cliente") {
+      const q = String(input.cliente || "").trim();
+      const { data } = await supabase.from("billing_targets").select("name,valor,due_date,status,comprovante_url,paid_at").eq("company_id", companyId).ilike("name", `%${q}%`).order("due_date", { ascending: false }).limit(5);
+      if (!data || !data.length) return { ok: false, message: `Não achei cobrança para "${q}".` };
+      return { ok: true, cliente: q, cobrancas: data.map((t) => ({ valor: t.valor, vencimento: t.due_date, status: t.status, comprovante: !!t.comprovante_url, pago_em: t.paid_at })) };
+    }
     return { error: "ferramenta desconhecida" };
   } catch (e) {
     return { ok: false, message: String(e?.message || e) };
@@ -1841,6 +1865,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     forms: ["list_forms", "save_to_form"],
     academico: ["gerar_documento", "gerar_apresentacao"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
+    cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   const allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
@@ -2139,6 +2164,18 @@ async function startSession(numberId) {
             cid
           );
           const inMsgId = await logMessage(conversation.id, "in", text, null, media, cid);
+
+          // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
+          // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos
+          // o arquivo, tentamos ler a DATA, damos baixa (pago) e confirmamos.
+          if (media && (media.type === "image" || media.type === "document") && contact?.id) {
+            try {
+              const handled = await handleBillingProof({ sock, jid: contactJid, conversation, cid, contactId: contact.id, media, imageBuffer, mime: node?.mimetype || null });
+              if (handled) continue; // comprovante tratado — não aciona o bot de atendimento
+            } catch (e) {
+              console.error("handleBillingProof failed:", e?.message || e);
+            }
+          }
 
           // /configia — painel de configuração do número pelo WhatsApp. Intercepta
           // ANTES do bot: se há sessão ativa ou a pessoa mandou "/configia",
@@ -2989,10 +3026,182 @@ async function attendanceSweep() {
   }
 }
 
+// ============================ COBRADOR (cobranças) ============================
+const DEFAULT_BILLING_TEMPLATE =
+  "Olá {nome}! 👋 Passando para avisar da sua cobrança de {valor}, com vencimento em {vencimento}.\n\n" +
+  "Para pagar via Pix, use a chave abaixo:\n{pix}\n\n" +
+  "Assim que fizer o pagamento, é só me enviar o comprovante aqui por mensagem que eu confirmo para você. 🙏\n\n— {empresa}";
+
+function fmtBrDate(iso) {
+  if (!iso) return "";
+  const [y, m, d] = String(iso).slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+function fillBillingTemplate(tpl, v) {
+  const valor = typeof v.valor === "number" ? `R$ ${v.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : v.valor || "";
+  return (tpl || DEFAULT_BILLING_TEMPLATE)
+    .replace(/\{nome\}/g, v.nome || "")
+    .replace(/\{valor\}/g, String(valor))
+    .replace(/\{vencimento\}/g, fmtBrDate(v.vencimento) || "")
+    .replace(/\{pix\}/g, v.pix || "(chave Pix não configurada)")
+    .replace(/\{empresa\}/g, v.empresa || "");
+}
+async function getBillingSettings(companyId) {
+  const { data } = await supabase.from("company_settings").select("billing_pix_key,billing_default_template,name").eq("company_id", companyId).maybeSingle();
+  return data || {};
+}
+// Envia a cobrança por TEXTO e, se houver AGENTE com voz, também por ÁUDIO
+// (o bot manda a mensagem). Pedido do cliente: "por áudio e por texto".
+async function sendBillingMessage(numberId, to, text, agent) {
+  await sendMessage(numberId, to, text, null, null).catch((e) => console.error("billing texto:", e?.message || e));
+  try {
+    const key = agent?.elevenlabs_key || elevenKey;
+    if (agent && agent.voice_reply !== false && key) {
+      const mp3 = await synthesizeSpeech(sanitizeForSpeech(text), key, agent.elevenlabs_voice_id);
+      const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
+      const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
+      if (url) await sendMessage(numberId, to, "", null, { type: "audio", url, name: null, mime: "audio/ogg" }).catch(() => {});
+    }
+  } catch (e) {
+    console.error("billing áudio:", e?.message || e);
+  }
+}
+// Lê a DATA de um comprovante (imagem) via IA de visão (Gemini) — best-effort.
+async function extractReceiptDate(buffer, mime, key) {
+  try {
+    const b64 = buffer.toString("base64");
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [
+          { text: "Esta imagem é um comprovante de pagamento (Pix/transferência). Responda APENAS a DATA do pagamento no formato YYYY-MM-DD. Se não encontrar, responda 'none'." },
+          { inlineData: { mimeType: mime || "image/jpeg", data: b64 } },
+        ] }],
+      }),
+    });
+    const data = await res.json();
+    const txt = (data?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+    const m = /(\d{4})-(\d{2})-(\d{2})/.exec(txt);
+    return m ? m[0] : null;
+  } catch {
+    return null;
+  }
+}
+// Comprovante de pagamento: se há cobrança aberta p/ o contato, dá baixa e confirma.
+async function handleBillingProof({ sock, jid, conversation, cid, contactId, media, imageBuffer, mime }) {
+  if (!supabase || !cid) return false;
+  const { data: tgts } = await supabase
+    .from("billing_targets")
+    .select("id,valor,due_date,status,name")
+    .eq("company_id", cid).eq("contact_id", contactId)
+    .in("status", ["pendente", "lembrete", "enviado", "atrasado"])
+    .order("due_date", { ascending: true })
+    .limit(1);
+  const t = tgts && tgts[0];
+  if (!t) return false; // sem cobrança aberta → não é comprovante, segue o fluxo normal
+  // Tenta identificar a data do comprovante (só imagem).
+  let dataComp = null;
+  if (imageBuffer) {
+    const key = await resolveAgentKey(cid, "gemini");
+    if (key) dataComp = await extractReceiptDate(imageBuffer, mime, key);
+  }
+  await supabase.from("billing_targets").update({
+    status: "pago", paid_at: new Date().toISOString(), comprovante_url: media.url || null, comprovante_data: dataComp,
+  }).eq("id", t.id);
+  const nome = (t.name || "").split(" ")[0];
+  const okMsg = dataComp
+    ? `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Identifiquei o pagamento de ${fmtBrDate(dataComp)} e já dei baixa por aqui. Obrigado! 🙏`
+    : `Recebi seu comprovante${nome ? ", " + nome : ""}! ✅ Pagamento confirmado e baixado por aqui. Obrigado! 🙏`;
+  await sendBotMessage(sock, jid, conversation.id, cid, { text: okMsg });
+  return true;
+}
+// Agendador: envia lembretes e cobranças no prazo, e regenera as recorrências.
+async function billingSweep() {
+  if (!supabase) return;
+  try {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayStr = startOfToday.toISOString().slice(0, 10);
+    const { data: charges } = await supabase.from("billing_charges").select("*").eq("status", "ativa");
+    if (!charges || !charges.length) return;
+    const chById = {};
+    charges.forEach((c) => (chById[c.id] = c));
+    // Agentes vinculados (para voz).
+    const agentIds = [...new Set(charges.map((c) => c.agent_id).filter(Boolean))];
+    const agentsById = {};
+    if (agentIds.length) {
+      const { data: ags } = await supabase.from("chatbots").select("id,elevenlabs_key,elevenlabs_voice_id,voice_reply").in("id", agentIds);
+      (ags || []).forEach((a) => (agentsById[a.id] = a));
+    }
+    // 1) Envia lembretes / cobranças (só cobranças por Pix ou mensagem; 'api' é conciliado à parte).
+    const { data: targets } = await supabase.from("billing_targets").select("*").in("status", ["pendente", "lembrete", "enviado", "atrasado"]).limit(300);
+    for (const t of targets || []) {
+      const ch = chById[t.charge_id];
+      if (!ch || !t.phone || !t.due_date) continue;
+      if (ch.tipo === "api" || ch.tipo === "boleto") continue; // pagamento por API — não manda chave Pix
+      const due = new Date(t.due_date + "T00:00:00");
+      const daysUntil = Math.round((due - startOfToday) / 86400000);
+      const bs = await getBillingSettings(t.company_id);
+      const pix = bs.billing_pix_key || "";
+      const empresa = bs.name || "";
+      const tpl = ch.template || bs.billing_default_template || DEFAULT_BILLING_TEMPLATE;
+      const agent = ch.agent_id ? agentsById[ch.agent_id] : null;
+      const numId = ch.number_id || firstConnectedNumberId();
+      if (!numId) continue;
+      const antecedencia = Number(ch.antecedencia_dias || 2);
+      const baseMsg = fillBillingTemplate(tpl, { nome: t.name, valor: t.valor, vencimento: t.due_date, pix, empresa });
+      // Lembrete X dias antes (uma vez).
+      if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
+        await sendBillingMessage(numId, t.phone, `⏰ ${baseMsg}`, agent);
+        await supabase.from("billing_targets").update({ status: t.status === "pendente" ? "lembrete" : t.status, reminder_sent_at: new Date().toISOString() }).eq("id", t.id);
+        continue;
+      }
+      // Cobrança no dia do vencimento (uma vez).
+      if (daysUntil <= 0 && !t.sent_at) {
+        await sendBillingMessage(numId, t.phone, baseMsg, agent);
+        await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
+        continue;
+      }
+      // Vencida sem pagamento → marca atrasado (não fica reenviando).
+      if (daysUntil < 0 && t.status !== "atrasado") {
+        await supabase.from("billing_targets").update({ status: "atrasado" }).eq("id", t.id);
+      }
+    }
+    // 2) Recorrência: cria o próximo ciclo quando o mais recente por contato já venceu.
+    for (const ch of charges) {
+      if (ch.recorrencia === "avulsa") continue;
+      const { data: latest } = await supabase.from("billing_targets").select("contact_id,due_date").eq("charge_id", ch.id).order("due_date", { ascending: false });
+      const seen = new Set();
+      for (const t of latest || []) {
+        if (!t.contact_id || seen.has(t.contact_id)) continue;
+        seen.add(t.contact_id);
+        const due = new Date((t.due_date || "") + "T00:00:00");
+        if (isNaN(due.getTime()) || due >= startOfToday) continue;
+        const next = new Date(due);
+        if (ch.recorrencia === "semanal") next.setDate(next.getDate() + 7);
+        else next.setMonth(next.getMonth() + 1);
+        const nextStr = next.toISOString().slice(0, 10);
+        const { data: exists } = await supabase.from("billing_targets").select("id").eq("charge_id", ch.id).eq("contact_id", t.contact_id).gte("due_date", todayStr).limit(1);
+        if (exists && exists.length) continue;
+        const { data: contact } = await supabase.from("contacts").select("name,phone,jid").eq("id", t.contact_id).maybeSingle();
+        await supabase.from("billing_targets").insert({
+          company_id: ch.company_id, charge_id: ch.id, contact_id: t.contact_id, name: contact?.name || null,
+          phone: (contact?.phone || contact?.jid || "").replace(/@.*/, "") || null, tipo: ch.tipo, valor: ch.valor, due_date: nextStr, status: "pendente",
+        });
+      }
+    }
+  } catch (e) {
+    console.error("billingSweep failed:", e?.message || e);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on :${PORT}`);
   void resumeSessions();
   void backfillBrainFolders(); // garante pasta de memória p/ todo agente
   setInterval(watchdog, 60000);
   setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
+  setInterval(billingSweep, 180000); // Cobrador: envia cobranças/lembretes e regenera ciclos
+  setTimeout(billingSweep, 15000); // primeira passada logo após subir
 });

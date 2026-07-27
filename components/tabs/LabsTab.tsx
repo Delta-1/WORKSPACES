@@ -26,6 +26,7 @@ const CAPS: { id: string; label: string; desc: string }[] = [
   { id: "forms", label: "Formulários", desc: "Registrar dados em planilhas/formulários da empresa" },
   { id: "academico", label: "Estúdio Acadêmico", desc: "Gerar e enviar trabalhos (.docx/.pdf) e apresentações (.pptx)" },
   { id: "logistica", label: "Logística Internacional", desc: "Status de cargas, localização de motoristas e documentos aduaneiros" },
+  { id: "cobranca", label: "Cobrador (cobranças)", desc: "Consulta cobranças pendentes e situação de cada cliente" },
 ];
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];

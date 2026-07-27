@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, Bot, Check, Columns3, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
@@ -135,6 +135,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [notifSoundUrl, setNotifSoundUrl] = useState<string | null>(null);
   const [showSoundPicker, setShowSoundPicker] = useState(false);
   const [uploadingSound, setUploadingSound] = useState(false);
+  const [showBilling, setShowBilling] = useState(false);
   const notifSoundRef = useRef<NotifSoundId>(notifSound);
   const notifSoundUrlRef = useRef<string | null>(null);
   useEffect(() => { notifSoundRef.current = notifSound; }, [notifSound]);
@@ -915,6 +916,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           <Plus size={18} />
         </ServerIcon>
         <div className="mt-auto pt-2 border-t border-white/10 w-full flex flex-col items-center gap-1">
+          <button onClick={() => setShowBilling(true)} title="Cobranças pendentes" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
+            <DollarSign size={18} />
+          </button>
           <button onClick={() => setShowSoundPicker(true)} title="Som de notificação" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
             <Bell size={18} />
           </button>
@@ -1379,6 +1383,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           </div>
         </div>
       )}
+
+      {/* Cobranças pendentes (integração com o Cobrador). */}
+      {showBilling && <BillingPendingModal companyId={profile?.company_id ?? null} onClose={() => setShowBilling(false)} onOpenConv={(phone) => { setShowBilling(false); const c = conversations.find((x) => (x.contacts?.phone || "").replace(/\D/g, "").endsWith(phone.replace(/\D/g, "").slice(-8))); if (c) openConv(c.id); }} />}
 
       {/* Som de notificação: escolher entre vários + a empresa subir o próprio. */}
       {showSoundPicker && (
@@ -1912,6 +1919,45 @@ function Bubble({ mine, at, text, mediaUrl, mediaType }: { mine: boolean; at: st
         )}
         {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
         <p className={`text-[10px] mt-0.5 ${mine ? "text-emerald-100/70" : "text-gray-500"}`}>{fmtTime(at)}</p>
+      </div>
+    </div>
+  );
+}
+
+// Cobranças pendentes (Cobrador) — atalho do $ no Mensagens.
+function BillingPendingModal({ companyId, onClose, onOpenConv }: { companyId: string | null; onClose: () => void; onOpenConv: (phone: string) => void }) {
+  type T = { id: string; name: string | null; phone: string | null; valor: number; due_date: string | null; status: string };
+  const [rows, setRows] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!supabase || !companyId) { setLoading(false); return; }
+    supabase.from("billing_targets").select("id,name,phone,valor,due_date,status").eq("company_id", companyId).in("status", ["pendente", "lembrete", "enviado", "atrasado"]).order("due_date").then(({ data }) => { setRows((data as T[]) ?? []); setLoading(false); });
+  }, [companyId]);
+  const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+  const fmt = (iso: string | null) => { if (!iso) return "—"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
+  const total = rows.reduce((a, b) => a + (b.valor || 0), 0);
+  const cls: Record<string, string> = { pendente: "bg-zinc-700/40 text-zinc-300", lembrete: "bg-sky-500/15 text-sky-300", enviado: "bg-amber-500/15 text-amber-300", atrasado: "bg-red-500/15 text-red-300" };
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-base font-bold flex items-center gap-2"><DollarSign size={18} className="text-emerald-400" /> Cobranças pendentes</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={18} /></button>
+        </div>
+        <p className="text-xs text-gray-400 mb-3">Total a receber: <b className="text-amber-400">{money(total)}</b></p>
+        {loading ? <p className="text-sm text-gray-500 py-6 text-center">Carregando…</p> : rows.length === 0 ? (
+          <p className="text-sm text-gray-500 py-8 text-center">Nenhuma cobrança pendente. 🎉</p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((t) => (
+              <button key={t.id} onClick={() => t.phone && onOpenConv(t.phone)} className="w-full flex items-center justify-between gap-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2 text-left">
+                <div className="min-w-0"><div className="text-sm truncate">{t.name || t.phone}</div><div className="text-[11px] text-gray-500">vence {fmt(t.due_date)}</div></div>
+                <div className="flex items-center gap-2 shrink-0"><span className="text-sm font-semibold">{money(t.valor)}</span><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cls[t.status] || ""}`}>{t.status}</span></div>
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-gray-500 mt-3">Gerencie tudo no app <b>Cobrador</b>.</p>
       </div>
     </div>
   );
