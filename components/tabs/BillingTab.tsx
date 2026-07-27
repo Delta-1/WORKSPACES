@@ -1,0 +1,347 @@
+"use client";
+
+// ================================ Cobrador ================================
+// Automação de cobranças (estilo Asaas), ligada a Contatos e Mensagens/WhatsApp.
+// A empresa cria uma COBRANÇA (valor, recorrência, mensagem programada, Pix ou
+// Mercado Pago) e adiciona clientes. O serviço de WhatsApp envia sozinho (com
+// lembrete X dias antes), o cliente paga por Pix e manda o comprovante — o bot
+// salva o comprovante e concilia. Não precisa de IA (mensagem programada), mas
+// dá para vincular um agente ("Cobrador").
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
+import { supabase } from "@/lib/supabase-client";
+import type { Profile } from "@/lib/types";
+import { BILLING_DEFAULT_TEMPLATE, fillTemplate, nextDueDate, fmtDatePt } from "@/lib/billing";
+
+type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string };
+type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null };
+type Contact = { id: string; name: string | null; phone: string | null; jid: string | null };
+type Agent = { id: string; name: string };
+type WNumber = { id: string; label: string | null; phone_number: string | null };
+type Settings = { pix_key: string; pix_name: string; mp_token: string; agent_name: string; template: string };
+
+const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+const STATUS: Record<string, { label: string; cls: string }> = {
+  pendente: { label: "Pendente", cls: "bg-zinc-700/40 text-zinc-300" },
+  lembrete: { label: "Lembrete enviado", cls: "bg-sky-500/15 text-sky-300" },
+  enviado: { label: "Cobrança enviada", cls: "bg-amber-500/15 text-amber-300" },
+  pago: { label: "Pago", cls: "bg-emerald-500/15 text-emerald-300" },
+  atrasado: { label: "Atrasado", cls: "bg-red-500/15 text-red-300" },
+  cancelado: { label: "Cancelado", cls: "bg-zinc-800 text-zinc-500" },
+};
+
+export default function BillingTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
+  const cid = profile?.company_id ?? null;
+  const [section, setSection] = useState<"cobrancas" | "situacao" | "config">("cobrancas");
+  const [charges, setCharges] = useState<Charge[]>([]);
+  const [targets, setTargets] = useState<Target[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [numbers, setNumbers] = useState<WNumber[]>([]);
+  const [settings, setSettings] = useState<Settings>({ pix_key: "", pix_name: "", mp_token: "", agent_name: "Cobrador", template: BILLING_DEFAULT_TEMPLATE });
+  const [showNew, setShowNew] = useState(false);
+  const [comprovante, setComprovante] = useState<Target | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const flash = useCallback((t: string) => { setToast(t); setTimeout(() => setToast(null), 3500); }, []);
+
+  const load = useCallback(async () => {
+    if (!supabase || !cid) return;
+    const [c, t, ct, ag, nu, cs] = await Promise.all([
+      supabase.from("billing_charges").select("*").eq("company_id", cid).order("created_at", { ascending: false }),
+      supabase.from("billing_targets").select("*").eq("company_id", cid).order("due_date", { ascending: true }),
+      supabase.from("contacts").select("id,name,phone,jid").eq("company_id", cid).order("name"),
+      supabase.from("chatbots").select("id,name").eq("company_id", cid).neq("slot", "internal"),
+      supabase.from("whatsapp_numbers").select("id,label,phone_number").eq("company_id", cid),
+      supabase.from("company_settings").select("billing_pix_key,billing_pix_name,billing_mercadopago_token,billing_agent_name,billing_default_template").eq("company_id", cid).maybeSingle(),
+    ]);
+    setCharges((c.data as Charge[]) ?? []);
+    setTargets((t.data as Target[]) ?? []);
+    setContacts((ct.data as Contact[]) ?? []);
+    setAgents((ag.data as Agent[]) ?? []);
+    setNumbers((nu.data as WNumber[]) ?? []);
+    const d = cs.data as Record<string, string> | null;
+    setSettings({
+      pix_key: d?.billing_pix_key || "", pix_name: d?.billing_pix_name || "", mp_token: d?.billing_mercadopago_token || "",
+      agent_name: d?.billing_agent_name || "Cobrador", template: d?.billing_default_template || BILLING_DEFAULT_TEMPLATE,
+    });
+  }, [cid]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!supabase || !cid) return;
+    const ch = supabase.channel("billing")
+      .on("postgres_changes", { event: "*", schema: "public", table: "billing_targets", filter: `company_id=eq.${cid}` }, () => load())
+      .subscribe();
+    return () => { if (supabase) supabase.removeChannel(ch); };
+  }, [cid, load]);
+
+  const pending = useMemo(() => targets.filter((t) => ["pendente", "lembrete", "enviado", "atrasado"].includes(t.status)), [targets]);
+  const totalPend = pending.reduce((a, b) => a + (b.valor || 0), 0);
+  const totalPago = targets.filter((t) => t.status === "pago").reduce((a, b) => a + (b.valor || 0), 0);
+
+  // Envia a mensagem programada AGORA para um alvo (não espera o agendador).
+  async function sendNow(t: Target) {
+    if (!supabase || !t.phone) { flash("Cliente sem telefone."); return; }
+    const charge = charges.find((c) => c.id === t.charge_id);
+    const text = fillTemplate(charge?.template || settings.template, {
+      nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix: settings.pix_key || "", empresa: profile?.company_id ? undefined : "",
+    });
+    const empresaText = text.replace(/\{empresa\}/g, "");
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: t.phone, text: empresaText, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
+    await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
+    flash("Cobrança enviada no WhatsApp."); load();
+  }
+  async function markPaid(t: Target) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "pago", paid_at: new Date().toISOString() }).eq("id", t.id); load(); }
+  async function cancelT(t: Target) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "cancelado" }).eq("id", t.id); load(); }
+
+  return (
+    <div className="h-full flex flex-col bg-[#0b0f16] text-gray-100 overflow-hidden">
+      <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2"><DollarSign size={20} className="text-emerald-400" /> Cobrador</h2>
+            <p className="text-xs text-gray-400">Cobranças automáticas por WhatsApp — Pix, Mercado Pago, lembretes e comprovantes.</p>
+          </div>
+          <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"><Plus size={15} /> Criar cobrança</button>
+        </div>
+        <div className="flex gap-1 mt-3">
+          {([["cobrancas", "Cobranças"], ["situacao", "Situação dos clientes"], ["config", "Configurações"]] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setSection(id)} className={`text-xs px-3 py-1.5 rounded-lg ${section === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {/* KPIs */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <Kpi label="A receber" value={money(totalPend)} sub={`${pending.length} cobranças`} tone="amber" />
+          <Kpi label="Recebido" value={money(totalPago)} sub={`${targets.filter((t) => t.status === "pago").length} pagas`} tone="emerald" />
+          <Kpi label="Cobranças ativas" value={String(charges.filter((c) => c.status === "ativa").length)} sub={`${charges.length} no total`} tone="sky" />
+        </div>
+
+        {section === "cobrancas" && (
+          <div className="space-y-3">
+            {charges.length === 0 && <Empty text="Nenhuma cobrança criada. Clique em “Criar cobrança”." />}
+            {charges.map((c) => {
+              const ct = targets.filter((t) => t.charge_id === c.id);
+              const agent = agents.find((a) => a.id === c.agent_id);
+              return (
+                <div key={c.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold flex items-center gap-2">{c.name}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${c.tipo === "pix" ? "bg-emerald-500/15 text-emerald-300" : c.tipo === "api" ? "bg-sky-500/15 text-sky-300" : "bg-zinc-700/40 text-zinc-300"}`}>{c.tipo === "api" ? "Mercado Pago" : c.tipo === "boleto" ? "Boleto" : "Pix"}</span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">{money(c.valor)} · {c.recorrencia}{c.recorrencia !== "avulsa" ? ` (dia ${c.dia_vencimento})` : ""} · avisa {c.antecedencia_dias}d antes {agent ? `· agente: ${agent.name}` : ""}</div>
+                    </div>
+                    <span className="text-xs text-gray-400">{ct.length} cliente(s)</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {ct.map((t) => <span key={t.id} className={`text-[11px] px-2 py-0.5 rounded-full ${STATUS[t.status]?.cls || ""}`}>{t.name || t.phone} · {STATUS[t.status]?.label}</span>)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {section === "situacao" && (
+          <div className="space-y-2">
+            {targets.length === 0 && <Empty text="Nenhum cliente em cobrança ainda." />}
+            {targets.map((t) => (
+              <div key={t.id} className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold shrink-0">{(t.name || "?").slice(0, 1)}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{t.name || t.phone}</div>
+                  <div className="text-[11px] text-gray-400">{money(t.valor)} · vence {fmtDatePt(t.due_date)} · {t.tipo === "api" ? "Mercado Pago" : "Pix"}</div>
+                </div>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${STATUS[t.status]?.cls || ""}`}>{STATUS[t.status]?.label}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  {t.comprovante_url && <button onClick={() => setComprovante(t)} title="Ver comprovante" className="p-1.5 rounded-lg hover:bg-white/10 text-sky-400"><FileImage size={15} /></button>}
+                  {t.status !== "pago" && t.status !== "cancelado" && <button onClick={() => sendNow(t)} title="Enviar cobrança agora" className="p-1.5 rounded-lg hover:bg-white/10 text-amber-400"><Send size={15} /></button>}
+                  {t.status !== "pago" && <button onClick={() => markPaid(t)} title="Marcar como pago" className="p-1.5 rounded-lg hover:bg-white/10 text-emerald-400"><Check size={15} /></button>}
+                  {onOpenMessages && t.phone && <button onClick={() => onOpenMessages(t.phone!, t.name || t.phone!)} title="Abrir no Mensagens" className="p-1.5 rounded-lg hover:bg-white/10 text-gray-300"><MessageSquare size={15} /></button>}
+                  {t.status !== "pago" && <button onClick={() => cancelT(t)} title="Cancelar" className="p-1.5 rounded-lg hover:bg-white/10 text-gray-500"><X size={15} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {section === "config" && <ConfigSection cid={cid} settings={settings} setSettings={setSettings} numbers={numbers} flash={flash} />}
+      </div>
+
+      {showNew && <NewChargeModal cid={cid} contacts={contacts} agents={agents} numbers={numbers} settings={settings} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); flash("Cobrança criada."); }} onContactsChanged={load} />}
+      {comprovante && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" onClick={() => setComprovante(null)}>
+          <div className="max-w-md w-full bg-[#0b0f16] border border-white/10 rounded-2xl p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2"><h3 className="font-bold text-sm">Comprovante — {comprovante.name}</h3><button onClick={() => setComprovante(null)}><X size={18} /></button></div>
+            {comprovante.comprovante_data && <p className="text-xs text-gray-400 mb-2">Data identificada: {fmtDatePt(comprovante.comprovante_data)}</p>}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={comprovante.comprovante_url!} alt="comprovante" className="w-full rounded-lg" />
+          </div>
+        </div>
+      )}
+      {toast && <div className="fixed bottom-4 right-4 z-[100] bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm shadow-2xl">{toast}</div>}
+    </div>
+  );
+}
+
+// ------------------------------ Config ------------------------------
+function ConfigSection({ cid, settings, setSettings, numbers, flash }: { cid: string | null; settings: Settings; setSettings: React.Dispatch<React.SetStateAction<Settings>>; numbers: WNumber[]; flash: (t: string) => void }) {
+  const [s, setS] = useState(settings);
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    if (!supabase || !cid) return; setBusy(true);
+    await supabase.from("company_settings").update({
+      billing_pix_key: s.pix_key || null, billing_pix_name: s.pix_name || null, billing_mercadopago_token: s.mp_token || null,
+      billing_agent_name: s.agent_name || "Cobrador", billing_default_template: s.template || null,
+    }).eq("company_id", cid);
+    setSettings(s); setBusy(false); flash("Configurações salvas.");
+  }
+  return (
+    <div className="max-w-xl space-y-4">
+      <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="text-sm font-semibold flex items-center gap-2"><Zap size={15} className="text-emerald-400" /> Pix (mensagem programada)</div>
+        <p className="text-[11px] text-gray-400">Quando a cobrança é por Pix, a mensagem manda esta chave para o cliente pagar. Não precisa de IA.</p>
+        <label className="block"><span className="lbl">Chave Pix</span><input className="in" value={s.pix_key} onChange={(e) => setS({ ...s, pix_key: e.target.value })} placeholder="CNPJ, e-mail, telefone ou aleatória" /></label>
+        <label className="block"><span className="lbl">Nome do recebedor (opcional)</span><input className="in" value={s.pix_name} onChange={(e) => setS({ ...s, pix_name: e.target.value })} /></label>
+      </div>
+      <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="text-sm font-semibold flex items-center gap-2"><DollarSign size={15} className="text-sky-400" /> Mercado Pago (cobrança por API)</div>
+        <p className="text-[11px] text-gray-400">Cole seu Access Token do Mercado Pago. Nas cobranças do tipo “Mercado Pago”, o dinheiro entra por lá e a conciliação é automática. (Boleto de banco: em breve.)</p>
+        <label className="block"><span className="lbl">Access Token</span><input className="in" type="password" value={s.mp_token} onChange={(e) => setS({ ...s, mp_token: e.target.value })} placeholder="APP_USR-..." /></label>
+      </div>
+      <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="text-sm font-semibold flex items-center gap-2"><Users size={15} /> Agente & mensagem padrão</div>
+        <label className="block"><span className="lbl">Nome do agente Cobrador</span><input className="in" value={s.agent_name} onChange={(e) => setS({ ...s, agent_name: e.target.value })} /></label>
+        <label className="block"><span className="lbl">Mensagem padrão (use {"{nome} {valor} {vencimento} {pix} {empresa}"})</span>
+          <textarea className="in" rows={6} value={s.template} onChange={(e) => setS({ ...s, template: e.target.value })} /></label>
+      </div>
+      <button onClick={save} disabled={busy} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg">{busy ? "Salvando…" : "Salvar configurações"}</button>
+      <style jsx>{`.in{width:100%;background:#09090b;border:1px solid #27272a;border-radius:8px;padding:8px 10px;font-size:13px;color:#fff}.in:focus{outline:none;border-color:#52525b}.lbl{font-size:11px;color:#a1a1aa;margin-bottom:4px;display:block}`}</style>
+    </div>
+  );
+}
+
+// ------------------------------ Nova cobrança ------------------------------
+function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onSaved, onContactsChanged }: {
+  cid: string | null; contacts: Contact[]; agents: Agent[]; numbers: WNumber[]; settings: Settings;
+  onClose: () => void; onSaved: () => void; onContactsChanged: () => void;
+}) {
+  const [f, setF] = useState({ name: "", tipo: "pix", valor: "", recorrencia: "mensal", dia_vencimento: "5", antecedencia_dias: "2", agent_id: "", number_id: numbers[0]?.id || "" });
+  const [template, setTemplate] = useState(settings.template || BILLING_DEFAULT_TEMPLATE);
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  const [selected, setSelected] = useState<string[]>([]);
+  const [q, setQ] = useState("");
+  const [newName, setNewName] = useState(""); const [newPhone, setNewPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const filtered = contacts.filter((c) => !q || (c.name || "").toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q));
+
+  function toggle(id: string) { setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]); }
+
+  // Adiciona um cliente novo → cria também o CONTATO (integração com Contatos).
+  async function addNewContact() {
+    if (!supabase || !cid || !newName.trim() || !newPhone.trim()) return;
+    const phone = newPhone.replace(/\D/g, "");
+    const { data } = await supabase.from("contacts").insert({ company_id: cid, name: newName.trim(), phone }).select("id").maybeSingle();
+    if (data?.id) { setSelected((s) => [...s, data.id]); setNewName(""); setNewPhone(""); onContactsChanged(); }
+  }
+
+  const previewText = fillTemplate(template, { nome: "Fulano", valor: Number(f.valor) || 0, vencimento: fmtDatePt(nextDueDate(Number(f.dia_vencimento) || 5)), pix: settings.pix_key || "sua-chave-pix", empresa: settings.pix_name || "" });
+
+  async function sendTest() {
+    const num = numbers.find((n) => n.id === f.number_id);
+    const to = num?.phone_number;
+    if (!to) { alert("Nenhum número de WhatsApp conectado para o teste."); return; }
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: `🧪 (teste do Cobrador)\n\n${previewText}`, numberId: f.number_id }) });
+    alert("Mensagem de teste enviada para o próprio número conectado.");
+  }
+
+  async function save() {
+    if (!supabase || !cid || !f.name.trim() || selected.length === 0) { alert("Informe o nome e escolha ao menos um cliente."); return; }
+    setBusy(true);
+    const { data: charge } = await supabase.from("billing_charges").insert({
+      company_id: cid, name: f.name.trim(), tipo: f.tipo, valor: Number(f.valor) || 0, recorrencia: f.recorrencia,
+      dia_vencimento: Number(f.dia_vencimento) || 5, antecedencia_dias: Number(f.antecedencia_dias) || 2,
+      template, agent_id: f.agent_id || null, number_id: f.number_id || null, status: "ativa",
+    }).select("id").maybeSingle();
+    if (charge?.id) {
+      const due = nextDueDate(Number(f.dia_vencimento) || 5);
+      const rows = selected.map((id) => {
+        const c = contacts.find((x) => x.id === id);
+        return { company_id: cid, charge_id: charge.id, contact_id: id, name: c?.name || null, phone: (c?.phone || c?.jid || "").replace(/@.*/, "") || null, tipo: f.tipo, valor: Number(f.valor) || 0, due_date: due, status: "pendente" };
+      });
+      await supabase.from("billing_targets").insert(rows);
+    }
+    setBusy(false); onSaved();
+  }
+
+  return (
+    <div className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4"><h3 className="text-base font-bold">Nova cobrança</h3><button onClick={onClose}><X size={18} /></button></div>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <label className="block"><span className="lbl">Nome da cobrança</span><input className="in" value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="Ex.: Mensalidade Plano Ouro" /></label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block"><span className="lbl">Forma</span><select className="in" value={f.tipo} onChange={(e) => set("tipo", e.target.value)}><option value="pix">Pix (mensagem)</option><option value="api">Mercado Pago (API)</option><option value="boleto" disabled>Boleto (em breve)</option></select></label>
+              <label className="block"><span className="lbl">Valor (R$)</span><input className="in" type="number" value={f.valor} onChange={(e) => set("valor", e.target.value)} /></label>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="block"><span className="lbl">Recorrência</span><select className="in" value={f.recorrencia} onChange={(e) => set("recorrencia", e.target.value)}><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="avulsa">Avulsa</option></select></label>
+              <label className="block"><span className="lbl">Dia venc.</span><input className="in" type="number" min={1} max={28} value={f.dia_vencimento} onChange={(e) => set("dia_vencimento", e.target.value)} /></label>
+              <label className="block"><span className="lbl">Avisar (dias antes)</span><input className="in" type="number" value={f.antecedencia_dias} onChange={(e) => set("antecedencia_dias", e.target.value)} /></label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block"><span className="lbl">Agente (opcional)</span><select className="in" value={f.agent_id} onChange={(e) => set("agent_id", e.target.value)}><option value="">Sem IA (mensagem programada)</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+              <label className="block"><span className="lbl">Número de envio</span><select className="in" value={f.number_id} onChange={(e) => set("number_id", e.target.value)}>{numbers.map((n) => <option key={n.id} value={n.id}>{n.label || n.phone_number || "WhatsApp"}</option>)}</select></label>
+            </div>
+            <label className="block"><span className="lbl">Mensagem programada</span><textarea className="in" rows={6} value={template} onChange={(e) => setTemplate(e.target.value)} /></label>
+            <div className="flex gap-2">
+              <button onClick={sendTest} className="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 flex items-center gap-1"><Send size={13} /> Enviar teste</button>
+            </div>
+            <div className="bg-black/30 border border-white/10 rounded-lg p-2.5 text-[12px] text-gray-300 whitespace-pre-wrap">{previewText}</div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="lbl">Clientes nesta cobrança ({selected.length})</span>
+            <input className="in" placeholder="Buscar contato…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="border border-white/10 rounded-lg max-h-48 overflow-y-auto divide-y divide-white/5">
+              {filtered.map((c) => (
+                <button key={c.id} onClick={() => toggle(c.id)} className={`w-full flex items-center justify-between px-3 py-2 text-left text-sm ${selected.includes(c.id) ? "bg-emerald-950/30" : "hover:bg-white/5"}`}>
+                  <span>{c.name || c.phone}</span>
+                  {selected.includes(c.id) && <Check size={15} className="text-emerald-400" />}
+                </button>
+              ))}
+              {filtered.length === 0 && <div className="px-3 py-4 text-xs text-gray-500 text-center">Nenhum contato.</div>}
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-lg p-2.5">
+              <div className="text-[11px] text-gray-400 mb-1.5">Adicionar cliente novo (entra também em Contatos)</div>
+              <div className="flex gap-2">
+                <input className="in" placeholder="Nome" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                <input className="in" placeholder="Telefone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                <button onClick={addNewContact} className="px-3 rounded-lg bg-white/10 hover:bg-white/15 text-sm shrink-0">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10">Cancelar</button>
+          <button onClick={save} disabled={busy} className="text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">{busy ? "Criando…" : "Criar cobrança"}</button>
+        </div>
+        <style jsx>{`.in{width:100%;background:#09090b;border:1px solid #27272a;border-radius:8px;padding:8px 10px;font-size:13px;color:#fff}.in:focus{outline:none;border-color:#52525b}.lbl{font-size:11px;color:#a1a1aa;margin-bottom:4px;display:block}`}</style>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------ UI bits ------------------------------
+function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
+  const c = tone === "emerald" ? "text-emerald-400" : tone === "amber" ? "text-amber-400" : "text-sky-400";
+  return <div className="bg-white/5 border border-white/10 rounded-xl p-3"><div className="text-[11px] text-gray-500 uppercase tracking-wide">{label}</div><div className={`text-xl font-bold mt-0.5 ${c}`}>{value}</div><div className="text-[11px] text-gray-500">{sub}</div></div>;
+}
+function Empty({ text }: { text: string }) {
+  return <div className="text-center text-sm text-gray-500 py-12 border border-dashed border-white/10 rounded-xl flex flex-col items-center gap-2"><AlertCircle size={20} className="text-gray-600" />{text}</div>;
+}
