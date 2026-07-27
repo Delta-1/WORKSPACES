@@ -62,6 +62,36 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
     load();
   }
 
+  // Importar um arquivo existente (PDF, Word, txt, md, html) para EDITAR no Estúdio.
+  async function importFile(file: File) {
+    if (!supabase) return;
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const name = file.name.replace(/\.[^.]+$/, "");
+    let html = "";
+    const lower = file.name.toLowerCase();
+    try {
+      if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+        html = await file.text();
+      } else if (lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc")) {
+        const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+        const resp = await fetch("/api/extract-text", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl, name: file.name }) });
+        const data = await resp.json();
+        if (data.unsupported) { alert("Arquivo .doc antigo não é suportado — salve como .docx ou PDF."); return; }
+        const text = String(data.text || "");
+        if (!text.trim()) { alert("Não consegui ler o texto deste arquivo."); return; }
+        html = text.split(/\n{2,}/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, "<br>")}</p>`).join("") || "<p><br></p>";
+      } else {
+        const text = await file.text();
+        html = text.split(/\n{2,}/).map((p) => `<p>${esc(p.trim()).replace(/\n/g, "<br>")}</p>`).join("") || "<p><br></p>";
+      }
+    } catch { alert("Falha ao importar o arquivo."); return; }
+    const { data: doc } = await supabase.from("studio_documents").insert({
+      company_id: companyId, created_by: profile?.id ?? null, kind: "document",
+      title: name.slice(0, 60) || "Documento importado", template: "import", content: html,
+    }).select("*").single();
+    if (doc) { await load(); setOpen(doc as Doc); }
+  }
+
   if (open) return <Editor doc={open} onClose={() => { setOpen(null); load(); }} />;
 
   return (
@@ -71,7 +101,13 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
       </div>
 
       <div>
-        <p className="text-[11px] text-gray-400 mb-2">Começar um novo documento:</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[11px] text-gray-400">Começar um novo documento:</p>
+          <label className="text-[11px] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
+            <FileText size={13} className="text-blue-400" /> Importar arquivo (PDF/Word) para editar
+            <input type="file" accept=".pdf,.docx,.doc,.txt,.md,.html,.htm" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
+          </label>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {TEMPLATES.map((t) => (
             <button key={t.id} onClick={() => create(t.id)} className="text-left rounded-xl border border-white/10 bg-white/5 hover:border-blue-500/50 hover:bg-white/10 p-3 cursor-pointer transition">
