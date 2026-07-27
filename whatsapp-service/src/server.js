@@ -600,8 +600,11 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
       .upsert(row, { onConflict: "wa_id", ignoreDuplicates: true })
       .select("id");
     if (!inserted || inserted.length === 0) return; // já existia → não duplica
-  } else {
-    await supabase.from("whatsapp_messages").insert(row);
+  }
+  let insertedId = null;
+  if (!waId) {
+    const { data: ins } = await supabase.from("whatsapp_messages").insert(row).select("id").maybeSingle();
+    insertedId = ins?.id ?? null;
   }
   // Mantém a conversa "no topo" (mais recente) e com a última mensagem/hora.
   const now = new Date().toISOString();
@@ -609,6 +612,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     .from("conversations")
     .update({ last_message: row.text ?? "", last_message_at: now, updated_at: now })
     .eq("id", conversationId);
+  return insertedId;
 }
 
 // Logger silencioso para o downloadMediaMessage do Baileys.
@@ -1990,7 +1994,7 @@ async function startSession(numberId) {
             number?.sector_id ?? null,
             cid
           );
-          await logMessage(conversation.id, "in", text, null, media, cid);
+          const inMsgId = await logMessage(conversation.id, "in", text, null, media, cid);
 
           // /configia — painel de configuração do número pelo WhatsApp. Intercepta
           // ANTES do bot: se há sessão ativa ou a pessoa mandou "/configia",
@@ -2041,24 +2045,32 @@ async function startSession(numberId) {
             let customerText = text;
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
+              // Grava a TRANSCRIÇÃO no histórico (antes ficava só "🎵 Áudio" e o bot
+              // "esquecia" o que foi dito por áudio). Assim a memória fica correta.
+              if (customerText && inMsgId) {
+                await supabase.from("whatsapp_messages").update({ text: customerText }).eq("id", inMsgId).then(() => {}, () => {});
+                await supabase.from("conversations").update({ last_message: customerText.slice(0, 120) }).eq("id", conversation.id).then(() => {}, () => {});
+              }
             }
             // Preferência de voz — para TODOS os agentes: a prioridade é responder
             // em ÁUDIO. Se a pessoa pedir texto ("não posso ouvir áudio", "responde
             // por texto"), troca para texto até ela pedir áudio de novo. A escolha
             // fica guardada por conversa (coluna copilot_voice, reaproveitada).
-            let voicePref = conversation.copilot_voice !== false; // default: áudio
+            // Preferência EXPLÍCITA (se a pessoa pediu texto ou áudio, respeita e guarda).
+            let explicitPref = conversation.copilot_voice; // true | false | null
             if (customerText) {
               if (/(responde|manda|escreve|prefiro|pode ser).{0,20}(por )?texto|n[aã]o posso (ouvir|escutar)|sem [aá]udio|por escrito/i.test(customerText)) {
-                voicePref = false;
+                explicitPref = false;
                 await supabase.from("conversations").update({ copilot_voice: false }).eq("id", conversation.id);
               } else if (/(responde|manda|prefiro|pode ser|volta).{0,20}(por )?([aá]udio|voz)|fala comigo|me manda [aá]udio/i.test(customerText)) {
-                voicePref = true;
+                explicitPref = true;
                 await supabase.from("conversations").update({ copilot_voice: true }).eq("id", conversation.id);
               }
             }
-            // Responde por voz sempre que a preferência estiver em áudio e houver
-            // chave de TTS; se não puder gerar áudio, cai para texto automaticamente.
-            const wantVoice = voicePref && voiceReplyOn && !!botElevenKey;
+            // ESPELHA a forma da conversa: escreveu em texto → responde em texto;
+            // mandou áudio → responde em áudio. Preferência explícita (acima) vence.
+            const preferVoice = explicitPref === true || (explicitPref !== false && wasAudio);
+            const wantVoice = preferVoice && voiceReplyOn && !!botElevenKey;
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
             if (!isCopilot && !continuous && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
