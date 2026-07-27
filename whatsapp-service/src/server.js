@@ -1345,7 +1345,11 @@ const COPILOT_TOOLS = [
 ];
 
 // Executa uma ação do copiloto no workspace (escopo da empresa).
-async function copilotAction(companyId, name, input) {
+// IMPORTANTE: recebe files/sends/ctx do copilotDispatch. Sem eles, ferramentas
+// como gerar_documento/gerar_apresentacao (que usam ctx.key e files.push)
+// quebravam com "ReferenceError: ctx is not defined" — a Nina dizia que "teve um
+// errinho" e NÃO entregava o arquivo. Agora chegam corretamente.
+async function copilotAction(companyId, name, input, files = [], sends = [], ctx = {}) {
   input = input || {};
   try {
     if (name === "list_agents") {
@@ -1657,7 +1661,7 @@ async function copilotDispatch(companyId, name, input, files, sends, ctx = {}) {
     } catch { /* ignore */ }
     return { ok: false, message: "O print foi tirado mas não consegui anexar." };
   }
-  return await copilotAction(companyId, name, input);
+  return await copilotAction(companyId, name, input, files, sends, ctx);
 }
 
 async function copilotSearchFiles(companyId, query) {
