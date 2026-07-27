@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Check, Columns3, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import { ArrowLeft, Bell, Bot, Check, Columns3, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import ToolsPicker from "../ToolsPicker";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 import RemoteViewer from "@/components/RemoteViewer";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
+import { NOTIF_SOUNDS, playNotifSound, type NotifSoundId } from "@/lib/notify-sound";
 
 type Group = { id: string; name: string; position: number };
 type ContactReport = {
@@ -124,6 +125,56 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
   const isGestor = profile?.role === "gestor";
 
+  // Som de notificação (toca quando chega mensagem nova de cliente). A escolha é
+  // por pessoa (salva no aparelho), semeada com o padrão da empresa. A empresa
+  // pode subir o PRÓPRIO som (notification_sound_url).
+  const [notifSound, setNotifSound] = useState<NotifSoundId>(() => {
+    try { const s = localStorage.getItem("msg:notifsound"); if (s) return s as NotifSoundId; } catch { /* ignore */ }
+    return "ping";
+  });
+  const [notifSoundUrl, setNotifSoundUrl] = useState<string | null>(null);
+  const [showSoundPicker, setShowSoundPicker] = useState(false);
+  const [uploadingSound, setUploadingSound] = useState(false);
+  const notifSoundRef = useRef<NotifSoundId>(notifSound);
+  const notifSoundUrlRef = useRef<string | null>(null);
+  useEffect(() => { notifSoundRef.current = notifSound; }, [notifSound]);
+  useEffect(() => { notifSoundUrlRef.current = notifSoundUrl; }, [notifSoundUrl]);
+  function pickSound(id: NotifSoundId) {
+    setNotifSound(id);
+    try { localStorage.setItem("msg:notifsound", id); } catch { /* ignore */ }
+    playNotifSound(id, notifSoundUrl); // toca de amostra ao escolher
+  }
+  // Gestor: sobe o som PRÓPRIO da empresa e o define como padrão da equipe.
+  async function uploadCustomSound(file: File) {
+    if (!supabase || !profile?.company_id) return;
+    if (!file.type.startsWith("audio/")) { alert("Escolha um arquivo de áudio (mp3, ogg, wav…)."); return; }
+    if (file.size > 2 * 1024 * 1024) { alert("O som deve ter no máximo 2 MB."); return; }
+    setUploadingSound(true);
+    try {
+      const ext = (file.name.split(".").pop() || "mp3").toLowerCase().slice(0, 5);
+      const path = `notif-sounds/${profile.company_id}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("company-files").upload(path, file, { contentType: file.type, upsert: true });
+      if (error) { alert("Não consegui subir: " + error.message); return; }
+      const { data } = supabase.storage.from("company-files").getPublicUrl(path);
+      const url = data?.publicUrl ?? null;
+      if (!url) return;
+      setNotifSoundUrl(url);
+      // Define "custom" como som desta pessoa e como PADRÃO da empresa (para todos).
+      await supabase.from("company_settings").update({ notification_sound: "custom", notification_sound_url: url }).eq("company_id", profile.company_id);
+      setNotifSound("custom");
+      try { localStorage.setItem("msg:notifsound", "custom"); } catch { /* ignore */ }
+      playNotifSound("custom", url);
+    } finally {
+      setUploadingSound(false);
+    }
+  }
+  // Gestor: define o som escolhido como PADRÃO da empresa (todos herdam).
+  async function setSoundAsCompanyDefault(id: NotifSoundId) {
+    if (!supabase || !profile?.company_id) return;
+    await supabase.from("company_settings").update({ notification_sound: id }).eq("company_id", profile.company_id);
+    alert("Pronto! Esse som virou o padrão da empresa.");
+  }
+
   const [messages, setMessages] = useState<WhatsappMessageRow[]>([]);
   const [internal, setInternal] = useState<InternalMessage[]>([]);
   const [input, setInput] = useState("");
@@ -172,8 +223,16 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!supabase || !profile?.company_id) return;
     let onboarded = false;
     try { onboarded = localStorage.getItem("msg:onboarded") === "1"; } catch { /* ignore */ }
-    supabase.from("company_settings").select("messages_layout").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
+    supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
       const cl = data?.messages_layout as MsgLayout | null;
+      // Som personalizado da empresa (URL) sempre carrega; toca quando escolhido "custom".
+      const url = (data as { notification_sound_url?: string | null } | null)?.notification_sound_url ?? null;
+      setNotifSoundUrl(url);
+      // Se a pessoa ainda não escolheu um som próprio, herda o padrão da empresa.
+      let hasOwn = false;
+      try { hasOwn = !!localStorage.getItem("msg:notifsound"); } catch { /* ignore */ }
+      const cs = (data as { notification_sound?: string | null } | null)?.notification_sound;
+      if (!hasOwn && cs) setNotifSound(cs as NotifSoundId);
       if (!onboarded) {
         if (cl === "classic" || cl === "kanban" || cl === "crm") setLayout(cl);
         setShowLayoutPicker(true);
@@ -205,6 +264,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers" }, () => loadSide())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
         const m = payload.new as WhatsappMessageRow;
+        // Toca o som de notificação quando chega mensagem NOVA de cliente (in).
+        if (m.direction === "in") playNotifSound(notifSoundRef.current, notifSoundUrlRef.current);
         if (m.conversation_id === selConvRef.current) {
           setMessages((prev) => {
             if (prev.some((x) => x.id === m.id)) return prev;
@@ -853,7 +914,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         <ServerIcon active={false} onClick={newGroup} title="Novo grupo">
           <Plus size={18} />
         </ServerIcon>
-        <div className="mt-auto pt-2 border-t border-white/10 w-full flex justify-center">
+        <div className="mt-auto pt-2 border-t border-white/10 w-full flex flex-col items-center gap-1">
+          <button onClick={() => setShowSoundPicker(true)} title="Som de notificação" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
+            <Bell size={18} />
+          </button>
           <button onClick={() => setShowLayoutPicker(true)} title="Trocar o layout do Mensagens" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
             {layout === "kanban" ? <Columns3 size={18} /> : layout === "crm" ? <Workflow size={18} /> : <LayoutGrid size={18} />}
           </button>
@@ -1311,6 +1375,62 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                   <p className="text-xs text-gray-200 mt-1 whitespace-pre-wrap">{r.summary}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Som de notificação: escolher entre vários + a empresa subir o próprio. */}
+      {showSoundPicker && (
+        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowSoundPicker(false)}>
+          <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-1">
+              <Bell size={18} className="text-emerald-400" />
+              <h3 className="text-base font-bold">Som de notificação</h3>
+            </div>
+            <p className="text-[11px] text-gray-400 mb-4">Toca quando chega mensagem nova de cliente. Clique para ouvir uma amostra.</p>
+            <div className="space-y-1.5 max-h-[46vh] overflow-y-auto pr-1">
+              {NOTIF_SOUNDS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => pickSound(s.id)}
+                  className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 cursor-pointer transition ${notifSound === s.id ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:border-white/25 hover:bg-white/5"}`}
+                >
+                  <span className="text-sm">{s.label}</span>
+                  {notifSound === s.id ? <Check size={16} className="text-emerald-400" /> : <span className="text-[10px] text-gray-500">ouvir</span>}
+                </button>
+              ))}
+              {/* Som personalizado da empresa (se houver) */}
+              {notifSoundUrl && (
+                <button
+                  onClick={() => pickSound("custom")}
+                  className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 cursor-pointer transition ${notifSound === "custom" ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:border-white/25 hover:bg-white/5"}`}
+                >
+                  <span className="text-sm">Som da empresa {notifSound === "custom" ? "" : "(personalizado)"}</span>
+                  {notifSound === "custom" ? <Check size={16} className="text-emerald-400" /> : <span className="text-[10px] text-gray-500">ouvir</span>}
+                </button>
+              )}
+            </div>
+
+            {isGestor && (
+              <div className="mt-4 pt-4 border-t border-white/10 space-y-2">
+                <p className="text-[11px] text-gray-400">Como gestor, você pode definir o padrão da empresa ou subir um som próprio (máx. 2 MB).</p>
+                <div className="flex flex-wrap gap-2">
+                  {notifSound !== "custom" && (
+                    <button onClick={() => setSoundAsCompanyDefault(notifSound)} className="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
+                      Definir “{NOTIF_SOUNDS.find((x) => x.id === notifSound)?.label ?? notifSound}” como padrão da empresa
+                    </button>
+                  )}
+                  <label className={`text-xs px-3 py-2 rounded-lg cursor-pointer ${uploadingSound ? "bg-white/5 text-gray-500" : "bg-emerald-600 hover:bg-emerald-500 text-white"}`}>
+                    {uploadingSound ? "Subindo…" : "Subir som da empresa"}
+                    <input type="file" accept="audio/*" className="hidden" disabled={uploadingSound} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCustomSound(f); e.currentTarget.value = ""; }} />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <button onClick={() => setShowSoundPicker(false)} className="text-sm px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">Fechar</button>
             </div>
           </div>
         </div>
