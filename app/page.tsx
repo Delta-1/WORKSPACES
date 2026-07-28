@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain, Ship, DollarSign } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain, Truck, DollarSign } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -73,7 +73,7 @@ const APPS: AppDef[] = [
   { id: "financeiro", label: "Financeiro", icon: Wallet, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes", label: "Clientes", icon: Building2, accent: "bg-lime-800/60", roles: ["gestor", "gerente"] },
   { id: "formularios", label: "Formulários", icon: FileSpreadsheet, accent: "bg-teal-800/60", roles: ["gestor", "gerente"] },
-  { id: "logistica", label: "Logística Internacional", icon: Ship, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "logistica", label: "Logística Internacional", icon: Truck, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "cobrador", label: "Cobrador", icon: DollarSign, accent: "bg-green-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "apphub", label: "App Hub", icon: Store, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes_ia", label: "Work.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
