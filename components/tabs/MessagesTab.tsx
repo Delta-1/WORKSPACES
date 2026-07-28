@@ -10,6 +10,7 @@ import RemoteViewer from "@/components/RemoteViewer";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
 import { NOTIF_SOUNDS, playNotifSound, type NotifSoundId } from "@/lib/notify-sound";
 import BillingItemsEditor from "@/components/BillingItemsEditor";
+import BillingExtraFields from "@/components/BillingExtraFields";
 import { renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
 
 type Group = { id: string; name: string; position: number };
@@ -1988,6 +1989,10 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
   const [busy, setBusy] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [itens, setItens] = useState<BillingItem[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [followupMin, setFollowupMin] = useState("0");
+  const [followupAudio, setFollowupAudio] = useState(false);
+  const [multa, setMulta] = useState("");
   const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
   const valorFinal = hasItens ? itemsTotal(itens) : Number(valor) || 0;
   const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
@@ -2012,14 +2017,14 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
       const to = contact.jid || contact.phone || "";
       const today = new Date().toISOString().slice(0, 10);
       const cleanItens = itens.filter((i) => (i.descricao || "").trim() || Number(i.valor)).map((i) => ({ descricao: i.descricao, valor: Number(i.valor) || 0 }));
-      const { data: charge } = await supabase.from("billing_charges").insert({ company_id: companyId, name: `Cobrança — ${nome}`, tipo: "pix", valor: valorFinal, recorrencia: "avulsa", dia_vencimento: new Date().getDate(), antecedencia_dias: 0, status: "ativa", itens: cleanItens, motivo: motivo || null }).select("id").maybeSingle();
+      const { data: charge } = await supabase.from("billing_charges").insert({ company_id: companyId, name: `Cobrança — ${nome}`, tipo: "pix", valor: valorFinal, recorrencia: "avulsa", dia_vencimento: new Date().getDate(), antecedencia_dias: 0, status: "ativa", itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null, followup_minutes: Number(followupMin) || 0, followup_as_audio: followupAudio, multa_atraso: Number(multa) || 0 }).select("id").maybeSingle();
       if (charge?.id) {
-        await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: valorFinal, due_date: today, status: "enviado", sent_at: new Date().toISOString(), itens: cleanItens, motivo: motivo || null });
+        await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: valorFinal, due_date: today, status: "enviado", sent_at: new Date().toISOString(), itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null });
       }
       const extrato = renderExtrato(cleanItens, motivo);
       const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
-      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text }) });
-      setValor(""); setMotivo(""); setItens([]); await load();
+      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+      setValor(""); setMotivo(""); setItens([]); setImageUrl(null); setFollowupMin("0"); setMulta(""); await load();
     } finally { setBusy(false); }
   }
   async function markPaid(id: string) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "pago", paid_at: new Date().toISOString() }).eq("id", id); load(); }
@@ -2033,7 +2038,10 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
           <input type="number" value={hasItens ? String(itemsTotal(itens)) : valor} onChange={(e) => setValor(e.target.value)} disabled={hasItens} placeholder="Valor R$" className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-60" />
           <button onClick={chargeNow} disabled={busy || !valorFinal} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-3 rounded-lg flex items-center gap-1"><Send size={14} /> Cobrar agora</button>
         </div>
-        <div className="mb-3"><BillingItemsEditor itens={itens} setItens={setItens} motivo={motivo} setMotivo={setMotivo} /></div>
+        <div className="mb-3 space-y-2">
+          <BillingItemsEditor itens={itens} setItens={setItens} motivo={motivo} setMotivo={setMotivo} />
+          <BillingExtraFields companyId={companyId} imageUrl={imageUrl} setImageUrl={setImageUrl} followupMin={followupMin} setFollowupMin={setFollowupMin} followupAudio={followupAudio} setFollowupAudio={setFollowupAudio} multa={multa} setMulta={setMulta} />
+        </div>
         <p className="text-[11px] text-gray-500 mb-3">Envia a cobrança na hora (mesmo antes do vencimento) e já contabiliza. {pixKey ? "" : "Configure a chave Pix no app Cobrador."}</p>
         <div className="space-y-1.5">
           {rows.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Nenhuma cobrança para este contato ainda.</p>}
