@@ -26,8 +26,7 @@ export default function Orb({
   slot = "orb",
   title = "Orb",
   contextLabel,
-  autoVoice = false,
-  voiceTrigger = 0,
+  pushToTalkActive = false,
   voicePrompt = "Pode falar, estou te ouvindo.",
   mode = "supervised",
   onPoint,
@@ -38,8 +37,7 @@ export default function Orb({
   slot?: string;
   title?: string;
   contextLabel?: string;
-  autoVoice?: boolean;
-  voiceTrigger?: number;
+  pushToTalkActive?: boolean;
   voicePrompt?: string;
   mode?: OrbMode;
   onPoint?: () => void;
@@ -57,6 +55,13 @@ export default function Orb({
   const [minimized, setMinimized] = useState(true); // padrão = BOLA (não abre o chat)
   const recRef = useRef<Rec | null>(null);
   const activeRef = useRef(false);
+  const voiceOnRef = useRef(false);
+  const oneShotVoiceRef = useRef(false);
+  const pushHeldRef = useRef(false);
+  const pushTextRef = useRef("");
+  const pushInterimRef = useRef("");
+  const pushSubmittedRef = useRef(false);
+  const pushSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [agentId, setAgentId] = useState<string | null>(null);
 
@@ -351,7 +356,7 @@ export default function Orb({
           count = r.count;
           controlResults = r.results;
         }
-        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
+        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOnRef.current) speak(reply); if (onControl) showCaption(reply); }
         const markedDone = /«?\s*fim\s*»?/i.test(raw);
         // Se houve ação neste turno, o Orb ainda precisa observar o resultado
         // real antes de poder declarar a tarefa concluída.
@@ -387,6 +392,11 @@ export default function Orb({
       setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema para responder agora." }]);
     } finally {
       setBusy(false);
+      if (oneShotVoiceRef.current) {
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+      }
     }
   }
 
@@ -410,7 +420,16 @@ export default function Orb({
     // Tira a palavra de acordar do começo (ex.: "Orbe, abre o WhatsApp" → "abre o
     // WhatsApp"). Se sobrou só o chamado, responde presente e fica ouvindo.
     const stripped = t.replace(WAKE, "").replace(/^[\s,.:!?-]+/, "").trim();
-    if (!stripped) { showFloat("Oi! Pode falar."); if (voiceOn) speak("Oi! Estou aqui, pode falar."); return; }
+    if (!stripped) {
+      showFloat("Oi! Pode falar.");
+      if (voiceOnRef.current) speak("Oi! Estou aqui, pode falar.");
+      if (oneShotVoiceRef.current) {
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+      }
+      return;
+    }
     // Dedup: ignora o mesmo comando (ou quase igual) repetido em até 6s — impede o
     // loop de "abre o YouTube" várias vezes seguidas.
     const norm = stripped.toLowerCase().replace(/[^\wà-ú\s]/gi, "").replace(/\s+/g, " ").trim();
@@ -467,6 +486,8 @@ export default function Orb({
       activeRef.current = false;
       try { recRef.current?.stop(); } catch { /* ignore */ }
       recRef.current = null;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
       setListening(false);
       return;
     }
@@ -475,6 +496,7 @@ export default function Orb({
     if (!rec) return;
     recRef.current = rec;
     activeRef.current = true;
+    voiceOnRef.current = true;
     setVoiceOn(true); // conversa por voz → responde falando
     setListening(true);
     try { rec.start(); } catch { setListening(false); }
@@ -483,6 +505,7 @@ export default function Orb({
   function startVoice(prompt = voicePrompt) {
     if (activeRef.current && recRef.current) {
       setMinimized(true);
+      voiceOnRef.current = true;
       setVoiceOn(true);
       showFloat(prompt);
       speak(prompt);
@@ -495,6 +518,7 @@ export default function Orb({
     showFloat(prompt);
     recRef.current = rec;
     activeRef.current = true;
+    voiceOnRef.current = true;
     try {
       rec.start();
       setListening(true);
@@ -507,23 +531,139 @@ export default function Orb({
     activeRef.current = false;
     try { recRef.current?.stop(); } catch { /* ignore */ }
     recRef.current = null;
+    voiceOnRef.current = false;
     setVoiceOn(false);
     setListening(false);
     setMinimized(false);
   }
-  useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
-  const handledVoiceTriggerRef = useRef(0);
-  const handledAutoVoiceRef = useRef(false);
-  // `autoVoice` inicia a primeira conversa; incrementos em `voiceTrigger` reativam
-  // a escuta quando a pessoa pressiona V ou toca no botão V do celular.
+  function submitPushToTalk() {
+    if (pushSubmittedRef.current) return;
+    pushSubmittedRef.current = true;
+    if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    pushSubmitTimerRef.current = null;
+    const transcript = `${pushTextRef.current} ${pushInterimRef.current}`.replace(/\s+/g, " ").trim();
+    pushTextRef.current = "";
+    pushInterimRef.current = "";
+    recRef.current = null;
+    setListening(false);
+    if (!transcript) {
+      oneShotVoiceRef.current = false;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
+      showFloat("Não ouvi nada. Segure V e tente novamente.");
+      return;
+    }
+    handleTranscript(transcript);
+  }
+
+  function beginPushToTalk() {
+    if (pushHeldRef.current) return;
+    if (speakingRef.current) {
+      try { audioRef.current?.pause(); } catch { /* ignore */ }
+      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+      speakingRef.current = false;
+      setSpeaking(false);
+    }
+    activeRef.current = false;
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+    const w = window as unknown as { webkitSpeechRecognition?: new () => Rec; SpeechRecognition?: new () => Rec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) {
+      alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome.");
+      return;
+    }
+
+    pushHeldRef.current = true;
+    pushTextRef.current = "";
+    pushInterimRef.current = "";
+    pushSubmittedRef.current = false;
+    oneShotVoiceRef.current = true;
+    voiceOnRef.current = true;
+    setVoiceOn(true);
+    setMinimized(true);
+    setListening(true);
+    showFloat(`${voicePrompt} · solte V para enviar`);
+
+    const rec = new Ctor();
+    rec.lang = "pt-BR";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (e) => {
+      let interim = "";
+      const from = typeof e.resultIndex === "number" ? e.resultIndex : 0;
+      for (let i = from; i < e.results.length; i++) {
+        const result = e.results[i];
+        const text = result?.[0]?.transcript?.trim();
+        if (!text) continue;
+        if (result.isFinal ?? true) pushTextRef.current = `${pushTextRef.current} ${text}`.trim();
+        else interim = `${interim} ${text}`.trim();
+      }
+      pushInterimRef.current = interim;
+      const preview = `${pushTextRef.current} ${interim}`.replace(/\s+/g, " ").trim();
+      showFloat(preview || `${voicePrompt} · solte V para enviar`);
+    };
+    rec.onend = () => {
+      setListening(false);
+      if (pushHeldRef.current) {
+        setTimeout(() => {
+          if (!pushHeldRef.current) return;
+          try {
+            rec.start();
+            setListening(true);
+          } catch { /* ignore */ }
+        }, 120);
+        return;
+      }
+      submitPushToTalk();
+    };
+    rec.onerror = (event) => {
+      const error = event?.error || "";
+      if (error === "not-allowed" || error === "service-not-allowed") {
+        pushHeldRef.current = false;
+        pushSubmittedRef.current = true;
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+        setListening(false);
+        alert("Para falar com o Orb, permita o microfone neste site (cadeado ao lado do endereço).");
+      }
+    };
+    recRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      pushHeldRef.current = false;
+      oneShotVoiceRef.current = false;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
+      setListening(false);
+    }
+  }
+
+  function endPushToTalk() {
+    if (!pushHeldRef.current) return;
+    pushHeldRef.current = false;
+    setListening(false);
+    try {
+      recRef.current?.stop();
+      pushSubmitTimerRef.current = setTimeout(submitPushToTalk, 700);
+    } catch {
+      submitPushToTalk();
+    }
+  }
+
+  useEffect(() => () => {
+    activeRef.current = false;
+    pushHeldRef.current = false;
+    if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+  }, []);
+  // Pressionar V inicia a captura; soltar V encerra e envia uma única transcrição.
   useEffect(() => {
-    const triggered = voiceTrigger > handledVoiceTriggerRef.current;
-    const shouldAutoStart = autoVoice && !handledAutoVoiceRef.current;
-    handledVoiceTriggerRef.current = Math.max(handledVoiceTriggerRef.current, voiceTrigger);
-    handledAutoVoiceRef.current = handledAutoVoiceRef.current || autoVoice;
-    if (triggered || shouldAutoStart) startVoice(voicePrompt);
+    if (pushToTalkActive) beginPushToTalk();
+    else endPushToTalk();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceTrigger]);
+  }, [pushToTalkActive]);
 
   // Modo BOLA (padrão): bolinha pulsante estilo ChatGPT. O texto aparece
   // FLUTUANDO ao lado da bola (sem balão). Toca na bola para ela te ouvir.
@@ -572,7 +712,7 @@ export default function Orb({
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${mode === "autonomous" ? "border-amber-400/40 text-amber-200 bg-amber-500/10" : "border-emerald-400/40 text-emerald-200 bg-emerald-500/10"}`}>
             {mode === "autonomous" ? "livre" : "supervisionado"}
           </span>
-          {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
+          {listening && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
         </span>
         <div className="flex items-center gap-1">
           {onPoint && (
