@@ -1850,8 +1850,20 @@ function ContactProfileModal({
     const next = !copilot;
     // Ligar o copiloto pede senha (dá acesso da IA ao workspace por esse contato).
     if (next) {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = user
+        ? await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle()
+        : { data: null };
+      const { data: settings } = profile?.company_id
+        ? await supabase.from("company_settings").select("server_password").eq("company_id", profile.company_id).maybeSingle()
+        : { data: null };
+      const configuredPassword = settings?.server_password ?? "";
+      if (!configuredPassword) {
+        alert("Configure primeiro a senha do servidor nas configurações da empresa.");
+        return;
+      }
       const pw = window.prompt("Digite a senha para liberar o Copiloto IA no WhatsApp deste contato:");
-      if (pw !== "1qaz2wsx") {
+      if (pw !== configuredPassword) {
         if (pw !== null) alert("Senha incorreta.");
         return;
       }

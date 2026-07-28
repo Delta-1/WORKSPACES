@@ -263,13 +263,15 @@ function activeDisplay() {
 ipcMain.handle("get-thumbnail", async (_e, opts) => {
   try {
     const full = opts && opts.full;
+    const display = activeDisplay();
     const size = full
-      ? (() => { const b = screen.getPrimaryDisplay().size; return { width: Math.min(1920, b.width), height: Math.min(1080, b.height) }; })()
+      ? (() => { const b = display.size; return { width: Math.min(2560, b.width), height: Math.min(1440, b.height) }; })()
       : { width: 320, height: 180 };
     const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: size });
-    const thumb = sources[0]?.thumbnail;
+    const source = sources.find((item) => String(item.display_id) === String(display.id)) || sources[0];
+    const thumb = source?.thumbnail;
     if (!thumb || thumb.isEmpty()) return null;
-    return thumb.toJPEG(full ? 80 : 60).toString("base64");
+    return thumb.toJPEG(full ? 88 : 60).toString("base64");
   } catch {
     return null;
   }

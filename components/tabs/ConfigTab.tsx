@@ -746,8 +746,8 @@ function GraphStyleField() {
   );
 }
 
-// Senha "root" para marcar/tirar servidor. Padrão inicial 1qaz2wsx. Para trocar,
-// é preciso informar a senha antiga.
+// Senha "root" para marcar/tirar servidor. No primeiro cadastro não existe senha
+// anterior; nas trocas seguintes é preciso informar a senha atual.
 function ServerPasswordField() {
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -766,8 +766,8 @@ function ServerPasswordField() {
     const cid = p?.company_id ?? null;
     if (!cid) { setSaving(false); setMsg({ ok: false, text: "Empresa não encontrada." }); return; }
     const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", cid).maybeSingle();
-    const current = cs?.server_password || "1qaz2wsx";
-    if (oldPw !== current) { setSaving(false); setMsg({ ok: false, text: "Senha antiga incorreta." }); return; }
+    const current = cs?.server_password ?? "";
+    if (current && oldPw !== current) { setSaving(false); setMsg({ ok: false, text: "Senha antiga incorreta." }); return; }
     const { error, count } = await supabase.from("company_settings").update({ server_password: newPw.trim() }, { count: "exact" }).eq("company_id", cid);
     setSaving(false);
     if (error || !count) { setMsg({ ok: false, text: error ? "Erro: " + error.message : "Não consegui salvar." }); return; }
@@ -780,11 +780,11 @@ function ServerPasswordField() {
       <div>
         <h3 className="text-sm font-bold text-white flex items-center gap-2">🔑 Senha do servidor (root)</h3>
         <p className="text-[11px] text-gray-500 mt-1">
-          É a senha pedida ao marcar ou tirar uma máquina como servidor no Acesso Remoto. Começa como <b>1qaz2wsx</b>.
-          Para trocar, informe a senha atual.
+          É a senha pedida ao marcar ou tirar uma máquina como servidor no Acesso Remoto.
+          No primeiro cadastro, deixe a senha atual vazia; depois, informe-a para trocar.
         </p>
       </div>
-      <input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder="Senha atual" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+      <input type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} placeholder="Senha atual (vazia no primeiro cadastro)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
       <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Nova senha" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
       <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirmar nova senha" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
       {msg && <p className={`text-[11px] ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>}

@@ -29,7 +29,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
-  const [serverPassword, setServerPassword] = useState("1qaz2wsx"); // senha "root" da empresa
+  const [serverPassword, setServerPassword] = useState(""); // senha "root" configurada pela empresa
   // Esta empresa pode marcar a máquina como servidor? Sim se for DELA, ou se a
   // máquina ainda não tem dono (company_id nulo — máquina antiga/avulsa). Máquinas
   // de OUTRA empresa (só compartilhadas por código) não — lá é computador comum.
@@ -48,7 +48,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     const { data } = await supabase.rpc("my_remote_agents");
     if (data) setAgents(data as RemoteAgent[]);
     const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", companyId).maybeSingle();
-    if (cs?.server_password) setServerPassword(cs.server_password);
+    setServerPassword(cs?.server_password ?? "");
   }, [companyId]);
 
   useEffect(() => {
@@ -103,6 +103,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   // makeServer=false: tira o servidor. Pastas liberadas valem sempre (allowlist).
   async function confirmServerChange(makeServer: boolean) {
     if (!supabase || !pwFor) return;
+    if (!serverPassword) {
+      alert("Configure primeiro a senha do servidor nas configurações da empresa.");
+      return;
+    }
     if (pwInput !== serverPassword) {
       setPwError(true);
       return;
@@ -174,10 +178,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       </div>
 
       <div className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
-        O cliente abre o <b>Workspace Acesso Remoto</b> (.exe) na máquina dele e te informa o <b>código de suporte</b>{" "}
-        que aparece na tela. Digite o código acima e clique em <b>Sincronizar</b>. A máquina entra na lista e, sempre que
-        estiver <b>Online</b>, você clica em <b>Conectar</b> para ver e controlar a tela — sem pedir permissão, pela mesma
-        VPN. O app do cliente fica rodando em segundo plano e sobe junto com o Windows.
+        O cliente abre o <b>Workspace Acesso Remoto</b> no computador (.exe) ou celular Android (.apk) e informa o{" "}
+        <b>código de suporte</b>. Digite o código acima e clique em <b>Sincronizar</b>. Quando estiver <b>Online</b>, clique
+        em <b>Conectar</b>. No Android, a pessoa confirma cada sessão de tela, vê uma notificação permanente e ativa
+        separadamente o controle por Acessibilidade; os arquivos ficam limitados à pasta escolhida por ela.
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">

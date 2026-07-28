@@ -124,6 +124,14 @@ const APP_ALIASES = {
   },
 };
 
+const WEB_ALIASES = {
+  youtube: "https://www.youtube.com/",
+  google: "https://www.google.com/",
+  gmail: "https://mail.google.com/",
+  maps: "https://maps.google.com/",
+  "google maps": "https://maps.google.com/",
+};
+
 function normalizeCommand(command) {
   return String(command || "").trim();
 }
@@ -230,6 +238,25 @@ function systemInfo() {
 async function launchApp(target) {
   const platformAliases = APP_ALIASES[process.platform] || {};
   const normalized = String(target || "").trim().toLowerCase();
+  const website = WEB_ALIASES[normalized];
+  if (website) {
+    try {
+      const child = process.platform === "win32"
+        ? spawn("cmd.exe", ["/d", "/s", "/c", "start", "", website], { detached: true, stdio: "ignore", windowsHide: true })
+        : process.platform === "darwin"
+          ? spawn("open", [website], { detached: true, stdio: "ignore" })
+          : spawn("xdg-open", [website], { detached: true, stdio: "ignore" });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 1800);
+        child.once("spawn", () => { clearTimeout(timer); resolve(); });
+        child.once("error", (error) => { clearTimeout(timer); reject(error); });
+      });
+      child.unref();
+      return { ok: true, output: `${target} foi aberto diretamente no navegador padrão.` };
+    } catch (error) {
+      return { ok: false, error: limitOutput(error?.message || error) };
+    }
+  }
   const executable = platformAliases[normalized];
   if (!executable) {
     return {

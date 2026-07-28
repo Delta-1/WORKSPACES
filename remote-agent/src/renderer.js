@@ -471,7 +471,7 @@ async function startAgent() {
   await heartbeat();
   setInterval(heartbeat, 20000);
   runAgentJobs();
-  setInterval(runAgentJobs, 2000); // trabalhos sob demanda (print, círculo-guia, ações)
+  setInterval(runAgentJobs, 900); // resposta rápida para visão e ações do Orb
   reportSpecs();
   setInterval(reportSpecs, 300000); // atualiza o panorama a cada 5 min
   refreshServerRole();
@@ -610,6 +610,7 @@ const QUALITY = {
   alta: { maxWidth: 2560, maxHeight: 1440, maxFrameRate: 30 },
   media: { maxWidth: 1600, maxHeight: 900, maxFrameRate: 30 },
   baixa: { maxWidth: 1280, maxHeight: 720, maxFrameRate: 20 }, // menos lag em rede fraca
+  leve: { maxWidth: 854, maxHeight: 480, maxFrameRate: 12 }, // conexão muito limitada
   // MODO JOGO: 60 FPS, fluido e com baixa latência (para jogar remoto). Resolução
   // moderada para caber a banda e priorizar a resposta em vez da nitidez.
   game: { maxWidth: 1600, maxHeight: 900, maxFrameRate: 60 },
@@ -683,6 +684,7 @@ async function setQuality(level) {
 
 async function startStreaming() {
   cleanup();
+  currentQuality = "alta";
   setStatus("Suporte conectando… iniciando captura.");
   screens = await ipcRenderer.invoke("get-sources");
   const src = screens[0];
