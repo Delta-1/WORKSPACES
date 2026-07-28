@@ -27,6 +27,8 @@ export default function Orb({
   title = "Orb",
   contextLabel,
   autoVoice = false,
+  voiceTrigger = 0,
+  voicePrompt = "Pode falar, estou te ouvindo.",
   mode = "supervised",
   onPoint,
   onControl,
@@ -37,6 +39,8 @@ export default function Orb({
   title?: string;
   contextLabel?: string;
   autoVoice?: boolean;
+  voiceTrigger?: number;
+  voicePrompt?: string;
   mode?: OrbMode;
   onPoint?: () => void;
   onControl?: (a: ControlAction) => Promise<string>;
@@ -225,7 +229,12 @@ export default function Orb({
     const resume = () => {
       speakingRef.current = false;
       setSpeaking(false);
-      if (activeRef.current) { try { recRef.current?.start(); } catch { /* ignore */ } }
+      if (activeRef.current) {
+        try {
+          recRef.current?.start();
+          setListening(true);
+        } catch { /* ignore */ }
+      }
     };
     try {
       const headers = await authHeaders();
@@ -471,15 +480,28 @@ export default function Orb({
     try { rec.start(); } catch { setListening(false); }
   }
 
-  function startVoice() {
+  function startVoice(prompt = voicePrompt) {
+    if (activeRef.current && recRef.current) {
+      setMinimized(true);
+      setVoiceOn(true);
+      showFloat(prompt);
+      speak(prompt);
+      return;
+    }
     const rec = makeRec((t) => handleTranscript(t), true);
     if (!rec) return;
+    setMinimized(true);
+    setVoiceOn(true);
+    showFloat(prompt);
     recRef.current = rec;
     activeRef.current = true;
-    try { rec.start(); } catch { /* ignore */ }
-    setVoiceOn(true);
-    setMinimized(true);
-    speak("Pode falar, estou te ouvindo.");
+    try {
+      rec.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+    speak(prompt);
   }
   function stopVoice() {
     activeRef.current = false;
@@ -490,9 +512,18 @@ export default function Orb({
     setMinimized(false);
   }
   useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
-  // Ao abrir (atalho "v" ou controle remoto), começa como BOLA parada — a pessoa
-  // clica na bola para falar (não fica com o mic sempre ligado).
-  useEffect(() => { if (autoVoice) { setMinimized(true); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const handledVoiceTriggerRef = useRef(0);
+  const handledAutoVoiceRef = useRef(false);
+  // `autoVoice` inicia a primeira conversa; incrementos em `voiceTrigger` reativam
+  // a escuta quando a pessoa pressiona V ou toca no botão V do celular.
+  useEffect(() => {
+    const triggered = voiceTrigger > handledVoiceTriggerRef.current;
+    const shouldAutoStart = autoVoice && !handledAutoVoiceRef.current;
+    handledVoiceTriggerRef.current = Math.max(handledVoiceTriggerRef.current, voiceTrigger);
+    handledAutoVoiceRef.current = handledAutoVoiceRef.current || autoVoice;
+    if (triggered || shouldAutoStart) startVoice(voicePrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceTrigger]);
 
   // Modo BOLA (padrão): bolinha pulsante estilo ChatGPT. O texto aparece
   // FLUTUANDO ao lado da bola (sem balão). Toca na bola para ela te ouvir.
@@ -549,7 +580,7 @@ export default function Orb({
               <Crosshair size={14} />
             </button>
           )}
-          <button onClick={voiceOn ? stopVoice : startVoice} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
+          <button onClick={voiceOn ? stopVoice : () => startVoice()} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
             <Mic size={14} />
           </button>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={14} /></button>
