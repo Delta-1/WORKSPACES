@@ -21,6 +21,7 @@ import {
   Wifi,
   Laptop,
   ListTree,
+  Mic,
   Monitor as MonitorIcon,
   MousePointerClick,
   MousePointer2,
@@ -106,6 +107,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const [orbOpen, setOrbOpen] = useState(false);
   const [orbMode, setOrbMode] = useState<OrbMode | null>(null);
   const [orbModePickerOpen, setOrbModePickerOpen] = useState(false);
+  const [orbVoiceTrigger, setOrbVoiceTrigger] = useState(0);
+  const startOrbListeningRef = useRef(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
   // AUTO: escolhe a melhor qualidade para a latência atual (entra já bom e adapta).
@@ -242,17 +245,51 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       setOrbMode(null);
       return;
     }
+    startOrbListeningRef.current = false;
     setOrbModePickerOpen(true);
   }
   function startOrb(mode: OrbMode) {
     setOrbMode(mode);
     setOrbModePickerOpen(false);
     setOrbOpen(true);
+    if (startOrbListeningRef.current) {
+      startOrbListeningRef.current = false;
+      setOrbVoiceTrigger((value) => value + 1);
+    }
   }
   function closeOrb() {
     setOrbOpen(false);
     setOrbMode(null);
+    startOrbListeningRef.current = false;
   }
+  function activateOrbVoice() {
+    if (orbOpen && orbMode) {
+      setOrbVoiceTrigger((value) => value + 1);
+      return;
+    }
+    startOrbListeningRef.current = true;
+    setOrbModePickerOpen(true);
+  }
+
+  // Enquanto o visualizador está aberto, ele assume o atalho V do Workspace.
+  // Com o Orb ativo, V liga/reacende a escuta e não é enviado ao computador remoto.
+  useEffect(() => {
+    document.documentElement.dataset.remoteViewerActive = "true";
+    return () => { delete document.documentElement.dataset.remoteViewerActive; };
+  }, []);
+  useEffect(() => {
+    function onVoiceShortcut(e: KeyboardEvent) {
+      if (!orbOpen || !orbMode || (e.key !== "v" && e.key !== "V")) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setOrbVoiceTrigger((value) => value + 1);
+    }
+    window.addEventListener("keydown", onVoiceShortcut, true);
+    return () => window.removeEventListener("keydown", onVoiceShortcut, true);
+  }, [orbMode, orbOpen]);
 
   const ghostClickRef = useRef(0);
   function showGhost(x: number, y: number, click = false) {
@@ -1314,6 +1351,16 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
             >
               <Keyboard size={14} /> Teclado
             </button>
+            <button
+              onClick={activateOrbVoice}
+              title={orbOpen ? "Ativar a escuta do Orb" : "Abrir o Orb e falar"}
+              className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg cursor-pointer ${
+                orbOpen ? "bg-indigo-600 text-white" : "bg-white/10 hover:bg-white/20"
+              }`}
+            >
+              <span className="w-5 h-5 rounded-md bg-white/10 border border-white/15 flex items-center justify-center text-[10px] font-black">V</span>
+              <Mic size={14} /> Orb
+            </button>
             {homeGame && (
               <button onClick={() => setGameMode(true)} title="Modo Game: jogar no computador pelo celular" className="flex items-center gap-1 text-xs bg-fuchsia-600 hover:bg-fuchsia-500 text-white px-3 py-2 rounded-lg cursor-pointer">
                 <Gamepad2 size={14} /> Game
@@ -1435,7 +1482,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
         </div>
       )}
 
-      {orbOpen && orbMode && <Orb slot="orb" title="Orb" contextLabel={agent.name} mode={orbMode} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={closeOrb} />}
+      {orbOpen && orbMode && <Orb slot="orb" title="Orb" contextLabel={agent.name} mode={orbMode} voiceTrigger={orbVoiceTrigger} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={closeOrb} />}
       {toolsOpen && <ToolsPicker title="Instalar no cliente" actionLabel="abrir/instalar" onPick={openToolOnClient} onClose={() => setToolsOpen(false)} />}
       {fs && !gameMode && (
         <button onClick={() => setFs(false)} title="Sair da tela cheia" className="fixed top-4 right-4 z-[97] flex items-center gap-1 text-xs bg-black/60 hover:bg-black/80 text-white px-3 py-2 rounded-lg cursor-pointer backdrop-blur">
