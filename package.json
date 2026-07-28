@@ -11,9 +11,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
     "@supabase/supabase-js": "^2.110.1",
+    "@types/leaflet": "^1.9.21",
     "baileys": "^7.0.0-rc13",
     "docx": "^9.7.1",
     "jimp": "^1.6.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.23.0",
     "mammoth": "^1.12.0",
     "next": "16.2.10",

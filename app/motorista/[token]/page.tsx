@@ -2,12 +2,13 @@
 
 // Portal do Motorista — página pública acessada por link/token individual.
 // Mobile-first (estilo app de entrega): status da viagem, GPS ao vivo, seletor
-// de app de navegação (Google Maps/Waze/Apple), envio de fotos (POD), chat com a
-// central e edição do próprio perfil. Não vê banco de dados nem financeiro.
+// de app de navegação (Google Maps/Waze/Apple), envio de fotos (POD) — inclusive
+// direto de uma carga específica, quando o motorista leva mais de uma —, chat
+// com a central e edição do próprio perfil. Não vê banco de dados nem financeiro.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { use } from "react";
-import { Camera, MapPin, MessageSquare, Navigation, Send, Truck, User, Power } from "lucide-react";
+import { Camera, Loader2, MapPin, MessageSquare, Navigation, Send, Truck, User, Power } from "lucide-react";
 
 type Carga = { id: string; codigo: string | null; cliente_nome: string | null; produto: string | null; origem: string | null; destino: string | null; pais_destino: string | null; stage: string };
 type Msg = { id: string; sender: string; text: string | null; created_at: string };
@@ -17,6 +18,42 @@ const STAGE_LABEL: Record<string, string> = {
   proforma: "Proforma", pedido: "Pedido", entrada: "Entrada", fumigacao: "Fumigação",
   documentacao: "Documentação", transbordo: "Transbordo", exportacao: "Exportação", concluido: "Concluído",
 };
+
+// Reduz a foto (fotos de câmera de celular vêm com vários MB — em base64 isso
+// facilmente estoura o limite de tamanho de requisição do servidor e o envio
+// falha). Redimensiona para no máximo 1600px no lado maior e reencoda em JPEG,
+// reduzindo a qualidade até caber num tamanho razoável.
+function compressPhoto(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Não consegui ler a foto."));
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onerror = () => reject(new Error("Não consegui abrir a foto."));
+      img.onload = () => {
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("Seu navegador não suporta processar a foto.")); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        // Baixa a qualidade até o base64 ficar abaixo de ~3.5MB (folga do limite do servidor).
+        let quality = 0.85;
+        let dataUrl = canvas.toDataURL("image/jpeg", quality);
+        while (dataUrl.length > 3.5 * 1024 * 1024 && quality > 0.35) {
+          quality -= 0.15;
+          dataUrl = canvas.toDataURL("image/jpeg", quality);
+        }
+        resolve(dataUrl);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function DriverPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
@@ -36,8 +73,14 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
   // Recarrega o chat periodicamente.
   useEffect(() => { const i = setInterval(load, 5000); return () => clearInterval(i); }, [load]);
 
+  // Devolve a resposta (e joga erro se falhar) — assim quem chama sabe de
+  // verdade se deu certo, em vez de sempre mostrar "enviado".
   const post = useCallback(async (body: Record<string, unknown>) => {
-    await fetch(`/api/motorista/${token}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`/api/motorista/${token}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    let json: { ok?: boolean; error?: string; url?: string } = {};
+    try { json = await r.json(); } catch { /* resposta vazia */ }
+    if (!r.ok || json?.error) throw new Error(json?.error || `Falha no envio (${r.status}).`);
+    return json;
   }, [token]);
 
   // Liga/desliga a transmissão de GPS ao vivo.
@@ -48,7 +91,7 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
     }
     if (!navigator.geolocation) { alert("Seu aparelho não permite GPS."); return; }
     watchRef.current = navigator.geolocation.watchPosition(
-      (pos) => post({ action: "ping", lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => post({ action: "ping", lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {}),
       () => alert("Não consegui pegar sua localização. Autorize o GPS."),
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
     );
@@ -64,19 +107,38 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
     window.open(url, "_blank");
   }
 
+  // Foto — pode ser geral (sem carga) ou de UMA carga específica (quando o
+  // motorista clica no botão de câmera daquele card, útil se ele leva mais de
+  // uma carga ao mesmo tempo).
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [podKind, setPodKind] = useState("carga");
+  const [pendingCargaId, setPendingCargaId] = useState<string | null>(null);
+  const [sendingPhoto, setSendingPhoto] = useState(false);
+  const [photoErr, setPhotoErr] = useState<string | null>(null);
+
+  function askPhoto(cargaId: string | null) {
+    setPendingCargaId(cargaId);
+    setPhotoErr(null);
+    fileRef.current?.click();
+  }
   async function sendPhoto(file: File) {
-    const reader = new FileReader();
-    reader.onload = async () => { await post({ action: "pod", photoBase64: reader.result, kind: podKind }); alert("Foto enviada à central."); };
-    reader.readAsDataURL(file);
+    setSendingPhoto(true); setPhotoErr(null);
+    try {
+      const dataUrl = await compressPhoto(file);
+      await post({ action: "pod", photoBase64: dataUrl, kind: podKind, cargaId: pendingCargaId || undefined });
+      alert("Foto enviada à central. ✅");
+    } catch (e) {
+      setPhotoErr((e as Error)?.message || "Não consegui enviar a foto. Tente de novo.");
+    } finally {
+      setSendingPhoto(false);
+    }
   }
 
   const [chatInput, setChatInput] = useState("");
   async function sendMsg() {
     if (!chatInput.trim()) return;
-    await post({ action: "message", text: chatInput.trim() });
-    setChatInput(""); load();
+    try { await post({ action: "message", text: chatInput.trim() }); setChatInput(""); load(); }
+    catch { alert("Não consegui enviar a mensagem. Tente de novo."); }
   }
 
   if (err) return <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center p-6 text-center"><div><Truck className="mx-auto mb-2 text-zinc-600" /><p>Link inválido ou expirado. Peça um novo à central.</p></div></div>;
@@ -84,6 +146,14 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col max-w-md mx-auto">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) sendPhoto(f); e.currentTarget.value = ""; }}
+      />
       <header className="p-4 border-b border-white/10 flex items-center justify-between sticky top-0 bg-zinc-950/95 backdrop-blur z-10">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center font-bold">{data.driver.nome.slice(0, 1)}</div>
@@ -95,6 +165,8 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
       </header>
 
       {gpsOn && <div className="bg-emerald-500/10 text-emerald-400 text-[11px] px-4 py-1.5 flex items-center gap-1.5"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> Transmitindo sua localização ao vivo para a central.</div>}
+      {sendingPhoto && <div className="bg-amber-500/10 text-amber-400 text-[11px] px-4 py-1.5 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Enviando foto…</div>}
+      {photoErr && <div className="bg-red-500/10 text-red-300 text-[11px] px-4 py-1.5">⚠️ {photoErr}</div>}
 
       <main className="flex-1 overflow-y-auto p-4 space-y-3">
         {tab === "viagem" && (
@@ -115,18 +187,20 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
                 <div className="font-semibold mt-1">{c.cliente_nome || "—"}</div>
                 <div className="text-xs text-zinc-400">{c.produto || ""}</div>
                 <div className="text-xs text-zinc-500 mt-2 flex items-center gap-1"><MapPin size={12} /> {c.origem || "?"} → {c.destino || "?"} {c.pais_destino ? `(${c.pais_destino})` : ""}</div>
-                <button onClick={() => openNav(c)} className="w-full mt-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm py-2 rounded-xl flex items-center justify-center gap-1.5"><Navigation size={15} /> Navegar até o destino</button>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => openNav(c)} className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm py-2 rounded-xl flex items-center justify-center gap-1.5"><Navigation size={15} /> Navegar</button>
+                  <button onClick={() => askPhoto(c.id)} title="Tirar foto desta carga" className="bg-white/10 hover:bg-white/15 text-sm px-3.5 py-2 rounded-xl flex items-center justify-center gap-1.5"><Camera size={15} /></button>
+                </div>
               </div>
             ))}
 
             <div className="bg-zinc-900/70 border border-white/10 rounded-2xl p-4">
               <div className="text-sm font-semibold flex items-center gap-1.5"><Camera size={15} /> Comprovante de entrega (POD)</div>
-              <p className="text-[11px] text-zinc-500 mt-0.5 mb-2">Envie fotos da carga, dos lacres e do canhoto assinado.</p>
+              <p className="text-[11px] text-zinc-500 mt-0.5 mb-2">Envie fotos gerais da carga, dos lacres e do canhoto assinado. Para uma carga específica, use a câmera no card dela acima.</p>
               <div className="flex gap-2 mb-2">
                 {["carga", "lacre", "canhoto"].map((k) => <button key={k} onClick={() => setPodKind(k)} className={`text-xs px-2.5 py-1 rounded-md ${podKind === k ? "bg-white/15" : "bg-white/5 text-zinc-400"}`}>{k}</button>)}
               </div>
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) sendPhoto(f); e.currentTarget.value = ""; }} />
-              <button onClick={() => fileRef.current?.click()} className="w-full bg-white/10 hover:bg-white/15 text-sm py-2 rounded-xl flex items-center justify-center gap-1.5"><Camera size={15} /> Tirar / enviar foto ({podKind})</button>
+              <button onClick={() => askPhoto(null)} disabled={sendingPhoto} className="w-full bg-white/10 hover:bg-white/15 disabled:opacity-50 text-sm py-2 rounded-xl flex items-center justify-center gap-1.5"><Camera size={15} /> Tirar / enviar foto ({podKind})</button>
             </div>
           </>
         )}
@@ -145,7 +219,7 @@ export default function DriverPortal({ params }: { params: Promise<{ token: stri
           </div>
         )}
 
-        {tab === "perfil" && <ProfileEditor data={data} onSave={(p) => post({ action: "profile", ...p })} />}
+        {tab === "perfil" && <ProfileEditor data={data} onSave={(p) => post({ action: "profile", ...p }).catch(() => alert("Não consegui salvar. Tente de novo."))} />}
       </main>
 
       {tab === "chat" && (
