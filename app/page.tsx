@@ -11,6 +11,7 @@ import Dock from "@/components/Dock";
 import AppDrawer from "@/components/AppDrawer";
 import ProfileMenu from "@/components/ProfileMenu";
 import TVModeOverlay from "@/components/TVModeOverlay";
+import AgentModeOverlay from "@/components/AgentModeOverlay";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
@@ -111,6 +112,8 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(false);
   const [showTV, setShowTV] = useState(false);
+  const [showAgent, setShowAgent] = useState(false);
+  const agentModeActiveRef = useRef(false);
   const [tab, setTab] = useState("inicio");
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -160,13 +163,23 @@ export default function Home() {
   function beginCopilotPushToTalk() {
     if (copilotVoiceHeldRef.current) return;
     copilotVoiceHeldRef.current = true;
-    setCopilotOpen(true);
+    if (!agentModeActiveRef.current) setCopilotOpen(true);
     setCopilotPushToTalk(true);
   }
   function endCopilotPushToTalk() {
     if (!copilotVoiceHeldRef.current) return;
     copilotVoiceHeldRef.current = false;
     setCopilotPushToTalk(false);
+  }
+  function openAgentMode() {
+    agentModeActiveRef.current = true;
+    setCopilotOpen(false);
+    setShowAgent(true);
+  }
+  function closeAgentMode() {
+    endCopilotPushToTalk();
+    agentModeActiveRef.current = false;
+    setShowAgent(false);
   }
 
   // Pressione V para falar e solte para enviar. O visualizador remoto assume esse
@@ -483,6 +496,19 @@ export default function Home() {
     );
   }
 
+  if (showAgent) {
+    return (
+      <AgentModeOverlay
+        companyName={company.name}
+        logoDataUrl={company.logoDataUrl}
+        pushToTalkActive={copilotPushToTalk}
+        onPushToTalkStart={beginCopilotPushToTalk}
+        onPushToTalkEnd={endCopilotPushToTalk}
+        onClose={closeAgentMode}
+      />
+    );
+  }
+
   return (
     <div className="h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
       <header className="h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
@@ -527,7 +553,7 @@ export default function Home() {
       </header>
 
       <main className="flex-1 overflow-hidden p-3 sm:p-6 pb-24 sm:pb-28">
-        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
+        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} />}
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "calendario" && <CalendarTab profile={profile} />}
