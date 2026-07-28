@@ -120,7 +120,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   const load = useCallback(async () => {
     if (!supabase) return;
     let list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? [];
-    // Garante os agentes de sistema (Orb e Copiloto interno) na lista do Labs.
+    // Garante os agentes de sistema (Orb, Copiloto interno e Cobrador) na lista do Labs.
     if (canManage && profile?.company_id) {
       const allCaps = CAPS.map((c) => c.id);
       const need: { slot: string; name: string; accent: string; caps: string[]; persona: string }[] = [];
@@ -128,6 +128,14 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
         need.push({ slot: "orb", name: "Orb", accent: "#6366f1", caps: ["files", "tasks", "clients", "attendance", "remote"], persona: "Orb, o copiloto de voz do acesso remoto — objetivo, calmo e prestativo." });
       if (!list.some((x) => x.slot === "internal"))
         need.push({ slot: "internal", name: "Copilot", accent: "#10b981", caps: allCaps, persona: "Copilot, o copiloto de voz e ADMINISTRADOR do sistema — tem acesso a tudo, é confiante, claro e direto." });
+      // Agente PRÓPRIO do Cobrador — separado do Orb, com capacidade só de cobrança
+      // (consulta pendências/situação). É quem manda os lembretes/cobranças por
+      // áudio quando vinculado a uma cobrança. Editável livremente aqui no Labs.
+      if (!list.some((x) => x.slot === "cobrador"))
+        need.push({
+          slot: "cobrador", name: "Cobrador", accent: "#22c55e", caps: ["cobranca"],
+          persona: "Cobrador, especialista em cobranças e lembretes de pagamento — educado, direto e nunca inconveniente. Nunca ameaça nem constrange o cliente; apenas lembra com gentileza, informa o Pix e agradece.",
+        });
       if (need.length) {
         await supabase.from("chatbots").insert(need.map((s) => ({ name: s.name, slot: s.slot, provider: "gemini", accent: s.accent, capabilities: s.caps, persona: s.persona, instructions: TEMPLATE_INSTRUCTIONS, enabled: true, test_mode: false, company_id: profile.company_id })));
         list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? list;
