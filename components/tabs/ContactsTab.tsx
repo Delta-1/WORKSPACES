@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Users, Search, Plus, MessageSquare, Trash2, Phone, X, UserPlus, DollarSign } from "lucide-react";
+import { Users, Search, Plus, MessageSquare, Trash2, Phone, X, UserPlus, DollarSign, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import { applyMask } from "@/lib/mask";
@@ -24,6 +24,7 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [charging, setCharging] = useState<Contact | null>(null);
+  const [editing, setEditing] = useState<Contact | null>(null);
   const companyId = profile?.company_id ?? null;
 
   const load = useCallback(async () => {
@@ -115,6 +116,7 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
                   <p className="text-sm font-medium truncate">{c.name || displayPhone(c.phone)}</p>
                   <p className="text-[11px] text-gray-500 truncate flex items-center gap-1"><Phone size={10} /> {displayPhone(c.phone)}</p>
                 </div>
+                <button onClick={() => setEditing(c)} title="Editar dados" className="p-2 rounded-lg text-sky-300 hover:bg-sky-600/20 cursor-pointer shrink-0"><Pencil size={15} /></button>
                 <button onClick={() => setCharging(c)} title="Criar cobrança" className="p-2 rounded-lg text-emerald-300 hover:bg-emerald-600/20 cursor-pointer shrink-0"><DollarSign size={16} /></button>
                 {onOpenMessages && (
                   <button onClick={() => onOpenMessages(c.phone, c.name || displayPhone(c.phone))} title="Enviar mensagem" className="p-2 rounded-lg text-green-300 hover:bg-green-600/20 cursor-pointer shrink-0"><MessageSquare size={16} /></button>
@@ -126,6 +128,44 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
         )}
       </div>
       {charging && <QuickChargeModal companyId={companyId} contact={charging} onClose={() => setCharging(null)} />}
+      {editing && <EditContactModal contact={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+    </div>
+  );
+}
+
+// Editar os dados de um contato/cliente (nome e telefone). Reflete em todo o
+// sistema (Mensagens, Cobrador, etc.), pois o contato é o mesmo em todo lugar.
+function EditContactModal({ contact, onClose, onSaved }: { contact: Contact; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(contact.name || "");
+  const [phone, setPhone] = useState(applyMask("phone", (contact.phone || "").startsWith("55") ? contact.phone.slice(2) : contact.phone));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function save() {
+    if (!supabase) return;
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 8) { setErr("Telefone inválido."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const finalPhone = digits.startsWith("55") ? digits : `55${digits}`;
+      const patch: Record<string, string | null> = { name: name.trim() || null };
+      // Só mexe no telefone/jid se realmente mudou (evita conflito de unicidade à toa).
+      if (finalPhone !== contact.phone) { patch.phone = finalPhone; patch.jid = `${finalPhone}@s.whatsapp.net`; }
+      const { error } = await supabase.from("contacts").update(patch).eq("id", contact.id);
+      if (error) { setErr(error.message.includes("duplicate") ? "Já existe um contato com esse telefone." : error.message); return; }
+      onSaved();
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm flex items-center gap-2"><Pencil size={15} className="text-sky-300" /> Editar contato</h3><button onClick={onClose}><X size={18} /></button></div>
+        <div className="space-y-3">
+          <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Nome</span><input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" /></label>
+          <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Telefone / WhatsApp</span><input value={phone} onChange={(e) => setPhone(applyMask("phone", e.target.value))} inputMode="tel" className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm" /></label>
+          {err && <p className="text-[11px] text-red-400">{err}</p>}
+          <button onClick={save} disabled={busy} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg">{busy ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
     </div>
   );
 }
