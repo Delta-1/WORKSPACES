@@ -9,12 +9,12 @@
 // dá para vincular um agente ("Cobrador").
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
+import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Pencil, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import { BILLING_DEFAULT_TEMPLATE, BILLING_TEMPLATES, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
 
-type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string; itens?: BillingItem[] | null; motivo?: string | null };
+type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string; itens?: BillingItem[] | null; motivo?: string | null; image_url?: string | null; followup_minutes?: number | null; followup_as_audio?: boolean | null; multa_atraso?: number | null };
 type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null; itens?: BillingItem[] | null; motivo?: string | null; inadimplente?: boolean | null; multa?: number | null };
 type Contact = { id: string; name: string | null; phone: string | null; jid: string | null };
 type Agent = { id: string; name: string };
@@ -41,6 +41,7 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
   const [numbers, setNumbers] = useState<WNumber[]>([]);
   const [settings, setSettings] = useState<Settings>({ pix_key: "", pix_name: "", mp_token: "", agent_name: "Cobrador", template: BILLING_DEFAULT_TEMPLATE });
   const [showNew, setShowNew] = useState(false);
+  const [editCharge, setEditCharge] = useState<Charge | null>(null);
   const [comprovante, setComprovante] = useState<Target | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const flash = useCallback((t: string) => { setToast(t); setTimeout(() => setToast(null), 3500); }, []);
@@ -140,7 +141,10 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
                       </div>
                       <div className="text-xs text-gray-400 mt-0.5">{money(c.valor)} · {c.recorrencia}{c.recorrencia !== "avulsa" ? ` (dia ${c.dia_vencimento})` : ""} · avisa {c.antecedencia_dias}d antes {agent ? `· agente: ${agent.name}` : ""}</div>
                     </div>
-                    <span className="text-xs text-gray-400">{ct.length} cliente(s)</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-gray-400">{ct.length} cliente(s)</span>
+                      <button onClick={() => setEditCharge(c)} className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 flex items-center gap-1"><Pencil size={12} /> Editar</button>
+                    </div>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {ct.map((t) => <span key={t.id} className={`text-[11px] px-2 py-0.5 rounded-full ${STATUS[t.status]?.cls || ""}`}>{t.name || t.phone} · {STATUS[t.status]?.label}</span>)}
@@ -179,6 +183,7 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
       </div>
 
       {showNew && <NewChargeModal cid={cid} contacts={contacts} agents={agents} numbers={numbers} settings={settings} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); flash("Cobrança criada."); }} onContactsChanged={load} />}
+      {editCharge && <EditChargeModal cid={cid} charge={editCharge} targets={targets.filter((t) => t.charge_id === editCharge.id)} contacts={contacts} agents={agents} numbers={numbers} onClose={() => setEditCharge(null)} onSaved={() => { setEditCharge(null); load(); flash("Cobrança atualizada."); }} onContactsChanged={load} />}
       {comprovante && (
         <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-4" onClick={() => setComprovante(null)}>
           <div className="max-w-md w-full bg-[#0b0f16] border border-white/10 rounded-2xl p-4" onClick={(e) => e.stopPropagation()}>
@@ -410,6 +415,192 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
         </div>
         <style jsx>{`.in{width:100%;background:#09090b;border:1px solid #27272a;border-radius:8px;padding:8px 10px;font-size:13px;color:#fff}.in:focus{outline:none;border-color:#52525b}.lbl{font-size:11px;color:#a1a1aa;margin-bottom:4px;display:block}`}</style>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------ Editar cobrança ------------------------------
+function EditChargeModal({ cid, charge, targets, contacts, agents, numbers, onClose, onSaved, onContactsChanged }: {
+  cid: string | null; charge: Charge; targets: Target[]; contacts: Contact[]; agents: Agent[]; numbers: WNumber[];
+  onClose: () => void; onSaved: () => void; onContactsChanged: () => void;
+}) {
+  const [f, setF] = useState({
+    name: charge.name, tipo: charge.tipo, valor: String(charge.valor || ""), recorrencia: charge.recorrencia,
+    dia_vencimento: String(charge.dia_vencimento ?? 5), antecedencia_dias: String(charge.antecedencia_dias ?? 2),
+    agent_id: charge.agent_id || "", number_id: charge.number_id || "",
+    followup_minutes: String(charge.followup_minutes ?? 0),
+    multa_atraso: String(charge.multa_atraso ?? ""),
+  });
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  const [template, setTemplate] = useState(charge.template || BILLING_DEFAULT_TEMPLATE);
+  const [motivo, setMotivo] = useState(charge.motivo || "");
+  const [itens, setItens] = useState<BillingItem[]>((charge.itens as BillingItem[]) || []);
+  const [imageUrl, setImageUrl] = useState<string | null>(charge.image_url ?? null);
+  const [followupAudio, setFollowupAudio] = useState(!!charge.followup_as_audio);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
+  const [newName, setNewName] = useState(""); const [newPhone, setNewPhone] = useState("");
+  const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
+  const valorFinal = hasItens ? itemsTotal(itens) : Number(f.valor) || 0;
+
+  async function uploadImage(file: File) {
+    if (!supabase || !cid || !file.type.startsWith("image/")) return;
+    setUploadingImg(true);
+    try {
+      const ext = (file.name.split(".").pop() || "png").toLowerCase().slice(0, 5);
+      const path = `billing/${cid}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("company-files").upload(path, file, { contentType: file.type, upsert: true });
+      if (!error) { const { data } = supabase.storage.from("company-files").getPublicUrl(path); setImageUrl(data?.publicUrl ?? null); }
+    } finally { setUploadingImg(false); }
+  }
+
+  const inCharge = new Set(targets.map((t) => t.contact_id));
+  const available = contacts.filter((c) => !inCharge.has(c.id) && (!q || (c.name || "").toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q)));
+  const cleanItens = () => itens.filter((i) => (i.descricao || "").trim() || Number(i.valor)).map((i) => ({ descricao: i.descricao, valor: Number(i.valor) || 0 }));
+
+  // Adiciona um cliente à cobrança (cria o alvo pendente com os valores atuais).
+  async function addTarget(contactId: string, name: string | null, phone: string | null) {
+    if (!supabase || !cid) return;
+    await supabase.from("billing_targets").insert({
+      company_id: cid, charge_id: charge.id, contact_id: contactId, name, phone: (phone || "").replace(/\D|@.*/g, "") || null,
+      tipo: f.tipo, valor: valorFinal, due_date: nextDueDate(Number(f.dia_vencimento) || 5), status: "pendente", itens: cleanItens(), motivo: motivo || null, image_url: imageUrl || null,
+    });
+    onContactsChanged();
+  }
+  async function addNewContact() {
+    if (!supabase || !cid || !newName.trim() || !newPhone.trim()) return;
+    const digits = newPhone.replace(/\D/g, "");
+    const finalPhone = digits.startsWith("55") ? digits : `55${digits}`;
+    const jid = `${finalPhone}@s.whatsapp.net`;
+    const { data } = await supabase.from("contacts").upsert({ company_id: cid, name: newName.trim(), phone: finalPhone, jid }, { onConflict: "company_id,phone" }).select("id").maybeSingle();
+    if (data?.id) { await addTarget(data.id, newName.trim(), finalPhone); setNewName(""); setNewPhone(""); }
+  }
+  async function removeTarget(t: Target) {
+    if (!supabase) return;
+    // Não enviado ainda → remove; já enviado → cancela (mantém histórico).
+    if (t.status === "pendente") await supabase.from("billing_targets").delete().eq("id", t.id);
+    else await supabase.from("billing_targets").update({ status: "cancelado" }).eq("id", t.id);
+    onContactsChanged();
+  }
+
+  async function save() {
+    if (!supabase || !cid) return;
+    setBusy(true);
+    try {
+      const ci = cleanItens();
+      await supabase.from("billing_charges").update({
+        name: f.name.trim(), tipo: f.tipo, valor: valorFinal, recorrencia: f.recorrencia,
+        dia_vencimento: Number(f.dia_vencimento) || 5, antecedencia_dias: Number(f.antecedencia_dias) || 2,
+        template, agent_id: f.agent_id || null, number_id: f.number_id || null, motivo: motivo || null, itens: ci,
+        image_url: imageUrl || null, followup_minutes: Number(f.followup_minutes) || 0, followup_as_audio: followupAudio, multa_atraso: Number(f.multa_atraso) || 0,
+      }).eq("id", charge.id);
+      // Sincroniza os alvos ainda EM ABERTO (não pagos/cancelados) com os novos dados.
+      const openIds = targets.filter((t) => t.status !== "pago" && t.status !== "cancelado").map((t) => t.id);
+      if (openIds.length) {
+        await supabase.from("billing_targets").update({ valor: valorFinal, itens: ci, motivo: motivo || null, image_url: imageUrl || null, tipo: f.tipo }).in("id", openIds);
+        // due_date só nos que ainda não foram enviados (pendente).
+        const pendIds = targets.filter((t) => t.status === "pendente").map((t) => t.id);
+        if (pendIds.length) await supabase.from("billing_targets").update({ due_date: nextDueDate(Number(f.dia_vencimento) || 5) }).in("id", pendIds);
+      }
+      onSaved();
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4"><h3 className="text-base font-bold flex items-center gap-2"><Pencil size={16} /> Editar cobrança</h3><button onClick={onClose}><X size={18} /></button></div>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <label className="block"><span className="lbl">Nome da cobrança</span><input className="in" value={f.name} onChange={(e) => set("name", e.target.value)} /></label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block"><span className="lbl">Forma</span><select className="in" value={f.tipo} onChange={(e) => set("tipo", e.target.value)}><option value="pix">Pix (mensagem)</option><option value="api">Mercado Pago (API)</option><option value="boleto" disabled>Boleto (em breve)</option></select></label>
+              <label className="block"><span className="lbl">{hasItens ? "Total (do extrato)" : "Valor (R$)"}</span><input className="in" type="number" value={hasItens ? String(itemsTotal(itens)) : f.valor} onChange={(e) => set("valor", e.target.value)} disabled={hasItens} /></label>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="block"><span className="lbl">Recorrência</span><select className="in" value={f.recorrencia} onChange={(e) => set("recorrencia", e.target.value)}><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="avulsa">Avulsa</option></select></label>
+              <label className="block"><span className="lbl">Dia venc.</span><input className="in" type="number" min={1} max={28} value={f.dia_vencimento} onChange={(e) => set("dia_vencimento", e.target.value)} /></label>
+              <label className="block"><span className="lbl">Avisar (dias)</span><input className="in" type="number" value={f.antecedencia_dias} onChange={(e) => set("antecedencia_dias", e.target.value)} /></label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block"><span className="lbl">Agente (opcional)</span><select className="in" value={f.agent_id} onChange={(e) => set("agent_id", e.target.value)}><option value="">Sem IA</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+              <label className="block"><span className="lbl">Número de envio</span><select className="in" value={f.number_id} onChange={(e) => set("number_id", e.target.value)}><option value="">—</option>{numbers.map((n) => <option key={n.id} value={n.id}>{n.label || n.phone_number || "WhatsApp"}</option>)}</select></label>
+            </div>
+            <label className="block"><span className="lbl">Motivo (opcional)</span><input className="in" value={motivo} onChange={(e) => setMotivo(e.target.value)} /></label>
+            <BillingItemsEditorInline itens={itens} setItens={setItens} />
+            <label className="block"><span className="lbl">Mensagem programada</span><textarea className="in" rows={5} value={template} onChange={(e) => setTemplate(e.target.value)} /></label>
+            <div className="flex items-center gap-2">
+              <label className={`text-xs px-3 py-2 rounded-lg cursor-pointer ${uploadingImg ? "bg-white/5 text-gray-500" : "bg-white/10 hover:bg-white/15"}`}>{uploadingImg ? "Enviando…" : imageUrl ? "Trocar imagem" : "Anexar imagem"}<input type="file" accept="image/*" className="hidden" onChange={(e) => { const fi = e.target.files?.[0]; if (fi) uploadImage(fi); e.currentTarget.value = ""; }} /></label>
+              {imageUrl && <><span className="text-[11px] text-emerald-400">imagem</span><button onClick={() => setImageUrl(null)} className="text-[11px] text-gray-500 hover:text-red-400">remover</button></>}
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-lg p-2.5 space-y-2">
+              <div className="text-[11px] text-gray-400 font-semibold">Se o cliente não responder</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block"><span className="lbl">Reforçar após (min)</span><input className="in" type="number" value={f.followup_minutes} onChange={(e) => set("followup_minutes", e.target.value)} /></label>
+                <label className="block"><span className="lbl">Multa inadimplente (R$)</span><input className="in" type="number" value={f.multa_atraso} onChange={(e) => set("multa_atraso", e.target.value)} /></label>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-300"><input type="checkbox" checked={followupAudio} onChange={(e) => setFollowupAudio(e.target.checked)} /> Reforço por áudio</label>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="lbl">Clientes nesta cobrança ({targets.length})</span>
+            <div className="border border-white/10 rounded-lg divide-y divide-white/5 max-h-40 overflow-y-auto">
+              {targets.map((t) => (
+                <div key={t.id} className="flex items-center justify-between px-3 py-1.5 text-sm">
+                  <span className="truncate">{t.name || t.phone} <span className={`text-[9px] px-1 rounded ${STATUS[t.status]?.cls || ""}`}>{STATUS[t.status]?.label}</span></span>
+                  <button onClick={() => removeTarget(t)} className="text-gray-500 hover:text-red-400 shrink-0"><Trash2 size={14} /></button>
+                </div>
+              ))}
+              {targets.length === 0 && <div className="px-3 py-3 text-xs text-gray-500 text-center">Nenhum cliente.</div>}
+            </div>
+            <span className="lbl">Adicionar cliente</span>
+            <input className="in" placeholder="Buscar contato…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="border border-white/10 rounded-lg max-h-32 overflow-y-auto divide-y divide-white/5">
+              {available.map((c) => (
+                <button key={c.id} onClick={() => addTarget(c.id, c.name, c.phone)} className="w-full flex items-center justify-between px-3 py-2 text-left text-sm hover:bg-white/5"><span>{c.name || c.phone}</span><Plus size={14} className="text-emerald-400" /></button>
+              ))}
+              {available.length === 0 && <div className="px-3 py-3 text-xs text-gray-500 text-center">Nenhum contato disponível.</div>}
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-lg p-2.5">
+              <div className="text-[11px] text-gray-400 mb-1.5">Ou adicionar cliente novo</div>
+              <div className="flex gap-2">
+                <input className="in" placeholder="Nome" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                <input className="in" placeholder="Telefone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                <button onClick={addNewContact} className="px-3 rounded-lg bg-white/10 hover:bg-white/15 text-sm shrink-0">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10">Cancelar</button>
+          <button onClick={save} disabled={busy} className="text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">{busy ? "Salvando…" : "Salvar alterações"}</button>
+        </div>
+        <style jsx>{`.in{width:100%;background:#09090b;border:1px solid #27272a;border-radius:8px;padding:8px 10px;font-size:13px;color:#fff}.in:focus{outline:none;border-color:#52525b}.lbl{font-size:11px;color:#a1a1aa;margin-bottom:4px;display:block}`}</style>
+      </div>
+    </div>
+  );
+}
+
+// Editor de itens simples (sem motivo, que já tem campo próprio no editar).
+function BillingItemsEditorInline({ itens, setItens }: { itens: BillingItem[]; setItens: (v: BillingItem[]) => void }) {
+  const total = itemsTotal(itens);
+  const has = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
+  const setItem = (i: number, k: keyof BillingItem, v: string) => setItens(itens.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-lg p-2.5">
+      <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] text-gray-400">Extrato (itens)</span><button type="button" onClick={() => setItens([...itens, { descricao: "", valor: "" }])} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 flex items-center gap-1"><Plus size={12} /> item</button></div>
+      <div className="space-y-1.5">
+        {itens.map((it, i) => (
+          <div key={i} className="flex gap-1.5">
+            <input className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
+            <input className="w-20 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
+            <button type="button" onClick={() => setItens(itens.filter((_, idx) => idx !== i))} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400"><X size={14} /></button>
+          </div>
+        ))}
+      </div>
+      {has && <div className="text-right text-xs mt-1.5 font-semibold text-emerald-400">Total: R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</div>}
     </div>
   );
 }
