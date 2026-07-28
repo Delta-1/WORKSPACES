@@ -128,6 +128,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
   const isGestor = profile?.role === "gestor";
 
+  // Trava opcional (por empresa) de atendimento exclusivo: quando ligada, quem
+  // responde primeiro "assume" a conversa e outros atendentes não conseguem mais
+  // responder ali, evitando duplicidade. Nem toda empresa quer essa trava.
+  const [kanbanLock, setKanbanLock] = useState(false);
+
   // Som de notificação (toca quando chega mensagem nova de cliente). A escolha é
   // por pessoa (salva no aparelho), semeada com o padrão da empresa. A empresa
   // pode subir o PRÓPRIO som (notification_sound_url).
@@ -228,8 +233,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!supabase || !profile?.company_id) return;
     let onboarded = false;
     try { onboarded = localStorage.getItem("msg:onboarded") === "1"; } catch { /* ignore */ }
-    supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
+    supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url,messages_kanban_lock").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
       const cl = data?.messages_layout as MsgLayout | null;
+      setKanbanLock(!!(data as { messages_kanban_lock?: boolean } | null)?.messages_kanban_lock);
       // Som personalizado da empresa (URL) sempre carrega; toca quando escolhido "custom".
       const url = (data as { notification_sound_url?: string | null } | null)?.notification_sound_url ?? null;
       setNotifSoundUrl(url);
@@ -572,7 +578,29 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
   }
 
+  // Se a trava está ligada e a conversa já foi assumida por outra pessoa,
+  // devolve o motivo do bloqueio (senão null = pode responder normalmente).
+  function blockedByLock(conv: ConvRow | null): string | null {
+    if (!conv || !kanbanLock) return null;
+    if (conv.status !== "atendendo") return null;
+    if (!conv.assignee_id || conv.assignee_id === profile?.id) return null;
+    const owner = colleagues.find((c) => c.id === conv.assignee_id);
+    return `Esta conversa já está sendo atendida por ${owner?.full_name || owner?.email || "outro atendente"} — para evitar duplicidade, só quem assumiu pode responder.`;
+  }
+  // Ao responder, "assume" a conversa (fica marcada com quem está atendendo) —
+  // só assume se ainda não tem dono, pra não tirar a conversa de quem já pegou.
+  async function claimConversation(conv: ConvRow) {
+    if (!supabase || !profile?.id) return;
+    const patch: Partial<Pick<ConvRow, "assignee_id" | "status">> = {};
+    if (!conv.assignee_id) patch.assignee_id = profile.id;
+    if (conv.status === "espera") patch.status = "atendendo";
+    if (Object.keys(patch).length === 0) return;
+    setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, ...patch } : c)));
+    await supabase.from("conversations").update(patch).eq("id", conv.id);
+  }
+
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
+  const lockMsg = blockedByLock(selConv);
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
   const connectedCount = numbers.filter((n) => n.status === "connected").length;
   const activeNumberId = server.startsWith("wa:") ? server.slice(3) : null;
@@ -640,6 +668,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   async function sendMedia(media: { type: WhatsappMediaType; url: string; name: string; mime: string }, caption?: string) {
     if (!selConv?.contacts) return;
+    const block = blockedByLock(selConv);
+    if (block) { alert(block); return; }
+    claimConversation(selConv);
     // Bolha otimista da mídia enviada — aparece na hora.
     const temp: WhatsappMessageRow = {
       id: `temp-${Date.now()}`,
@@ -687,6 +718,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       return;
     }
     if (!selConv?.contacts) return;
+    const block = blockedByLock(selConv);
+    if (block) { alert(block); return; }
+    claimConversation(selConv);
     // Envio INSTANTÂNEO: limpa o campo já e manda em segundo plano; a mensagem
     // enviada aparece sozinha pelo realtime (sem esperar a resposta do servidor).
     const text = input.trim();
@@ -742,6 +776,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   function sendToolLink(t: Tool) {
     setShowTools(false);
     if (!selConv?.contacts) return;
+    const block = blockedByLock(selConv);
+    if (block) { alert(block); return; }
+    claimConversation(selConv);
     const text = `📦 ${t.name}${t.description ? `\n${t.description}` : ""}\n${t.url}`;
     const to = selConv.contacts.jid || selConv.contacts.phone;
     const numberId = selConv.number_id;
@@ -763,6 +800,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   async function onPickFile(file: File) {
     if (!selConv?.contacts) return;
+    const block = blockedByLock(selConv);
+    if (block) { alert(block); return; }
     setSending(true);
     try {
       const mime = file.type || "application/octet-stream";
@@ -780,6 +819,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       return;
     }
     if (!selConv?.contacts) return;
+    const block = blockedByLock(selConv);
+    if (block) { alert(block); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const rec = new MediaRecorder(stream);
@@ -1217,6 +1258,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               {thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
             </div>
 
+            {lockMsg && (
+              <div className="px-3 py-2 border-t border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-200 flex items-center gap-1.5 shrink-0">
+                <Users size={13} /> {lockMsg}
+              </div>
+            )}
             <div className="p-2 md:p-3 border-t border-white/10 flex items-center gap-1.5 md:gap-2 shrink-0 relative pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               {showEmoji && (
                 <div className="absolute bottom-full left-2 mb-2 w-72 max-w-[calc(100vw-1.5rem)] max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
@@ -1264,10 +1310,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               </button>
               {selConv && (
                 <>
-                  <button onClick={() => fileRef.current?.click()} disabled={sending} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar imagem, vídeo ou arquivo">
+                  <button onClick={() => fileRef.current?.click()} disabled={sending || !!lockMsg} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar imagem, vídeo ou arquivo">
                     <Paperclip size={18} />
                   </button>
-                  <button onClick={() => setShowTools(true)} disabled={sending} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar um aplicativo/ferramenta">
+                  <button onClick={() => setShowTools(true)} disabled={sending || !!lockMsg} className="hidden md:inline-flex p-2.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer disabled:opacity-50" title="Enviar um aplicativo/ferramenta">
                     <Package size={18} />
                   </button>
                 </>
@@ -1277,18 +1323,18 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder={recording ? "Gravando áudio..." : "Mensagem..."}
-                disabled={recording}
+                placeholder={lockMsg ? "Conversa assumida por outro atendente…" : recording ? "Gravando áudio..." : "Mensagem..."}
+                disabled={recording || !!lockMsg}
                 className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-sm outline-none disabled:opacity-60"
               />
 
               {/* Microfone quando não há texto; Enviar quando há texto */}
               {selConv && !input.trim() ? (
-                <button onClick={toggleRecord} disabled={sending} className={`p-2.5 rounded-full cursor-pointer disabled:opacity-50 shrink-0 ${recording ? "bg-red-600 text-white animate-pulse" : "bg-white/10 hover:bg-white/20 text-gray-200"}`}>
+                <button onClick={toggleRecord} disabled={sending || !!lockMsg} className={`p-2.5 rounded-full cursor-pointer disabled:opacity-50 shrink-0 ${recording ? "bg-red-600 text-white animate-pulse" : "bg-white/10 hover:bg-white/20 text-gray-200"}`}>
                   {recording ? <Square size={18} /> : <Mic size={18} />}
                 </button>
               ) : (
-                <button onClick={send} disabled={sending || !input.trim()} className="p-2.5 rounded-full md:rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0">
+                <button onClick={send} disabled={sending || !input.trim() || !!lockMsg} className="p-2.5 rounded-full md:rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0">
                   <Send size={18} />
                 </button>
               )}
@@ -1492,6 +1538,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               <label className="flex items-center gap-2 mt-3 text-[11px] text-gray-300 cursor-pointer">
                 <input type="checkbox" checked={asCompanyDefault} onChange={(e) => setAsCompanyDefault(e.target.checked)} className="accent-emerald-500" />
                 Definir o layout escolhido como <b>padrão da equipe</b> (novos funcionários já começam com ele).
+              </label>
+            )}
+            {isGestor && (
+              <label className="flex items-start gap-2 mt-3 pt-3 border-t border-white/10 text-[11px] text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={kanbanLock}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setKanbanLock(v);
+                    if (supabase && profile?.company_id) supabase.from("company_settings").update({ messages_kanban_lock: v }).eq("company_id", profile.company_id);
+                  }}
+                  className="accent-emerald-500 mt-0.5"
+                />
+                <span>Atendimento exclusivo: quando alguém responde uma conversa, ela fica <b>Em andamento</b> só para essa pessoa — outros atendentes não conseguem mais mandar mensagem ali (evita duplicidade). Vale pra qualquer layout, não só o Kanban.</span>
               </label>
             )}
           </div>
