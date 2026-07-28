@@ -12,6 +12,29 @@ function svc() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+const OPEN_TARGETS = [
+  { names: ["youtube"], target: "https://www.youtube.com/", label: "YouTube" },
+  { names: ["google maps", "maps"], target: "https://maps.google.com/", label: "Google Maps" },
+  { names: ["gmail"], target: "https://mail.google.com/", label: "Gmail" },
+  { names: ["chrome", "google chrome"], target: "chrome", label: "Google Chrome" },
+  { names: ["google"], target: "https://www.google.com/", label: "Google" },
+  { names: ["edge", "microsoft edge"], target: "edge", label: "Microsoft Edge" },
+  { names: ["firefox"], target: "firefox", label: "Firefox" },
+  { names: ["whatsapp"], target: "whatsapp", label: "WhatsApp" },
+  { names: ["explorador de arquivos", "explorer"], target: "explorer", label: "Explorador de Arquivos" },
+  { names: ["calculadora"], target: "calculadora", label: "Calculadora" },
+] as const;
+
+function requestedOpenTarget(text: string) {
+  const normalized = text.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (!/\b(?:abra|abre|abrir|inicie|inicia|execute|executa|entre|entrar)\b/.test(normalized)) return null;
+  return OPEN_TARGETS.find((item) =>
+    item.names.some((name) => normalized.includes(name.normalize("NFD").replace(/[\u0300-\u036f]/g, "")))
+  ) ?? null;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { access_code?: string; text?: string; history?: { role: "user" | "assistant"; text: string }[] };
@@ -22,7 +45,8 @@ export async function POST(request: Request) {
     const supabase = svc();
     if (!supabase) return NextResponse.json({ error: "Servidor sem configuração." }, { status: 500 });
 
-    const { data: agent } = await supabase.from("remote_agents").select("id,company_id,client_id,name").eq("access_code", code).maybeSingle();
+    const { data: agent } = await supabase.from("remote_agents")
+      .select("id,company_id,client_id,name,allow_control").eq("access_code", code).maybeSingle();
     if (!agent) return NextResponse.json({ error: "Código inválido." }, { status: 403 });
 
     // Chave de IA: agente Copilot (slot internal) da empresa, senão env.
@@ -66,6 +90,29 @@ export async function POST(request: Request) {
       /* segue sem resposta de IA */
     }
     if (!answer) answer = "Entendi. Vou registrar aqui e avisar o suporte para te ajudar.";
+
+    const openTarget = requestedOpenTarget(text);
+    if (openTarget && agent.allow_control !== false) {
+      const { data: job } = await supabase.from("agent_jobs").insert({
+        agent_id: agent.id,
+        company_id: agent.company_id,
+        kind: "input",
+        status: "pending",
+        params: { action: "open", text: openTarget.target },
+      }).select("id").single();
+      if (job) {
+        let completed = false;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await sleep(450);
+          const { data: current } = await supabase.from("agent_jobs").select("status").eq("id", job.id).maybeSingle();
+          if (current?.status === "done") { completed = true; break; }
+          if (current?.status === "error") break;
+        }
+        answer = completed
+          ? `${openTarget.label} foi aberto. Posso ajudar com mais alguma coisa?`
+          : `Estou abrindo ${openTarget.label}. Se demorar, aguarde o computador terminar de carregar.`;
+      }
+    }
 
     await supabase.from("support_requests").insert({
       company_id: agent.company_id,

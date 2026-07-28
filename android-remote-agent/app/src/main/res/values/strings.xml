@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Workspace Acesso Remoto</string>
+    <string name="notification_channel">Sessão de acesso remoto</string>
+    <string name="notification_title">Workspace está compartilhando a tela</string>
+    <string name="notification_text">Toque para abrir ou encerre o acesso agora.</string>
+    <string name="stop">Encerrar</string>
+    <string name="accessibility_description">Permite executar toques e gestos enviados por uma sessão remota autorizada e visível.</string>
+</resources>

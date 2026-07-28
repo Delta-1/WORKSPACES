@@ -19,6 +19,9 @@
 
 # production
 /build
+/android-remote-agent/.gradle/
+/android-remote-agent/local.properties
+/android-remote-agent/**/build/
 
 # misc
 .DS_Store

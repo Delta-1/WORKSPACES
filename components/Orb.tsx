@@ -49,7 +49,7 @@ export default function Orb({
   mode?: OrbMode;
   onPoint?: () => void;
   onControl?: (a: ControlAction) => Promise<string>;
-  getScreenshot?: () => { mediaType: string; base64: string } | null;
+  getScreenshot?: () => { mediaType: string; base64: string } | null | Promise<{ mediaType: string; base64: string } | null>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(title);
@@ -180,7 +180,7 @@ export default function Orb({
       `• «sistema: processos» — processos em execução.\n` +
       `• «sistema: servicos» — serviços do sistema.\n` +
       `• «comando: COMANDO» — executa um comando no agente. Diagnósticos rodam direto; a política de aprovação depende do modo atual; operações perigosas são bloqueadas.\n` +
-      `• «aplicativo: NOME» — abre um aplicativo permitido diretamente, sem usar mouse (chrome, edge, firefox, explorer, notepad, calculadora, gerenciador ou whatsapp).\n` +
+      `• «aplicativo: NOME» — abre diretamente, sem usar mouse, um aplicativo permitido ou destino web conhecido (chrome, edge, firefox, explorer, notepad, calculadora, gerenciador, whatsapp, YouTube, Google, Gmail ou Maps).\n` +
       `\nCONTROLE VISUAL SECUNDÁRIO:\n` +
       `• «digitar: TEXTO» — digita no campo em foco. Nunca use isto para digitar comandos em terminal; use «comando: ...».\n` +
       `• «tecla: NOME» — enter, tab, esc, copy, paste, save, selectall, home ou win.\n` +
@@ -192,8 +192,9 @@ export default function Orb({
       `3) Não abra CMD, PowerShell ou terminal para contornar a confirmação. Não desative antivírus, firewall, logs, recuperação, permissões ou controles de segurança. Não crie persistência, contas ocultas ou acesso adicional.\n` +
       `4) Se um comando pedir aprovação, aguarde o resultado. Se for recusado ou bloqueado, explique brevemente e proponha uma alternativa segura; não tente a mesma ação por mouse/teclado.\n` +
       `5) Para ações destrutivas, credenciais, pagamentos, mensagens externas ou escolhas ambíguas, peça confirmação/clareza antes de agir.\n` +
-      `6) No modo visual, use a grade do print para mirar no centro do elemento. Para alvo pequeno, primeiro mova, confira o novo print e só então clique. Não repita cliques às cegas.\n` +
-      `7) Continue até concluir ou até precisar de uma decisão humana. Ao concluir, informe o resultado em uma frase e termine com «fim».\n` +
+      `6) Para YouTube, Google, Gmail e Maps, prefira «aplicativo: NOME»: o agente abre o endereço oficial diretamente no navegador padrão.\n` +
+      `7) No modo visual, use a grade do print para mirar no centro do elemento. Para alvo pequeno, primeiro mova, confira o novo print e só então clique. Não repita cliques às cegas.\n` +
+      `8) Continue até concluir ou até precisar de uma decisão humana. Ao concluir, informe o resultado em uma frase e termine com «fim».\n` +
       `\nINSTALAÇÕES: prefira o gerenciador oficial do sistema por «comando: ...». Se precisar de instalador visual, use apenas o catálogo oficial abaixo e deixe mouse/cliques para as telas do instalador.\n` +
       hubBlock +
       memBlock
@@ -350,7 +351,7 @@ export default function Orb({
       for (let step = 0; step < maxSteps; step++) {
         const headers = await authHeaders();
         // Visão: manda o print ATUAL da tela para a IA "enxergar" e decidir.
-        const shot = onControl && getScreenshot ? getScreenshot() : null;
+        const shot = onControl && getScreenshot ? await getScreenshot() : null;
         const turns = convo.map((m) => ({ role: m.role, text: m.text })) as { role: string; text: string; image?: { mediaType: string; base64: string } }[];
         if (shot && turns.length) turns[turns.length - 1].image = shot;
         const res = await fetch("/api/ai/chat", {

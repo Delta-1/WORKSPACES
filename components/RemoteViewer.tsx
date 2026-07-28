@@ -42,7 +42,7 @@ import type { Profile, RemoteAgent } from "@/lib/types";
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 
 type Entry = { name: string; isDir: boolean; size: number; full?: string };
-type Quality = "alta" | "media" | "baixa" | "game";
+type Quality = "alta" | "media" | "baixa" | "leve" | "game";
 type Progress = { label: string; pct: number } | null;
 type Peer = { id: string; name: string; avatar: string | null; color: string };
 type RemoteCursor = Peer & { x: number; y: number; click: number };
@@ -58,6 +58,7 @@ function colorFromId(id: string) {
 
 export default function RemoteViewer({ agent, profile, onClose, initialGame, teachBot }: { agent: RemoteAgent; profile?: Profile | null; onClose: () => void; initialGame?: boolean; teachBot?: { id: string; folder_id: string | null; name: string } | null }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const androidImageRef = useRef<HTMLImageElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
   const orbToolRequestsRef = useRef(new Map<string, {
@@ -70,6 +71,17 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const [screens, setScreens] = useState<{ id: string; name: string }[]>([]);
   const [activeScreen, setActiveScreen] = useState<string>("");
   const [quality, setQuality] = useState<Quality>("alta");
+  const [androidFrameTick, setAndroidFrameTick] = useState(0);
+  const androidMode = /^android/i.test(agent.os || "") || agent.specs?.platform === "android";
+  const thumbBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
+
+  function mediaSource() {
+    const video = videoRef.current;
+    if (video?.videoWidth && video.videoHeight) return { element: video as HTMLVideoElement | HTMLImageElement, width: video.videoWidth, height: video.videoHeight };
+    const image = androidImageRef.current;
+    if (image?.naturalWidth && image.naturalHeight) return { element: image as HTMLVideoElement | HTMLImageElement, width: image.naturalWidth, height: image.naturalHeight };
+    return null;
+  }
 
   // No celular controlamos por trackpad (mexer o dedo move o mouse), não por toque direto.
   const [isTouch, setIsTouch] = useState(false);
@@ -119,7 +131,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       const pc = pcRef.current; if (!pc) return;
       let rtt: number | null = null;
       try { const st = await pc.getStats(); st.forEach((r) => { if (r.type === "candidate-pair" && (r.state === "succeeded" || r.nominated) && typeof r.currentRoundTripTime === "number") rtt = Math.round(r.currentRoundTripTime * 1000); }); } catch { /* ignore */ }
-      const best: Quality = rtt == null ? "alta" : rtt < 80 ? "alta" : rtt < 170 ? "media" : "baixa";
+      const best: Quality = rtt == null ? "alta" : rtt < 90 ? "alta" : rtt < 180 ? "media" : rtt < 320 ? "baixa" : "leve";
       if (best !== autoQRef.current) { autoQRef.current = best; setQuality(best); sendQuality(best); }
     };
     pick();
@@ -318,14 +330,15 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   // as tarjas do object-contain) — assim a bolinha verde cai exatamente onde o
   // mouse vai clicar (antes ela ficava um pouco deslocada do cursor).
   function ghostPx(nx: number, ny: number): { left: number; top: number } {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth || !v.videoHeight) {
-      const r = v?.getBoundingClientRect();
+    const source = mediaSource();
+    const element = source?.element;
+    if (!source || !element) {
+      const r = element?.getBoundingClientRect();
       return { left: nx * (r?.width ?? 0), top: ny * (r?.height ?? 0) };
     }
-    const cw = v.clientWidth, ch = v.clientHeight;
-    const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight) || 1;
-    const dispW = v.videoWidth * scale, dispH = v.videoHeight * scale;
+    const cw = element.clientWidth, ch = element.clientHeight;
+    const scale = Math.min(cw / source.width, ch / source.height) || 1;
+    const dispW = source.width * scale, dispH = source.height * scale;
     const offX = (cw - dispW) / 2, offY = (ch - dispH) / 2;
     return { left: offX + nx * dispW, top: offY + ny * dispH };
   }
@@ -340,11 +353,11 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const typeBufRef = useRef<string>("");
   function captureThumb(): string | undefined {
     try {
-      const v = videoRef.current; if (!v || !v.videoWidth) return undefined;
+      const source = mediaSource(); if (!source) return undefined;
       const c = document.createElement("canvas");
-      const w = 240; c.width = w; c.height = Math.round((v.videoHeight / v.videoWidth) * w);
+      const w = 240; c.width = w; c.height = Math.round((source.height / source.width) * w);
       const ctx = c.getContext("2d"); if (!ctx) return undefined;
-      ctx.drawImage(v, 0, 0, c.width, c.height);
+      ctx.drawImage(source.element, 0, 0, c.width, c.height);
       return c.toDataURL("image/jpeg", 0.5);
     } catch { return undefined; }
   }
@@ -454,8 +467,37 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     const ch = filesRef.current;
     if (ch && ch.readyState === "open") ch.send(JSON.stringify(obj));
   }
-  function listDir(d?: string) {
+
+  async function postAgentJob(kind: "input" | "screenshot" | "android_file", params: Record<string, unknown> = {}, wait = false) {
+    const headers = await (async () => {
+      if (!supabase) return {} as Record<string, string>;
+      const { data } = await supabase.auth.getSession();
+      return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
+    })();
+    const response = await fetch("/api/remote/android/job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ agentId: agent.id, kind, params, wait }),
+    });
+    const result = await response.json();
+    if (!response.ok || result.error) throw new Error(result.error || "O agente não respondeu.");
+    return result as { ok: boolean; url?: string | null; pending?: boolean };
+  }
+
+  async function listDir(d?: string) {
     setBusy(true);
+    if (androidMode) {
+      try {
+        const result = await postAgentJob("android_file", { action: "list", path: d ?? "" }, true);
+        if (!result.url) throw new Error("A listagem ainda não ficou pronta.");
+        const response = await fetch(`${result.url}?v=${Date.now()}`, { cache: "no-store" });
+        const payload = await response.json() as { dir?: string; parent?: string; sep?: string; entries?: Entry[] };
+        setDir(payload.dir || ""); setParent(payload.parent || ""); setSep(payload.sep || "/"); setEntries(payload.entries || []);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Falha ao listar a pasta do celular.");
+      } finally { setBusy(false); }
+      return;
+    }
     fsSend({ op: "list", id: "list", dir: d ?? "" });
   }
 
@@ -593,6 +635,10 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
 
   useEffect(() => {
     if (!supabase) return;
+    if (androidMode) {
+      const interval = setInterval(() => setAndroidFrameTick(Date.now()), 2100);
+      return () => clearInterval(interval);
+    }
     const orbToolRequests = orbToolRequestsRef.current;
     const channel = supabase.channel(`remote-${agent.id}`, { config: { broadcast: { self: false } } });
     channelRef.current = channel;
@@ -681,7 +727,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       supabase!.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id]);
+  }, [agent.id, androidMode]);
 
   function openFiles() {
     setShowFiles(true);
@@ -690,16 +736,33 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
 
   function sendInput(ev: object) {
     const ch = controlRef.current;
-    if (ch && ch.readyState === "open") ch.send(JSON.stringify(ev));
+    const event = ev as { kind?: string; x?: number; y?: number; dx?: number; dy?: number; text?: string; name?: string; key?: string; down?: boolean; url?: string };
+    if (androidMode) {
+      const x = event.x ?? localCursorRef.current.x;
+      const y = event.y ?? localCursorRef.current.y;
+      let params: Record<string, unknown> | null = null;
+      if (event.kind === "down" || event.kind === "click") params = { action: "clickat", x, y };
+      else if (event.kind === "type" && event.text) params = { action: "type", text: event.text };
+      else if (event.kind === "combo" && event.name) params = { action: "key", name: event.name };
+      else if (event.kind === "key" && event.down !== false) params = event.text
+        ? { action: "type", text: event.text }
+        : { action: "key", name: event.key || event.name || "" };
+      else if (event.kind === "open-url" && event.url) params = { action: "open", text: event.url };
+      else if (event.kind === "scroll") params = {
+        action: "swipe", x: 0.5, y: event.dy && event.dy > 0 ? 0.72 : 0.28,
+        x2: 0.5, y2: event.dy && event.dy > 0 ? 0.28 : 0.72,
+      };
+      if (params) void postAgentJob("input", params).catch((error) => setStatus(error instanceof Error ? error.message : "Falha no controle Android."));
+    } else if (ch && ch.readyState === "open") ch.send(JSON.stringify(ev));
     if (teaching) recordStep(ev as { kind?: string; x?: number; y?: number; text?: string; name?: string });
-    const pointer = ev as { kind?: string; x?: number; y?: number; dx?: number; dy?: number };
+    const pointer = event;
     const k = pointer.kind;
     if ((k === "move" || k === "down" || k === "up") && pointer.x != null && pointer.y != null) {
       broadcastCursor(pointer.x, pointer.y, k === "down");
     } else if (k === "move-rel" && (pointer.dx || pointer.dy)) {
-      const video = videoRef.current;
-      const width = video?.videoWidth || video?.clientWidth || 1280;
-      const height = video?.videoHeight || video?.clientHeight || 720;
+      const source = mediaSource();
+      const width = source?.width || source?.element.clientWidth || 1280;
+      const height = source?.height || source?.element.clientHeight || 720;
       broadcastCursor(
         localCursorRef.current.x + ((pointer.dx || 0) * 2.2) / width,
         localCursorRef.current.y + ((pointer.dy || 0) * 2.2) / height,
@@ -710,6 +773,14 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     if (k && k !== "move") broadcastControl(); // avisa presença quando clica/digita
   }
   function requestOrbTool(request: { action: string; mode?: OrbMode; name?: string; command?: string; target?: string }): Promise<OrbToolResult> {
+    if (androidMode) {
+      if (request.action === "launch_app" && request.target) {
+        return postAgentJob("input", { action: "open", text: request.target }, true)
+          .then(() => ({ ok: true, output: `Abertura enviada ao agente Android: ${request.target}.` }))
+          .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Falha ao abrir no Android." }));
+      }
+      return Promise.resolve({ ok: false, blocked: true, error: "Este diagnóstico ainda não está disponível no agente Android." });
+    }
     const ch = controlRef.current;
     if (!ch || ch.readyState !== "open") {
       return Promise.resolve({ ok: false, error: "Canal de controle indisponível." });
@@ -883,17 +954,34 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     return "";
   }
   // Captura o quadro atual da tela remota (o que a IA "vê") como JPEG base64.
-  function captureScreen(): { mediaType: string; base64: string } | null {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth) return null;
+  async function captureScreen(): Promise<{ mediaType: string; base64: string } | null> {
+    try {
+      const result = await postAgentJob("screenshot", {}, true);
+      if (result.url) {
+        const response = await fetch(`${result.url}?v=${Date.now()}`, { cache: "no-store" });
+        if (response.ok) {
+          const blob = await response.blob();
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ""));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+          const comma = dataUrl.indexOf(",");
+          if (comma > 0) return { mediaType: blob.type || "image/jpeg", base64: dataUrl.slice(comma + 1) };
+        }
+      }
+    } catch { /* usa o quadro local como fallback */ }
+    const source = mediaSource();
+    if (!source) return null;
     // Print maior e mais nítido → a IA enxerga ícones/rótulos e mira melhor.
-    const scale = Math.min(1, 1600 / v.videoWidth);
+    const scale = Math.min(1, 1600 / source.width);
     const c = document.createElement("canvas");
-    c.width = Math.round(v.videoWidth * scale);
-    c.height = Math.round(v.videoHeight * scale);
+    c.width = Math.round(source.width * scale);
+    c.height = Math.round(source.height * scale);
     const ctx = c.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(v, 0, 0, c.width, c.height);
+    ctx.drawImage(source.element, 0, 0, c.width, c.height);
     // GRADE DE COORDENADAS (só nesta cópia que a IA vê — NÃO aparece na tela do
     // cliente). Linhas a cada 10% com o número da porcentagem ajudam o modelo de
     // visão a mirar o ponto certo (0–100 na horizontal e vertical).
@@ -935,12 +1023,13 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   }
 
   function norm(e: React.MouseEvent) {
-    const v = videoRef.current!;
-    const r = v.getBoundingClientRect();
+    const source = mediaSource();
+    if (!source) return { x: 0.5, y: 0.5 };
+    const r = source.element.getBoundingClientRect();
     // Com object-contain o vídeo pode ter "tarjas" (letterbox) dentro do elemento.
     // Mapeamos a posição do mouse para a ÁREA REAL do vídeo, senão o clique fica
     // deslocado (o cursor não cai onde a pessoa aponta).
-    const vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
+    const vw = source.width || r.width, vh = source.height || r.height;
     const scale = Math.min(r.width / vw, r.height / vh) || 1;
     const dispW = vw * scale, dispH = vh * scale;
     const offX = (r.width - dispW) / 2, offY = (r.height - dispH) / 2;
@@ -1055,6 +1144,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
               <option value="alta">Alta (nítida)</option>
               <option value="media">Média</option>
               <option value="baixa">Baixa (menos lag)</option>
+              <option value="leve">Leve (conexão ruim)</option>
             </select>
           </div>
           <button
@@ -1139,20 +1229,39 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
             sendInput({ kind: "key", key: e.key, down: false });
           }}
         >
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "w-full h-full object-contain"} ${isTouch ? "" : "cursor-none"}`}
-            onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
-            onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
-            onMouseUp={(e) => !isTouch && sendInput({ kind: "up", button: e.button, ...norm(e) })}
-            onContextMenu={(e) => e.preventDefault()}
-            onWheel={(e) => {
-              const n = Math.max(1, Math.round(scrollSens));
-              for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
-            }}
-          />
+          {androidMode ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              ref={androidImageRef}
+              src={`${thumbBase}/${agent.id}.jpg?v=${androidFrameTick}`}
+              alt={`Tela remota de ${agent.name}`}
+              draggable={false}
+              onLoad={() => setStatus("")}
+              className={`${fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "w-full h-full object-contain"} ${isTouch ? "" : "cursor-none"}`}
+              onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
+              onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
+              onContextMenu={(e) => e.preventDefault()}
+              onWheel={(e) => {
+                const n = Math.max(1, Math.round(scrollSens));
+                for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
+              }}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className={`${gameMode || fs ? "fixed inset-0 w-screen h-screen object-contain bg-black z-[96]" : "w-full h-full object-contain"} ${isTouch ? "" : "cursor-none"}`}
+              onMouseMove={(e) => !isTouch && sendInput({ kind: "move", ...norm(e) })}
+              onMouseDown={(e) => !isTouch && sendInput({ kind: "down", button: e.button, ...norm(e) })}
+              onMouseUp={(e) => !isTouch && sendInput({ kind: "up", button: e.button, ...norm(e) })}
+              onContextMenu={(e) => e.preventDefault()}
+              onWheel={(e) => {
+                const n = Math.max(1, Math.round(scrollSens));
+                for (let i = 0; i < n; i++) sendInput({ kind: "scroll", dy: e.deltaY });
+              }}
+            />
+          )}
 
           {/* Presença: borda na cor de quem está mexendo + aviso de quem é. */}
           {controller && (
@@ -1513,7 +1622,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
           <Minimize2 size={14} /> Sair da tela cheia
         </button>
       )}
-      {gameMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} isTouch={isTouch} onExit={() => setGameMode(false)} />}
+      {gameMode && !androidMode && <GameOverlay sendInput={sendInput} pcRef={pcRef} videoRef={videoRef} isTouch={isTouch} onExit={() => setGameMode(false)} />}
     </div>
   );
 }

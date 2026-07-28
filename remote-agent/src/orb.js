@@ -53,11 +53,12 @@ function speak(text) {
     u.lang = "pt-BR";
     if (ptVoice) u.voice = ptVoice;
     u.rate = 1; u.pitch = 1;
-    // Enquanto fala, PAUSA o microfone (senão ele se ouve e vira loop).
+    // A captura é de um único comando. Enquanto fala, o microfone fica desligado
+    // e só volta quando a pessoa clicar novamente.
     speaking = true;
     if (rec) { try { rec.stop(); } catch { /* ignore */ } }
-    const resume = () => { speaking = false; if (listening) { try { rec && rec.start(); } catch { /* ignore */ } } };
-    u.onend = resume; u.onerror = resume;
+    const finish = () => { speaking = false; };
+    u.onend = finish; u.onerror = finish;
     synth.speak(u);
   } catch { /* sem voz */ }
 }
@@ -85,39 +86,44 @@ async function ask(text) {
 }
 
 // --- Voz ---
-// No PC o Orb fica MÃOS-LIVRES: clica no microfone e ele fica ouvindo direto;
-// clica de novo e para. Ele NÃO para a cada frase — segue ouvindo o próximo
-// comando — e ignora o mesmo comando repetido (fim do loop de "abre o YouTube").
+// Um clique captura exatamente um comando. Ao reconhecer uma frase final, para
+// de ouvir e só ativa novamente quando a pessoa clicar na bolinha.
 function startListening() {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Ctor) { toggleType(true); say("Assistente", "Sem microfone aqui — pode escrever."); return; }
   rec = new Ctor();
   rec.lang = "pt-BR";
-  rec.continuous = true;   // sessão contínua — não corta a cada frase
-  rec.interimResults = true;
+  rec.continuous = false;
+  rec.interimResults = false;
   rec.onresult = (e) => {
     const from = typeof e.resultIndex === "number" ? e.resultIndex : e.results.length - 1;
     for (let i = from; i < e.results.length; i++) {
       const r = e.results[i];
       const t = (r[0] && r[0].transcript ? r[0].transcript : "").trim();
-      if (!r.isFinal) { if (t) say("Você", t, true); continue; }
+      if (!r.isFinal) continue;
       if (!t || speaking) continue; // ignora o que capturou enquanto o Orb falava
       const norm = t.toLowerCase().replace(/[^\wà-ú\s]/gi, "").replace(/\s+/g, " ").trim();
       const now = Date.now();
       if (norm && norm === lastCmd.text && now - lastCmd.at < 6000) continue; // dedup
       lastCmd.text = norm; lastCmd.at = now;
-      ask(t); // segue ouvindo (não para)
+      stopListening();
+      ask(t);
+      break;
     }
   };
   rec.onerror = (ev) => {
     const err = ev && ev.error;
     if (err === "not-allowed" || err === "service-not-allowed") { stopListening(); say("Assistente", "Permita o microfone para eu ouvir."); }
-    // no-speech/network/aborted: deixa o onend religar.
+    // no-speech/network/aborted: a pessoa pode clicar novamente.
   };
-  rec.onend = () => { if (listening && !speaking) { try { rec.start(); } catch { /* ignore */ } } };
+  rec.onend = () => {
+    listening = false;
+    ball.classList.remove("listening");
+    rec = null;
+  };
   listening = true;
   ball.classList.add("listening");
-  say("Assistente", "Estou ouvindo — pode falar.", true);
+  say("Assistente", "Pode falar.", true);
   try { rec.start(); } catch { /* ignore */ }
 }
 function stopListening() {
