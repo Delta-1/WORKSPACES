@@ -703,9 +703,17 @@ async function startStreaming() {
   tuneVideoSender(currentQuality === "game");
 
   const control = pc.createDataChannel("control");
-  control.onmessage = (ev) => {
+  control.onmessage = async (ev) => {
     try {
-      ipcRenderer.send("input", JSON.parse(ev.data));
+      const message = JSON.parse(ev.data);
+      if (message.kind === "tool-request" && message.id) {
+        const result = await ipcRenderer.invoke("orb-tool", message.request || {});
+        if (control.readyState === "open") {
+          control.send(JSON.stringify({ kind: "tool-result", id: message.id, result }));
+        }
+      } else {
+        ipcRenderer.send("input", message);
+      }
     } catch {
       /* ignore */
     }
