@@ -7,6 +7,7 @@ import type { Profile } from "@/lib/types";
 import { applyMask } from "@/lib/mask";
 import { nextDueDate, itemsTotal, type BillingItem } from "@/lib/billing";
 import BillingItemsEditor from "@/components/BillingItemsEditor";
+import BillingExtraFields from "@/components/BillingExtraFields";
 
 type Contact = { id: string; phone: string; name: string | null; avatar_url: string | null; jid: string | null; company_id: string | null };
 
@@ -139,6 +140,10 @@ function QuickChargeModal({ companyId, contact, onClose }: { companyId: string |
   const [done, setDone] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [itens, setItens] = useState<BillingItem[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [followupMin, setFollowupMin] = useState("0");
+  const [followupAudio, setFollowupAudio] = useState(false);
+  const [multaStr, setMultaStr] = useState("");
   const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
   const valorFinal = hasItens ? itemsTotal(itens) : Number(valor) || 0;
   async function save() {
@@ -149,11 +154,12 @@ function QuickChargeModal({ companyId, contact, onClose }: { companyId: string |
       const { data: charge } = await supabase.from("billing_charges").insert({
         company_id: companyId, name: `Cobrança — ${contact.name || fmtPhone(contact.phone)}`, tipo, valor: valorFinal,
         recorrencia: "avulsa", dia_vencimento: Number(dia) || 5, antecedencia_dias: 2, status: "ativa", itens: cleanItens, motivo: motivo || null,
+        image_url: imageUrl || null, followup_minutes: Number(followupMin) || 0, followup_as_audio: followupAudio, multa_atraso: Number(multaStr) || 0,
       }).select("id").maybeSingle();
       if (charge?.id) {
         await supabase.from("billing_targets").insert({
           company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: contact.name || null,
-          phone: (contact.phone || "").replace(/\D/g, "") || null, tipo, valor: valorFinal, due_date: nextDueDate(Number(dia) || 5), status: "pendente", itens: cleanItens, motivo: motivo || null,
+          phone: (contact.phone || "").replace(/\D/g, "") || null, tipo, valor: valorFinal, due_date: nextDueDate(Number(dia) || 5), status: "pendente", itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null,
         });
       }
       setDone(true); setTimeout(onClose, 1200);
@@ -171,6 +177,7 @@ function QuickChargeModal({ companyId, contact, onClose }: { companyId: string |
               <label className="block"><span className="text-[11px] text-gray-400 mb-1 block">Forma</span><select value={tipo} onChange={(e) => setTipo(e.target.value)} className="w-full bg-[#09090b] border border-white/10 rounded-lg px-3 py-2 text-sm"><option value="pix">Pix</option><option value="api">Mercado Pago</option></select></label>
             </div>
             <BillingItemsEditor itens={itens} setItens={setItens} motivo={motivo} setMotivo={setMotivo} />
+            <BillingExtraFields companyId={companyId} imageUrl={imageUrl} setImageUrl={setImageUrl} followupMin={followupMin} setFollowupMin={setFollowupMin} followupAudio={followupAudio} setFollowupAudio={setFollowupAudio} multa={multaStr} setMulta={setMultaStr} />
             <p className="text-[11px] text-gray-500">O Cobrador envia a mensagem automaticamente no vencimento (e o lembrete antes). Configure a chave Pix no app Cobrador.</p>
             <button onClick={save} disabled={busy || !valorFinal} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg">{busy ? "Criando…" : "Criar cobrança"}</button>
           </div>
