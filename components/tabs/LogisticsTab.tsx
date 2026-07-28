@@ -15,7 +15,9 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import { LOGI_DOCS, docDef, renderLogisticsDoc, type LogiDocType } from "@/lib/logistics-docs";
+import { LOGI_DOCS, docLabel, renderLogisticsDoc, type LogiDocType, type OperacaoData, type Mercadoria, type Veiculo } from "@/lib/logistics-docs";
+
+type CfgState = { onboarded: boolean; server: string; razao: string; cnpj: string; nome: string; logo: string | null; endereco: string; phone: string; email: string; ie: string; bank: string; signatory: string; signatoryDoc: string };
 
 // ---- Tipos locais (refletem as tabelas logistics_*) ----
 type Carga = {
@@ -24,6 +26,7 @@ type Carga = {
   moeda: string | null; valor_declarado: number | null; cfop: string | null; peso: number | null;
   volumes: number | null; stage: string; vehicle_id: string | null; driver_id: string | null;
   transbordo_local: string | null; obs: string | null; created_at: string;
+  dados?: OperacaoData | null; folder_id?: string | null;
 };
 type Vehicle = { id: string; tipo: string; placa: string; modelo: string | null; ano: string | null; driver_id: string | null; obs: string | null };
 type VExpense = { id: string; vehicle_id: string | null; descricao: string; categoria: string | null; valor: number; data: string | null };
@@ -66,7 +69,7 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
   const flash = useCallback((t: string, d?: string, kind = "success") => { setToast({ t, d, kind }); setTimeout(() => setToast(null), 4000); }, []);
 
   // Config da empresa (dados fiscais + servidor + onboarding).
-  const [cfg, setCfg] = useState<{ onboarded: boolean; server: string; razao: string; cnpj: string; nome: string; logo: string | null }>({ onboarded: true, server: "", razao: "", cnpj: "", nome: "", logo: null });
+  const [cfg, setCfg] = useState<CfgState>({ onboarded: true, server: "", razao: "", cnpj: "", nome: "", logo: null, endereco: "", phone: "", email: "", ie: "", bank: "", signatory: "", signatoryDoc: "" });
   const [cfgLoaded, setCfgLoaded] = useState(false);
 
   // Dados dos módulos
@@ -104,7 +107,7 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
   useEffect(() => {
     if (!supabase || !cid) return;
     supabase.from("company_settings")
-      .select("logistics_onboarded,logistics_server_path,logistics_razao_social,logistics_cnpj,name,logo_url")
+      .select("logistics_onboarded,logistics_server_path,logistics_razao_social,logistics_cnpj,name,logo_url,address,phone,email,logistics_ie,logistics_bank_info,logistics_signatory,logistics_signatory_doc")
       .eq("company_id", cid).maybeSingle()
       .then(({ data }) => {
         setCfg({
@@ -114,6 +117,13 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
           cnpj: data?.logistics_cnpj || "",
           nome: data?.name || "",
           logo: data?.logo_url || null,
+          endereco: (data as { address?: string } | null)?.address || "",
+          phone: (data as { phone?: string } | null)?.phone || "",
+          email: (data as { email?: string } | null)?.email || "",
+          ie: (data as { logistics_ie?: string } | null)?.logistics_ie || "",
+          bank: (data as { logistics_bank_info?: string } | null)?.logistics_bank_info || "",
+          signatory: (data as { logistics_signatory?: string } | null)?.logistics_signatory || "",
+          signatoryDoc: (data as { logistics_signatory_doc?: string } | null)?.logistics_signatory_doc || "",
         });
         setCfgLoaded(true);
       });
@@ -763,89 +773,218 @@ function DriverModal({ cid, onClose, onSaved }: { cid: string | null; onClose: (
   );
 }
 
-// =============================== DOC GENERATOR ===============================
+// =============================== OPERAÇÃO & DOCUMENTOS ===============================
+// Fluxo: escolhe a OPERAÇÃO (carga), preenche UMA vez os dados compartilhados
+// (importador, mercadorias em tabela, veículos/placas em tabela, datas do
+// romaneio) e GERA todos os documentos já preenchidos, salvando automático numa
+// pasta da operação. O cabeçalho usa a logo e os dados da empresa.
 function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
-  cid: string | null; cargas: Carga[]; docs: LogiDoc[]; company: { razao: string; cnpj: string; nome: string; logo: string | null; server: string };
+  cid: string | null; cargas: Carga[]; docs: LogiDoc[]; company: CfgState;
   reload: () => void; flash: (t: string, d?: string, k?: string) => void;
 }) {
-  const [type, setType] = useState<LogiDocType>("proforma");
-  const [cargaId, setCargaId] = useState("");
-  const [vals, setVals] = useState<Record<string, string>>({});
-  const def = docDef(type);
+  const [cargaId, setCargaId] = useState(cargas[0]?.id || "");
+  const carga = cargas.find((c) => c.id === cargaId) || null;
+  const [d, setD] = useState<OperacaoData>({});
+  const [dirty, setDirty] = useState(false);
+  const [savingOp, setSavingOp] = useState(false);
+  const [busyType, setBusyType] = useState<LogiDocType | null>(null);
 
-  // Preenche automaticamente a partir da carga selecionada.
-  function prefill(id: string) {
-    setCargaId(id);
-    const c = cargas.find((x) => x.id === id);
-    if (!c) return;
-    setVals((v) => ({
-      ...v, numero: v.numero || `${def.label.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-5)}`,
-      importador: c.cliente_nome || v.importador || "", produto: c.produto || v.produto || "",
-      pais_destino: c.pais_destino || v.pais_destino || "", moeda: c.moeda || v.moeda || "USD",
-      incoterm: c.incoterm || v.incoterm || "", cfop: c.cfop || v.cfop || "", valor: String(c.valor_declarado || v.valor || ""),
-      peso: String(c.peso || v.peso || ""), volumes: String(c.volumes || v.volumes || ""), remetente: company.razao || company.nome,
-    }));
+  // Ao trocar de operação, carrega os dados salvos dela.
+  useEffect(() => { setD((carga?.dados as OperacaoData) || {}); setDirty(false); }, [cargaId, carga?.dados]);
+
+  const set = (k: keyof OperacaoData, v: string) => { setD((s) => ({ ...s, [k]: v }) as OperacaoData); setDirty(true); };
+  const setMerc = (arr: Mercadoria[]) => { setD((s) => ({ ...s, mercadorias: arr })); setDirty(true); };
+  const setVeic = (arr: Veiculo[]) => { setD((s) => ({ ...s, veiculos: arr })); setDirty(true); };
+  const merc = d.mercadorias || []; const veic = d.veiculos || [];
+
+  async function saveOp() {
+    if (!supabase || !cid || !carga) return;
+    setSavingOp(true);
+    await supabase.from("logistics_cargas").update({ dados: d }).eq("id", carga.id);
+    setSavingOp(false); setDirty(false); reload(); flash("Operação salva");
   }
 
-  function generate() {
-    const html = renderLogisticsDoc(type, vals, { razao_social: company.razao, cnpj: company.cnpj, nome: company.nome, logo_url: company.logo });
-    const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); }
-    else flash("Pop-up bloqueado", "Permita pop-ups para abrir/imprimir o documento.", "error");
-    // Registra a emissão.
-    if (supabase && cid) supabase.from("logistics_documents").insert({ company_id: cid, carga_id: cargaId || null, tipo: type, numero: vals.numero || null, dados: vals, server_path: company.server ? `${company.server}${def.label}-${vals.numero || ""}.pdf` : null }).then(() => reload());
-    flash("Documento gerado", "Confira os dados e salve como PDF (Ctrl/Cmd+P).");
+  // Cria/acha a pasta da operação no grafo (Logística › <operação>).
+  async function ensureFolder(): Promise<string | null> {
+    if (!supabase || !cid || !carga) return null;
+    if (carga.folder_id) return carga.folder_id;
+    const { data: root } = await supabase.from("files").select("id").eq("company_id", cid).eq("type", "folder").is("parent_id", null).ilike("name", "Logística").maybeSingle();
+    let rootId = root?.id as string | undefined;
+    if (!rootId) { const { data } = await supabase.from("files").insert({ name: "Logística", type: "folder", parent_id: null, company_id: cid }).select("id").single(); rootId = data?.id; }
+    if (!rootId) return null;
+    const opName = carga.codigo || `Operacao-${carga.id.slice(0, 6)}`;
+    const { data: existing } = await supabase.from("files").select("id").eq("company_id", cid).eq("parent_id", rootId).eq("type", "folder").eq("name", opName).maybeSingle();
+    let folderId = existing?.id as string | undefined;
+    if (!folderId) { const { data } = await supabase.from("files").insert({ name: opName, type: "folder", parent_id: rootId, company_id: cid }).select("id").single(); folderId = data?.id; }
+    if (folderId) await supabase.from("logistics_cargas").update({ folder_id: folderId }).eq("id", carga.id);
+    return folderId || null;
   }
+
+  async function generate(type: LogiDocType) {
+    if (!carga) { flash("Escolha a operação primeiro."); return; }
+    setBusyType(type);
+    try {
+      const def = LOGI_DOCS.find((x) => x.type === type)!;
+      const dd: OperacaoData = { ...d };
+      if (!dd[def.numKey]) (dd as Record<string, string>)[def.numKey] = `${def.label.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-5)}`;
+      const comp = { razao_social: company.razao, cnpj: company.cnpj, ie: company.ie, nome: company.nome, endereco: company.endereco, phone: company.phone, email: company.email, logo_url: company.logo, bank_info: company.bank, signatory: company.signatory, signatory_doc: company.signatoryDoc };
+      const cargaObj = { codigo: carga.codigo, cliente_nome: carga.cliente_nome, produto: carga.produto, origem: carga.origem, destino: carga.destino, pais_destino: carga.pais_destino, incoterm: carga.incoterm, moeda: carga.moeda, valor_declarado: carga.valor_declarado, peso: carga.peso, volumes: carga.volumes, cfop: carga.cfop };
+      const html = renderLogisticsDoc(type, cargaObj, dd, comp);
+      const w = window.open("", "_blank");
+      if (w) { w.document.write(html); w.document.close(); } else flash("Pop-up bloqueado", "Permita pop-ups para abrir/imprimir.", "error");
+      setD(dd);
+      if (supabase && cid) {
+        await supabase.from("logistics_cargas").update({ dados: dd }).eq("id", carga.id);
+        const fileName = `${def.label}-${dd[def.numKey] || ""}.html`.replace(/\s+/g, "_");
+        let pdfUrl: string | null = null;
+        try {
+          const folderId = await ensureFolder();
+          const path = `logistica/${carga.id}/${Date.now()}-${fileName}`;
+          const { error } = await supabase.storage.from("company-files").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
+          if (!error) { const { data } = supabase.storage.from("company-files").getPublicUrl(path); pdfUrl = data?.publicUrl ?? null; if (folderId) await supabase.from("files").insert({ name: fileName, type: "file", parent_id: folderId, company_id: cid, storage_path: path, mime: "text/html" }); }
+        } catch { /* segue sem salvar arquivo */ }
+        await supabase.from("logistics_documents").insert({ company_id: cid, carga_id: carga.id, tipo: type, numero: (dd[def.numKey] as string) || null, dados: dd, pdf_url: pdfUrl, server_path: company.server ? `${company.server}${fileName}` : null });
+        reload();
+      }
+      setDirty(false);
+      flash("Documento gerado", "Salvo na pasta da operação. Salve em PDF (Ctrl/Cmd+P).");
+    } finally { setBusyType(null); }
+  }
+
+  const opDocs = docs.filter((x) => x.carga_id === cargaId);
 
   return (
     <div className="space-y-4">
-      <Header title="Gerador de Documentos" sub="DUE, MIC/DTA, CRT, Proforma e Invoice — pré-visualize, salve em PDF e registre no servidor local." icon={FileText} />
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            {LOGI_DOCS.map((d) => (
-              <button key={d.type} onClick={() => { setType(d.type); setVals({}); }} className={`text-left rounded-xl border p-3 transition ${type === d.type ? "border-amber-500 bg-amber-950/20" : "border-white/10 hover:border-white/25"}`}>
-                <div className="text-sm font-semibold">{d.label}</div>
-                <div className="text-[10px] text-zinc-500 leading-tight mt-0.5">{d.full}</div>
-              </button>
-            ))}
-          </div>
-          <Field label="Vincular a uma carga (preenche automático)">
-            <select className="in" value={cargaId} onChange={(e) => prefill(e.target.value)}><option value="">— nenhuma —</option>{cargas.map((c) => <option key={c.id} value={c.id}>{c.codigo} · {c.cliente_nome}</option>)}</select>
-          </Field>
-        </div>
+      <Header title="Operação & Documentos" sub="Preencha a operação uma vez (tabelas de mercadorias e placas) e gere todos os documentos — romaneio, invoice, packing list, fatura de serviço, MIC/DTA, CRT e DUE — salvos na pasta da operação." icon={FileText}
+        action={<div className="flex items-center gap-2">
+          <select className="in" style={{ width: "auto" }} value={cargaId} onChange={(e) => setCargaId(e.target.value)}><option value="">— escolher operação —</option>{cargas.map((c) => <option key={c.id} value={c.id}>{c.codigo} · {c.cliente_nome}</option>)}</select>
+          <button onClick={saveOp} disabled={savingOp || !dirty || !carga} className="btn-primary disabled:opacity-40">{savingOp ? "Salvando…" : dirty ? "Salvar operação" : "Salvo"}</button>
+        </div>} />
 
-        <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-4">
-          <div className="text-sm font-semibold mb-1">{def.label} — {def.full}</div>
-          <p className="text-[11px] text-zinc-500 mb-3">{def.desc}</p>
-          <div className="grid grid-cols-2 gap-2 max-h-[46vh] overflow-y-auto pr-1">
-            {def.fields.map((fl) => (
-              <label key={fl.key} className={fl.type === "textarea" ? "col-span-2 block" : "block"}>
-                <span className="text-[11px] text-zinc-400 mb-1 block">{fl.label}</span>
-                {fl.type === "textarea"
-                  ? <textarea className="in" rows={2} value={vals[fl.key] || ""} onChange={(e) => setVals((v) => ({ ...v, [fl.key]: e.target.value }))} />
-                  : <input className="in" type={fl.type === "number" ? "number" : fl.type === "date" ? "date" : "text"} value={vals[fl.key] || ""} onChange={(e) => setVals((v) => ({ ...v, [fl.key]: e.target.value }))} />}
-              </label>
-            ))}
-          </div>
-          <button onClick={generate} className="w-full mt-4 btn-primary"><FileText size={14} /> Gerar & salvar PDF</button>
-          {company.server && <p className="text-[10px] text-zinc-600 mt-2 font-mono">Destino: {company.server}</p>}
-        </div>
-      </div>
+      {!carga ? (
+        <Empty text="Escolha uma operação acima (ou crie uma carga no Kanban) para preencher e gerar os documentos." />
+      ) : (
+        <div className="grid lg:grid-cols-2 gap-4">
+          {/* Coluna 1: dados compartilhados da operação */}
+          <div className="space-y-3 max-h-[68vh] overflow-y-auto pr-1">
+            <Panel title="Importador / Destinatário">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Importador"><input className="in" value={d.importador || ""} onChange={(e) => set("importador", e.target.value)} /></Field>
+                <Field label="Doc (RUC/CNPJ)"><input className="in" value={d.importador_doc || ""} onChange={(e) => set("importador_doc", e.target.value)} /></Field>
+              </div>
+              <Field label="Endereço"><input className="in" value={d.importador_end || ""} onChange={(e) => set("importador_end", e.target.value)} /></Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="País destino"><input className="in" value={d.pais_destino || ""} onChange={(e) => set("pais_destino", e.target.value)} placeholder={carga.pais_destino || ""} /></Field>
+                <Field label="Incoterm / Condições"><input className="in" value={d.condicoes || ""} onChange={(e) => set("condicoes", e.target.value)} placeholder="Ex.: CPT · 30d" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Moeda"><input className="in" value={d.moeda || ""} onChange={(e) => set("moeda", e.target.value)} placeholder={carga.moeda || "USD"} /></Field>
+                <Field label="Local de entrega"><input className="in" value={d.local_entrega || ""} onChange={(e) => set("local_entrega", e.target.value)} placeholder={carga.destino || ""} /></Field>
+              </div>
+            </Panel>
 
-      {docs.length > 0 && (
-        <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-4">
-          <div className="text-sm font-semibold mb-2">Documentos emitidos</div>
-          <div className="space-y-1">
-            {docs.slice(0, 15).map((d) => (
-              <div key={d.id} className="flex items-center justify-between text-xs border-b border-white/5 py-1.5">
-                <span className="text-zinc-400"><span className="text-zinc-200 font-medium">{docDef(d.tipo as LogiDocType).label}</span> · <span className="font-mono">{d.numero || "—"}</span></span>
-                <span className="text-zinc-600">{new Date(d.created_at).toLocaleDateString("pt-BR")}</span>
+            <Panel title="Romaneio (chegada / saída)">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Cliente"><input className="in" value={d.cliente || ""} onChange={(e) => set("cliente", e.target.value)} placeholder={carga.cliente_nome || ""} /></Field>
+                <Field label="Cidade destino"><input className="in" value={d.cidade_destino || ""} onChange={(e) => set("cidade_destino", e.target.value)} placeholder={carga.destino || ""} /></Field>
+                <Field label="Transportadora"><input className="in" value={d.transportadora || ""} onChange={(e) => set("transportadora", e.target.value)} /></Field>
+                <Field label="Motorista"><input className="in" value={d.motorista || ""} onChange={(e) => set("motorista", e.target.value)} /></Field>
+                <Field label="Doc motorista"><input className="in" value={d.motorista_doc || ""} onChange={(e) => set("motorista_doc", e.target.value)} /></Field>
+                <Field label="Responsável"><input className="in" value={d.responsavel || ""} onChange={(e) => set("responsavel", e.target.value)} /></Field>
+                <Field label="Nota Fiscal"><input className="in" value={d.nota_fiscal || ""} onChange={(e) => set("nota_fiscal", e.target.value)} /></Field>
+                <Field label="CTE"><input className="in" value={d.cte || ""} onChange={(e) => set("cte", e.target.value)} /></Field>
+                <Field label="Chegada (data)"><input className="in" value={d.chegada_data || ""} onChange={(e) => set("chegada_data", e.target.value)} placeholder="dd/mm/aaaa" /></Field>
+                <Field label="Chegada (hora)"><input className="in" value={d.chegada_hora || ""} onChange={(e) => set("chegada_hora", e.target.value)} /></Field>
+                <Field label="Saída (data)"><input className="in" value={d.saida_data || ""} onChange={(e) => set("saida_data", e.target.value)} placeholder="dd/mm/aaaa" /></Field>
+                <Field label="Saída (hora)"><input className="in" value={d.saida_hora || ""} onChange={(e) => set("saida_hora", e.target.value)} /></Field>
+                <Field label="Placas chegada"><input className="in" value={d.placas_chegada || ""} onChange={(e) => set("placas_chegada", e.target.value)} /></Field>
+                <Field label="Placas saída"><input className="in" value={d.placas_saida || ""} onChange={(e) => set("placas_saida", e.target.value)} /></Field>
+              </div>
+            </Panel>
+
+            <Panel title="Mercadorias (tabela — Invoice e Packing List)">
+              <MercEditor rows={merc} setRows={setMerc} />
+            </Panel>
+
+            <Panel title="Veículos / Placas (tabela — Romaneio, MIC e Fatura de Serviço)">
+              <VeicEditor rows={veic} setRows={setVeic} />
+            </Panel>
+
+            <Panel title="Fatura de Serviço (cobrança do frete)">
+              <Field label="Cobrar de"><input className="in" value={d.cobrar_de || ""} onChange={(e) => set("cobrar_de", e.target.value)} placeholder={d.importador || carga.cliente_nome || ""} /></Field>
+              <Field label="Endereço"><input className="in" value={d.cobrar_de_end || ""} onChange={(e) => set("cobrar_de_end", e.target.value)} /></Field>
+            </Panel>
+          </div>
+
+          {/* Coluna 2: gerar cada documento */}
+          <div className="space-y-2">
+            <div className="text-sm font-semibold">Gerar documentos</div>
+            {LOGI_DOCS.map((doc) => (
+              <div key={doc.type} className="bg-zinc-900/50 border border-white/10 rounded-xl p-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold">{doc.label} <span className="text-[10px] text-zinc-500 font-normal">· {doc.full}</span></div>
+                  <div className="text-[11px] text-zinc-500 truncate">{doc.desc}</div>
+                </div>
+                <input className="in" style={{ width: 120 }} placeholder="Nº" value={(d[doc.numKey] as string) || ""} onChange={(e) => set(doc.numKey, e.target.value)} />
+                <button onClick={() => generate(doc.type)} disabled={busyType === doc.type} className="btn-primary shrink-0">{busyType === doc.type ? "…" : "Gerar"}</button>
               </div>
             ))}
+            {company.server && <p className="text-[10px] text-zinc-600 font-mono">Servidor: {company.server}</p>}
+
+            {opDocs.length > 0 && (
+              <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-3 mt-2">
+                <div className="text-sm font-semibold mb-2">Emitidos nesta operação</div>
+                {opDocs.slice(0, 20).map((x) => (
+                  <div key={x.id} className="flex items-center justify-between text-xs border-b border-white/5 py-1.5">
+                    <span className="text-zinc-400"><span className="text-zinc-200">{docLabel(x.tipo as LogiDocType)}</span> · <span className="font-mono">{x.numero || "—"}</span></span>
+                    <span className="text-zinc-600">{new Date(x.created_at).toLocaleDateString("pt-BR")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-3 space-y-2"><div className="text-xs font-semibold text-amber-300">{title}</div>{children}</div>;
+}
+function MercEditor({ rows, setRows }: { rows: Mercadoria[]; setRows: (r: Mercadoria[]) => void }) {
+  const upd = (i: number, k: keyof Mercadoria, v: string) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="grid grid-cols-12 gap-1">
+          <input className="in col-span-4" placeholder="Descrição" value={r.descricao} onChange={(e) => upd(i, "descricao", e.target.value)} />
+          <input className="in col-span-2" placeholder="NCM" value={r.ncm || ""} onChange={(e) => upd(i, "ncm", e.target.value)} />
+          <input className="in col-span-2" placeholder="Qtd" value={r.quant || ""} onChange={(e) => upd(i, "quant", e.target.value)} />
+          <input className="in col-span-2" placeholder="P.unit" value={r.preco_unit || ""} onChange={(e) => upd(i, "preco_unit", e.target.value)} />
+          <input className="in col-span-1" placeholder="Bruto" value={r.peso_bruto || ""} onChange={(e) => upd(i, "peso_bruto", e.target.value)} />
+          <button onClick={() => setRows(rows.filter((_, idx) => idx !== i))} className="col-span-1 rounded bg-white/5 hover:bg-white/10 text-zinc-400 flex items-center justify-center"><X size={13} /></button>
+        </div>
+      ))}
+      <button onClick={() => setRows([...rows, { descricao: "" }])} className="btn-ghost text-xs"><Plus size={12} /> mercadoria</button>
+    </div>
+  );
+}
+function VeicEditor({ rows, setRows }: { rows: Veiculo[]; setRows: (r: Veiculo[]) => void }) {
+  const upd = (i: number, k: keyof Veiculo, v: string) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="grid grid-cols-12 gap-1">
+          <input className="in col-span-2" placeholder="Placa" value={r.placa} onChange={(e) => upd(i, "placa", e.target.value)} />
+          <input className="in col-span-2" placeholder="Peso(t)" value={r.peso || ""} onChange={(e) => upd(i, "peso", e.target.value)} />
+          <input className="in col-span-3" placeholder="MIC" value={r.mic || ""} onChange={(e) => upd(i, "mic", e.target.value)} />
+          <input className="in col-span-2" placeholder="CRT" value={r.crt || ""} onChange={(e) => upd(i, "crt", e.target.value)} />
+          <input className="in col-span-2" placeholder="Frete R$" value={r.valor || ""} onChange={(e) => upd(i, "valor", e.target.value)} />
+          <button onClick={() => setRows(rows.filter((_, idx) => idx !== i))} className="col-span-1 rounded bg-white/5 hover:bg-white/10 text-zinc-400 flex items-center justify-center"><X size={13} /></button>
+        </div>
+      ))}
+      <button onClick={() => setRows([...rows, { placa: "" }])} className="btn-ghost text-xs"><Plus size={12} /> veículo</button>
     </div>
   );
 }
@@ -891,25 +1030,47 @@ function DreModule({ finance, expenses }: { finance: Finance[]; expenses: VExpen
 
 // =============================== SETTINGS MODULE ===============================
 function SettingsModule({ cid, cfg, setCfg, isGestor, flash }: {
-  cid: string | null; cfg: { server: string; razao: string; cnpj: string; nome: string; logo: string | null; onboarded: boolean };
-  setCfg: React.Dispatch<React.SetStateAction<{ onboarded: boolean; server: string; razao: string; cnpj: string; nome: string; logo: string | null }>>;
+  cid: string | null; cfg: CfgState; setCfg: React.Dispatch<React.SetStateAction<CfgState>>;
   isGestor: boolean; flash: (t: string, d?: string, k?: string) => void;
 }) {
-  const [razao, setRazao] = useState(cfg.razao); const [cnpj, setCnpj] = useState(cfg.cnpj); const [server, setServer] = useState(cfg.server);
+  const [s, setS] = useState({ razao: cfg.razao, cnpj: cfg.cnpj, ie: cfg.ie, endereco: cfg.endereco, phone: cfg.phone, email: cfg.email, server: cfg.server, bank: cfg.bank, signatory: cfg.signatory, signatoryDoc: cfg.signatoryDoc });
+  const set = (k: keyof typeof s, v: string) => setS((x) => ({ ...x, [k]: v }));
   const [busy, setBusy] = useState(false);
   async function save() {
     if (!supabase || !cid) return; setBusy(true);
-    await supabase.from("company_settings").update({ logistics_razao_social: razao || null, logistics_cnpj: cnpj || null, logistics_server_path: server || null }).eq("company_id", cid);
-    setCfg((c) => ({ ...c, razao, cnpj, server })); setBusy(false); flash("Dados salvos");
+    await supabase.from("company_settings").update({
+      logistics_razao_social: s.razao || null, logistics_cnpj: s.cnpj || null, logistics_ie: s.ie || null,
+      address: s.endereco || null, phone: s.phone || null, email: s.email || null, logistics_server_path: s.server || null,
+      logistics_bank_info: s.bank || null, logistics_signatory: s.signatory || null, logistics_signatory_doc: s.signatoryDoc || null,
+    }).eq("company_id", cid);
+    setCfg((c) => ({ ...c, ...s })); setBusy(false); flash("Dados salvos");
   }
   return (
     <div className="space-y-4 max-w-lg">
-      <Header title="Dados da Empresa & Servidor" sub="Usados no cabeçalho dos documentos e como destino dos PDFs no servidor local." icon={Settings} />
+      <Header title="Dados da Empresa & Servidor" sub="Vão no cabeçalho e rodapé de TODOS os documentos (no lugar da logo/dados de exemplo). A logo é a mesma das Configurações da empresa." icon={Settings} />
       <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-4 space-y-3">
-        <Field label="Razão social"><input className="in" value={razao} onChange={(e) => setRazao(e.target.value)} disabled={!isGestor} /></Field>
-        <Field label="CNPJ"><input className="in" value={cnpj} onChange={(e) => setCnpj(e.target.value)} disabled={!isGestor} /></Field>
-        <Field label="Pasta no servidor local (SRV-MATRIZ)"><input className="in font-mono text-xs" value={server} onChange={(e) => setServer(e.target.value)} disabled={!isGestor} placeholder="/Volumes/Data/Cargas_2026/" /></Field>
-        <div className="flex items-center gap-2 text-[11px] text-zinc-500"><ShieldCheck size={13} className="text-amber-400" /> As permissões por pasta são definidas no app de Arquivos/Servidor (perfil Master).</div>
+        <div className="flex items-center gap-3">
+          {cfg.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={cfg.logo} alt="logo" className="h-12 max-w-[120px] object-contain bg-white/5 rounded p-1" />
+          ) : <div className="h-12 w-12 rounded bg-zinc-800 flex items-center justify-center text-zinc-500 text-[10px]">sem logo</div>}
+          <p className="text-[11px] text-zinc-500">Esta é a logo que entra nos documentos. Troque em <b>Configurações → Marca</b>.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Razão social"><input className="in" value={s.razao} onChange={(e) => set("razao", e.target.value)} disabled={!isGestor} /></Field>
+          <Field label="CNPJ"><input className="in" value={s.cnpj} onChange={(e) => set("cnpj", e.target.value)} disabled={!isGestor} /></Field>
+          <Field label="Inscrição Estadual"><input className="in" value={s.ie} onChange={(e) => set("ie", e.target.value)} disabled={!isGestor} /></Field>
+          <Field label="Telefone"><input className="in" value={s.phone} onChange={(e) => set("phone", e.target.value)} disabled={!isGestor} /></Field>
+        </div>
+        <Field label="Endereço"><input className="in" value={s.endereco} onChange={(e) => set("endereco", e.target.value)} disabled={!isGestor} placeholder="Rua, nº, bairro – cidade – UF" /></Field>
+        <Field label="E-mail"><input className="in" value={s.email} onChange={(e) => set("email", e.target.value)} disabled={!isGestor} /></Field>
+        <Field label="Dados bancários / beneficiário (rodapé das faturas)"><textarea className="in" rows={3} value={s.bank} onChange={(e) => set("bank", e.target.value)} disabled={!isGestor} placeholder={"Banco, agência, conta, IBAN/SWIFT, Pix…"} /></Field>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Assinante (nome)"><input className="in" value={s.signatory} onChange={(e) => set("signatory", e.target.value)} disabled={!isGestor} /></Field>
+          <Field label="Doc do assinante (CPF)"><input className="in" value={s.signatoryDoc} onChange={(e) => set("signatoryDoc", e.target.value)} disabled={!isGestor} /></Field>
+        </div>
+        <Field label="Pasta no servidor local (SRV-MATRIZ)"><input className="in font-mono text-xs" value={s.server} onChange={(e) => set("server", e.target.value)} disabled={!isGestor} placeholder="/Volumes/Data/Cargas_2026/" /></Field>
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500"><ShieldCheck size={13} className="text-amber-400" /> Os documentos gerados são salvos automaticamente na pasta de cada operação (Logística › &lt;operação&gt;).</div>
         {isGestor && <button onClick={save} disabled={busy} className="btn-primary">{busy ? "Salvando…" : "Salvar"}</button>}
       </div>
       <div className="bg-amber-950/20 border border-amber-500/20 rounded-xl p-4">
