@@ -3,13 +3,14 @@
 // - O pareamento (agentId + accessCode) é digitado pelo usuário no 1º uso e
 //   salvo em userData/pairing.json (não precisa mexer em arquivo manualmente).
 // - Injeta mouse/teclado recebidos do operador usando nut.js.
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage, clipboard, shell } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage, clipboard, shell, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const zlib = require("zlib");
 const { execSync } = require("child_process");
+const { runTool } = require("./system-tools");
 
 // Acesso completo: o agente precisa rodar COMO ADMINISTRADOR para controlar
 // janelas elevadas (Gerenciador de Tarefas, instaladores) e as caixas de UAC.
@@ -214,6 +215,37 @@ ipcMain.handle("get-sources", async () => {
 let perms = { control: true, files: true, screenshot: true };
 ipcMain.on("set-perms", (_e, p) => {
   if (p && typeof p === "object") perms = { control: p.control !== false, files: p.files !== false, screenshot: p.screenshot !== false };
+});
+
+// Ferramentas do Orb: diagnósticos rodam em modo somente leitura. Qualquer
+// comando que possa alterar a máquina exibe uma confirmação NESTE computador,
+// com o comando exato, antes de executar. Operações perigosas são bloqueadas.
+ipcMain.handle("orb-tool", async (_e, request) => {
+  if (!perms.control) return { ok: false, blocked: true, error: "Controle remoto desativado nas permissões desta máquina." };
+  const confirm = async (command, context = {}) => {
+    const parent = win && !win.isDestroyed() && win.isVisible() ? win : undefined;
+    const autonomousHighImpact = context.mode === "autonomous" && context.highImpact;
+    const options = {
+      type: "warning",
+      title: "Permissão do Orb",
+      message: autonomousHighImpact
+        ? "O modo sem supervisão encontrou uma ação de alto impacto"
+        : "Permitir que o Orb altere este computador?",
+      detail: `Comando solicitado:\n\n${String(command).slice(0, 1400)}\n\n${autonomousHighImpact ? "Mesmo no modo sem supervisão, esta ação precisa de autorização." : "A permissão vale somente para esta execução."}`,
+      buttons: ["Cancelar", "Permitir uma vez"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    };
+    const result = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 1;
+  };
+  return runTool(request, {
+    confirm,
+    auditPath: path.join(app.getPath("userData"), "orb-audit.jsonl"),
+  });
 });
 
 // Qual monitor está sendo controlado (para mapear mouse/teclado no lugar certo).
@@ -665,7 +697,7 @@ ipcMain.on("input", async (_e, ev) => {
         // Gerenciador de Tarefas (Windows): Ctrl+Shift+Esc.
         await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.Escape);
         await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.Escape);
-      } else if (ev.name === "home") {
+      } else if (ev.name === "home" || ev.name === "win") {
         // Tecla "casa" (Windows/Super) — abre o menu inicial (Win/Linux).
         await keyboard.pressKey(Key.LeftSuper);
         await keyboard.releaseKey(Key.LeftSuper);
