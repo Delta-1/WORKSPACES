@@ -34,7 +34,7 @@ type Stock = { id: string; produto: string; lote: string | null; quantidade: num
 type Fumigation = { id: string; stock_id: string | null; lote: string | null; certificado_num: string | null; quantidade_baixa: number | null; data: string | null; status: string | null };
 type Driver = { id: string; nome: string; telefone: string | null; veiculo: string | null; cnh: string | null; access_token: string | null; gps_ativo: boolean | null; last_lat: number | null; last_lng: number | null; last_ping_at: string | null };
 type Finance = { id: string; escopo: string; tipo: string; categoria: string | null; descricao: string | null; valor: number; carga_id: string | null; vehicle_id: string | null; status: string | null; data: string | null };
-type LogiDoc = { id: string; carga_id: string | null; tipo: string; numero: string | null; created_at: string; dados: Record<string, string> };
+type LogiDoc = { id: string; carga_id: string | null; tipo: string; numero: string | null; created_at: string; dados: Record<string, string>; pdf_url?: string | null };
 
 const STAGES: { id: string; label: string; hint: string; color: string }[] = [
   { id: "proforma", label: "Fatura Proforma", hint: "Negociação e proposta", color: "text-zinc-300" },
@@ -149,7 +149,7 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
       {/* Sidebar de módulos */}
       <aside className="w-56 shrink-0 border-r border-white/10 bg-zinc-950 flex-col hidden md:flex overflow-y-auto">
         <div className="p-3 border-b border-white/10 flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-zinc-100 text-zinc-950 flex items-center justify-center"><Ship size={16} /></div>
+          <div className="w-8 h-8 rounded-lg bg-zinc-100 text-zinc-950 flex items-center justify-center"><Truck size={16} /></div>
           <div><div className="text-sm font-bold leading-tight">TransLog</div><div className="text-[10px] font-mono text-zinc-500">MERCOSUL</div></div>
         </div>
         <div className="p-2 space-y-3 flex-1">
@@ -246,7 +246,7 @@ function Onboarding({ profile, initial, onDone }: { profile: Profile | null; ini
   return (
     <div className="h-full overflow-y-auto bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
       <div className="w-full max-w-lg bg-zinc-900/70 border border-white/10 rounded-2xl p-6">
-        <div className="flex items-center gap-2 mb-1"><Ship size={20} className="text-amber-400" /><h2 className="text-lg font-bold">Configurar a Logística Internacional</h2></div>
+        <div className="flex items-center gap-2 mb-1"><Truck size={20} className="text-amber-400" /><h2 className="text-lg font-bold">Configurar a Logística Internacional</h2></div>
         <p className="text-xs text-zinc-400 mb-4">Um passo a passo rápido para deixar o app pronto. {step + 1}/{steps.length} — {steps[step]}</p>
         <div className="flex gap-1 mb-5">{steps.map((_, i) => <div key={i} className={`h-1.5 flex-1 rounded-full ${i <= step ? "bg-amber-400" : "bg-zinc-800"}`} />)}</div>
 
@@ -789,8 +789,22 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
   const [savingOp, setSavingOp] = useState(false);
   const [busyType, setBusyType] = useState<LogiDocType | null>(null);
 
-  // Ao trocar de operação, carrega os dados salvos dela.
-  useEffect(() => { setD((carga?.dados as OperacaoData) || {}); setDirty(false); }, [cargaId, carga?.dados]);
+  // Ao trocar de operação: se ela já tem dados salvos, carrega. Se estiver VAZIA,
+  // JÁ PREENCHE a partir da carga (cliente→importador, produto→1ª mercadoria, etc.)
+  // — automatiza o começo para você só ajustar e gerar.
+  useEffect(() => {
+    const existing = (carga?.dados as OperacaoData) || {};
+    if (carga && Object.keys(existing).length === 0) {
+      setD({
+        importador: carga.cliente_nome || "", cliente: carga.cliente_nome || "",
+        pais_destino: carga.pais_destino || "", cidade_destino: carga.destino || "",
+        moeda: carga.moeda || "USD", condicoes: carga.incoterm || "", local_entrega: carga.destino || "",
+        cobrar_de: carga.cliente_nome || "",
+        mercadorias: carga.produto ? [{ descricao: carga.produto, quant: String(carga.volumes || ""), preco_unit: "", total: String(carga.valor_declarado || ""), peso_bruto: String(carga.peso || "") }] : [],
+      });
+      setDirty(true);
+    } else { setD(existing); setDirty(false); }
+  }, [cargaId, carga?.dados, carga]);
 
   const set = (k: keyof OperacaoData, v: string) => { setD((s) => ({ ...s, [k]: v }) as OperacaoData); setDirty(true); };
   const setMerc = (arr: Mercadoria[]) => { setD((s) => ({ ...s, mercadorias: arr })); setDirty(true); };
@@ -820,6 +834,33 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
     return folderId || null;
   }
 
+  const compObj = () => ({ razao_social: company.razao, cnpj: company.cnpj, ie: company.ie, nome: company.nome, endereco: company.endereco, phone: company.phone, email: company.email, logo_url: company.logo, bank_info: company.bank, signatory: company.signatory, signatory_doc: company.signatoryDoc });
+  const cargaObj = () => carga ? { codigo: carga.codigo, cliente_nome: carga.cliente_nome, produto: carga.produto, origem: carga.origem, destino: carga.destino, pais_destino: carga.pais_destino, incoterm: carga.incoterm, moeda: carga.moeda, valor_declarado: carga.valor_declarado, peso: carga.peso, volumes: carga.volumes, cfop: carga.cfop } : {};
+
+  // Garante que TODOS os documentos tenham número (série ligada — mesmo sufixo),
+  // para que um referencie o outro (CRT↔MIC, etc.).
+  function withNumbers(dd: OperacaoData): OperacaoData {
+    const base = Date.now().toString().slice(-5);
+    for (const doc of LOGI_DOCS) if (!dd[doc.numKey]) (dd as Record<string, string>)[doc.numKey] = `${doc.label.slice(0, 3).toUpperCase()}-${base}`;
+    return dd;
+  }
+  // Renderiza um documento, SALVA na pasta da operação e registra. Não abre janela.
+  async function saveDoc(type: LogiDocType, dd: OperacaoData, folderId: string | null): Promise<{ html: string; url: string | null }> {
+    const def = LOGI_DOCS.find((x) => x.type === type)!;
+    const html = renderLogisticsDoc(type, cargaObj(), dd, compObj());
+    let url: string | null = null;
+    if (supabase && cid && carga) {
+      const fileName = `${def.label}-${dd[def.numKey] || ""}.html`.replace(/\s+/g, "_");
+      try {
+        const path = `logistica/${carga.id}/${Date.now()}-${fileName}`;
+        const { error } = await supabase.storage.from("company-files").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
+        if (!error) { const { data } = supabase.storage.from("company-files").getPublicUrl(path); url = data?.publicUrl ?? null; if (folderId) await supabase.from("files").insert({ name: fileName, type: "file", parent_id: folderId, company_id: cid, storage_path: path, mime: "text/html" }); }
+      } catch { /* segue */ }
+      await supabase.from("logistics_documents").insert({ company_id: cid, carga_id: carga.id, tipo: type, numero: (dd[def.numKey] as string) || null, dados: dd, pdf_url: url, server_path: company.server ? `${company.server}${fileName}` : null });
+    }
+    return { html, url };
+  }
+
   async function generate(type: LogiDocType) {
     if (!carga) { flash("Escolha a operação primeiro."); return; }
     setBusyType(type);
@@ -827,27 +868,36 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
       const def = LOGI_DOCS.find((x) => x.type === type)!;
       const dd: OperacaoData = { ...d };
       if (!dd[def.numKey]) (dd as Record<string, string>)[def.numKey] = `${def.label.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-5)}`;
-      const comp = { razao_social: company.razao, cnpj: company.cnpj, ie: company.ie, nome: company.nome, endereco: company.endereco, phone: company.phone, email: company.email, logo_url: company.logo, bank_info: company.bank, signatory: company.signatory, signatory_doc: company.signatoryDoc };
-      const cargaObj = { codigo: carga.codigo, cliente_nome: carga.cliente_nome, produto: carga.produto, origem: carga.origem, destino: carga.destino, pais_destino: carga.pais_destino, incoterm: carga.incoterm, moeda: carga.moeda, valor_declarado: carga.valor_declarado, peso: carga.peso, volumes: carga.volumes, cfop: carga.cfop };
-      const html = renderLogisticsDoc(type, cargaObj, dd, comp);
+      const folderId = await ensureFolder();
+      const { html } = await saveDoc(type, dd, folderId);
       const w = window.open("", "_blank");
       if (w) { w.document.write(html); w.document.close(); } else flash("Pop-up bloqueado", "Permita pop-ups para abrir/imprimir.", "error");
       setD(dd);
+      if (supabase && cid) await supabase.from("logistics_cargas").update({ dados: dd }).eq("id", carga.id);
+      setDirty(false); reload();
+      flash("Documento gerado", "Salvo na pasta da operação. Salve em PDF (Ctrl/Cmd+P).");
+    } finally { setBusyType(null); }
+  }
+
+  // AUTOMÁTICO: gera TODOS os documentos em ordem lógica (romaneio → invoice →
+  // packing → fatura de serviço → MIC/DTA → CRT → DUE), com numeração ligada, e
+  // salva o pacote na pasta da operação de uma vez. Avança a etapa para
+  // "Documentação". Poupa tempo — preenche uma vez e sai tudo.
+  const ORDER: LogiDocType[] = ["romaneio", "invoice", "packing", "fatura_servico", "micdta", "crt", "due"];
+  async function generateAll() {
+    if (!carga) { flash("Escolha a operação primeiro."); return; }
+    setBusyType("romaneio");
+    try {
+      const dd = withNumbers({ ...d });
+      const folderId = await ensureFolder();
+      for (const type of ORDER) await saveDoc(type, dd, folderId);
+      setD(dd);
       if (supabase && cid) {
         await supabase.from("logistics_cargas").update({ dados: dd }).eq("id", carga.id);
-        const fileName = `${def.label}-${dd[def.numKey] || ""}.html`.replace(/\s+/g, "_");
-        let pdfUrl: string | null = null;
-        try {
-          const folderId = await ensureFolder();
-          const path = `logistica/${carga.id}/${Date.now()}-${fileName}`;
-          const { error } = await supabase.storage.from("company-files").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
-          if (!error) { const { data } = supabase.storage.from("company-files").getPublicUrl(path); pdfUrl = data?.publicUrl ?? null; if (folderId) await supabase.from("files").insert({ name: fileName, type: "file", parent_id: folderId, company_id: cid, storage_path: path, mime: "text/html" }); }
-        } catch { /* segue sem salvar arquivo */ }
-        await supabase.from("logistics_documents").insert({ company_id: cid, carga_id: carga.id, tipo: type, numero: (dd[def.numKey] as string) || null, dados: dd, pdf_url: pdfUrl, server_path: company.server ? `${company.server}${fileName}` : null });
-        reload();
+        if (stageIndex(carga.stage) < stageIndex("documentacao")) await supabase.from("logistics_cargas").update({ stage: "documentacao" }).eq("id", carga.id);
       }
-      setDirty(false);
-      flash("Documento gerado", "Salvo na pasta da operação. Salve em PDF (Ctrl/Cmd+P).");
+      setDirty(false); reload();
+      flash("Pacote gerado", "Todos os documentos foram criados e salvos na pasta da operação.");
     } finally { setBusyType(null); }
   }
 
@@ -856,9 +906,10 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
   return (
     <div className="space-y-4">
       <Header title="Operação & Documentos" sub="Preencha a operação uma vez (tabelas de mercadorias e placas) e gere todos os documentos — romaneio, invoice, packing list, fatura de serviço, MIC/DTA, CRT e DUE — salvos na pasta da operação." icon={FileText}
-        action={<div className="flex items-center gap-2">
+        action={<div className="flex items-center gap-2 flex-wrap">
           <select className="in" style={{ width: "auto" }} value={cargaId} onChange={(e) => setCargaId(e.target.value)}><option value="">— escolher operação —</option>{cargas.map((c) => <option key={c.id} value={c.id}>{c.codigo} · {c.cliente_nome}</option>)}</select>
-          <button onClick={saveOp} disabled={savingOp || !dirty || !carga} className="btn-primary disabled:opacity-40">{savingOp ? "Salvando…" : dirty ? "Salvar operação" : "Salvo"}</button>
+          <button onClick={saveOp} disabled={savingOp || !dirty || !carga} className="btn-ghost disabled:opacity-40">{savingOp ? "Salvando…" : dirty ? "Salvar operação" : "Salvo"}</button>
+          <button onClick={generateAll} disabled={!!busyType || !carga} className="btn-primary disabled:opacity-40"><FileText size={14} /> {busyType ? "Gerando…" : "Gerar todos em ordem"}</button>
         </div>} />
 
       {!carga ? (
@@ -937,7 +988,10 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
                 {opDocs.slice(0, 20).map((x) => (
                   <div key={x.id} className="flex items-center justify-between text-xs border-b border-white/5 py-1.5">
                     <span className="text-zinc-400"><span className="text-zinc-200">{docLabel(x.tipo as LogiDocType)}</span> · <span className="font-mono">{x.numero || "—"}</span></span>
-                    <span className="text-zinc-600">{new Date(x.created_at).toLocaleDateString("pt-BR")}</span>
+                    <div className="flex items-center gap-2">
+                      {x.pdf_url && <a href={x.pdf_url} target="_blank" rel="noreferrer" className="text-amber-400 hover:text-amber-300">abrir / imprimir</a>}
+                      <span className="text-zinc-600">{new Date(x.created_at).toLocaleDateString("pt-BR")}</span>
+                    </div>
                   </div>
                 ))}
               </div>
