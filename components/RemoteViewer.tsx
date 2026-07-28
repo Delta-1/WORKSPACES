@@ -23,16 +23,19 @@ import {
   ListTree,
   Monitor as MonitorIcon,
   MousePointerClick,
+  MousePointer2,
   Package,
   Server,
   Settings2,
+  ShieldCheck,
+  TriangleAlert,
   Upload,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import ToolsPicker from "./ToolsPicker";
 import type { Tool } from "@/lib/types";
-import Orb from "@/components/Orb";
+import Orb, { type OrbMode } from "@/components/Orb";
 import type { Profile, RemoteAgent } from "@/lib/types";
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -41,6 +44,9 @@ type Entry = { name: string; isDir: boolean; size: number; full?: string };
 type Quality = "alta" | "media" | "baixa" | "game";
 type Progress = { label: string; pct: number } | null;
 type Peer = { id: string; name: string; avatar: string | null; color: string };
+type RemoteCursor = Peer & { x: number; y: number; click: number };
+type OrbControlAction = { kind: string; text?: string; name?: string; x?: number; y?: number };
+type OrbToolResult = { ok: boolean; output?: string; error?: string; blocked?: boolean; approved?: boolean };
 
 // Cor estável por pessoa (para a borda e o avatar de quem está controlando).
 const PRESENCE_COLORS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444", "#14b8a6"];
@@ -53,6 +59,10 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
+  const orbToolRequestsRef = useRef(new Map<string, {
+    resolve: (result: OrbToolResult) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>());
   const filesRef = useRef<RTCDataChannel | null>(null);
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const [status, setStatus] = useState("Conectando ao agente...");
@@ -94,6 +104,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   // Sensibilidade do mouse (trackpad) e do scroll — personalizável.
   const [showSettings, setShowSettings] = useState(false);
   const [orbOpen, setOrbOpen] = useState(false);
+  const [orbMode, setOrbMode] = useState<OrbMode | null>(null);
+  const [orbModePickerOpen, setOrbModePickerOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [gameMode, setGameMode] = useState(!!initialGame); // pode abrir já no modo jogo (app Game)
   // AUTO: escolhe a melhor qualidade para a latência atual (entra já bom e adapta).
@@ -126,15 +138,20 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   const [ghost, setGhost] = useState<{ x: number; y: number; click: number } | null>(null);
   // PRESENÇA: várias pessoas podem estar no mesmo acesso. Mostramos os avatares e,
   // quando OUTRA pessoa está mexendo, uma borda na cor dela + quem é no topo.
-  const myId = profile?.id || "anon-" + Math.random().toString(36).slice(2, 7);
+  const [myId] = useState(() => profile?.id || "anon-" + Math.random().toString(36).slice(2, 7));
   const myColor = colorFromId(myId);
   const [peers, setPeers] = useState<Peer[]>([]);
   const [controller, setController] = useState<Peer | null>(null);
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
   const presenceRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const ctrlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cursorTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const lastCtrlBroadcast = useRef(0);
+  const lastCursorBroadcast = useRef(0);
+  const localCursorRef = useRef({ x: 0.5, y: 0.5 });
   useEffect(() => {
     if (!supabase) return;
+    const cursorTimers = cursorTimersRef.current;
     const me: Peer = { id: myId, name: profile?.full_name || "Você", avatar: profile?.avatar_url || null, color: myColor };
     const ch = supabase.channel(`rv-presence-${agent.id}`, { config: { presence: { key: myId } } });
     presenceRef.current = ch;
@@ -143,6 +160,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       const list: Peer[] = [];
       Object.values(state).forEach((arr) => arr.forEach((p) => { if (p.id !== myId && !list.some((x) => x.id === p.id)) list.push({ id: p.id, name: p.name, avatar: p.avatar, color: p.color }); }));
       setPeers(list);
+      const activeIds = new Set(list.map((p) => p.id));
+      setRemoteCursors((current) => Object.fromEntries(Object.entries(current).filter(([id]) => activeIds.has(id))));
     });
     ch.on("broadcast", { event: "control" }, (msg) => {
       const p = msg.payload as Peer;
@@ -151,8 +170,42 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       if (ctrlTimer.current) clearTimeout(ctrlTimer.current);
       ctrlTimer.current = setTimeout(() => setController(null), 1800);
     });
+    ch.on("broadcast", { event: "cursor" }, (msg) => {
+      const cursor = msg.payload as RemoteCursor;
+      if (!cursor || typeof cursor.id !== "string" || !cursor.id || cursor.id === myId || !Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) return;
+      const safeCursor: RemoteCursor = {
+        id: String(cursor.id).slice(0, 128),
+        name: String(cursor.name || "Participante").slice(0, 60),
+        avatar: typeof cursor.avatar === "string" ? cursor.avatar.slice(0, 2048) : null,
+        color: colorFromId(String(cursor.id)),
+        x: Math.max(0, Math.min(1, cursor.x)),
+        y: Math.max(0, Math.min(1, cursor.y)),
+        click: Number.isFinite(cursor.click) ? cursor.click : 0,
+      };
+      setRemoteCursors((current) => ({
+        ...current,
+        [safeCursor.id]: {
+          ...safeCursor,
+          click: safeCursor.click || current[safeCursor.id]?.click || 0,
+        },
+      }));
+      const previousTimer = cursorTimers.get(safeCursor.id);
+      if (previousTimer) clearTimeout(previousTimer);
+      cursorTimers.set(safeCursor.id, setTimeout(() => {
+        setRemoteCursors((current) => {
+          const next = { ...current };
+          delete next[safeCursor.id];
+          return next;
+        });
+        cursorTimers.delete(cursor.id);
+      }, 4000));
+    });
     ch.subscribe((s) => { if (s === "SUBSCRIBED") ch.track(me); });
-    return () => { try { supabase!.removeChannel(ch); } catch { /* ignore */ } };
+    return () => {
+      for (const timer of cursorTimers.values()) clearTimeout(timer);
+      cursorTimers.clear();
+      try { supabase!.removeChannel(ch); } catch { /* ignore */ }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
   // Avisa aos outros que EU estou mexendo (no máx. 1x/700ms).
@@ -161,6 +214,44 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     if (now - lastCtrlBroadcast.current < 700) return;
     lastCtrlBroadcast.current = now;
     presenceRef.current?.send({ type: "broadcast", event: "control", payload: { id: myId, name: profile?.full_name || "Você", avatar: profile?.avatar_url || null, color: myColor } });
+  }
+  function broadcastCursor(x: number, y: number, click = false) {
+    const now = Date.now();
+    if (!click && now - lastCursorBroadcast.current < 45) return;
+    lastCursorBroadcast.current = now;
+    const safeX = Math.max(0, Math.min(1, x));
+    const safeY = Math.max(0, Math.min(1, y));
+    localCursorRef.current = { x: safeX, y: safeY };
+    presenceRef.current?.send({
+      type: "broadcast",
+      event: "cursor",
+      payload: {
+        id: myId,
+        name: profile?.full_name || "Você",
+        avatar: profile?.avatar_url || null,
+        color: myColor,
+        x: safeX,
+        y: safeY,
+        click: click ? now : 0,
+      },
+    });
+  }
+  function toggleOrb() {
+    if (orbOpen) {
+      setOrbOpen(false);
+      setOrbMode(null);
+      return;
+    }
+    setOrbModePickerOpen(true);
+  }
+  function startOrb(mode: OrbMode) {
+    setOrbMode(mode);
+    setOrbModePickerOpen(false);
+    setOrbOpen(true);
+  }
+  function closeOrb() {
+    setOrbOpen(false);
+    setOrbMode(null);
   }
 
   const ghostClickRef = useRef(0);
@@ -447,6 +538,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
 
   useEffect(() => {
     if (!supabase) return;
+    const orbToolRequests = orbToolRequestsRef.current;
     const channel = supabase.channel(`remote-${agent.id}`, { config: { broadcast: { self: false } } });
     channelRef.current = channel;
     const send = (payload: unknown) => channel.send({ type: "broadcast", event: "signal", payload });
@@ -462,7 +554,29 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       if (e.candidate) send({ to: "agent", type: "ice", candidate: e.candidate });
     };
     pc.ondatachannel = (e) => {
-      if (e.channel.label === "control") controlRef.current = e.channel;
+      if (e.channel.label === "control") {
+        controlRef.current = e.channel;
+        e.channel.onmessage = (event) => {
+          try {
+            const message = JSON.parse(String(event.data)) as { kind?: string; id?: string; result?: OrbToolResult };
+            if (message.kind !== "tool-result" || !message.id) return;
+            const pending = orbToolRequests.get(message.id);
+            if (!pending) return;
+            clearTimeout(pending.timer);
+            orbToolRequests.delete(message.id);
+            pending.resolve(message.result || { ok: false, error: "O agente não devolveu um resultado." });
+          } catch {
+            /* ignora mensagens desconhecidas do canal de controle */
+          }
+        };
+        e.channel.onclose = () => {
+          for (const pending of orbToolRequests.values()) {
+            clearTimeout(pending.timer);
+            pending.resolve({ ok: false, error: "A conexão com o agente foi encerrada." });
+          }
+          orbToolRequests.clear();
+        };
+      }
       if (e.channel.label === "files") {
         filesRef.current = e.channel;
         e.channel.onmessage = (ev) => onFilesMessage(ev.data);
@@ -503,6 +617,11 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       } catch {
         /* ignore */
       }
+      for (const pending of orbToolRequests.values()) {
+        clearTimeout(pending.timer);
+        pending.resolve({ ok: false, error: "A sessão remota foi encerrada." });
+      }
+      orbToolRequests.clear();
       pc.close();
       supabase!.removeChannel(channel);
     };
@@ -518,8 +637,46 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     const ch = controlRef.current;
     if (ch && ch.readyState === "open") ch.send(JSON.stringify(ev));
     if (teaching) recordStep(ev as { kind?: string; x?: number; y?: number; text?: string; name?: string });
-    const k = (ev as { kind?: string }).kind;
+    const pointer = ev as { kind?: string; x?: number; y?: number; dx?: number; dy?: number };
+    const k = pointer.kind;
+    if ((k === "move" || k === "down" || k === "up") && pointer.x != null && pointer.y != null) {
+      broadcastCursor(pointer.x, pointer.y, k === "down");
+    } else if (k === "move-rel" && (pointer.dx || pointer.dy)) {
+      const video = videoRef.current;
+      const width = video?.videoWidth || video?.clientWidth || 1280;
+      const height = video?.videoHeight || video?.clientHeight || 720;
+      broadcastCursor(
+        localCursorRef.current.x + ((pointer.dx || 0) * 2.2) / width,
+        localCursorRef.current.y + ((pointer.dy || 0) * 2.2) / height,
+      );
+    } else if (k === "click") {
+      broadcastCursor(localCursorRef.current.x, localCursorRef.current.y, true);
+    }
     if (k && k !== "move") broadcastControl(); // avisa presença quando clica/digita
+  }
+  function requestOrbTool(request: { action: string; mode?: OrbMode; name?: string; command?: string; target?: string }): Promise<OrbToolResult> {
+    const ch = controlRef.current;
+    if (!ch || ch.readyState !== "open") {
+      return Promise.resolve({ ok: false, error: "Canal de controle indisponível." });
+    }
+    const id = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `orb-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        orbToolRequestsRef.current.delete(id);
+        resolve({ ok: false, error: "O agente demorou demais para responder." });
+      }, 35000);
+      orbToolRequestsRef.current.set(id, { resolve, timer });
+      try {
+        ch.send(JSON.stringify({ kind: "tool-request", id, request }));
+        broadcastControl();
+      } catch {
+        clearTimeout(timer);
+        orbToolRequestsRef.current.delete(id);
+        resolve({ ok: false, error: "Não foi possível enviar a ferramenta ao agente." });
+      }
+    });
   }
   function combo(name: string) {
     sendInput({ kind: "combo", name });
@@ -602,8 +759,26 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
   // Orb AUTÔNOMO: executa uma ação real na máquina remota (digitar, teclas,
   // clicar, abrir app). Traduz comandos de alto nível em eventos do canal de
   // controle. Retorna uma confirmação curta pro Orb narrar.
-  async function orbControl(a: { kind: string; text?: string; name?: string; x?: number; y?: number }): Promise<string> {
+  async function orbControl(a: OrbControlAction): Promise<string> {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    if (a.kind === "system" && a.name) {
+      const result = await requestOrbTool({ action: "diagnostic", name: a.name });
+      return result.ok
+        ? `RESULTADO DO DIAGNÓSTICO "${a.name}":\n${result.output || "Concluído sem saída."}`
+        : `${result.blocked ? "BLOQUEADO" : "ERRO"} NO DIAGNÓSTICO "${a.name}": ${result.error || "Falha desconhecida."}`;
+    }
+    if (a.kind === "command" && a.text) {
+      const result = await requestOrbTool({ action: "run_command", mode: orbMode || "supervised", command: a.text });
+      return result.ok
+        ? `RESULTADO DO COMANDO:\n${result.output || "Concluído sem saída."}`
+        : `${result.blocked ? "COMANDO BLOQUEADO" : result.approved === false ? "COMANDO NÃO AUTORIZADO" : "ERRO NO COMANDO"}: ${result.error || "Falha desconhecida."}`;
+    }
+    if (a.kind === "launch" && a.text) {
+      const result = await requestOrbTool({ action: "launch_app", target: a.text });
+      return result.ok
+        ? result.output || `Aplicativo aberto: ${a.text}.`
+        : `${result.blocked ? "ABERTURA BLOQUEADA" : "ERRO AO ABRIR"}: ${result.error || "Falha desconhecida."}`;
+    }
     if (a.kind === "moveat" && a.x != null && a.y != null) {
       // SÓ move o cursor (não clica). A IA usa isto para mirar e conferir no próximo
       // print se o cursor caiu no elemento certo, antes de clicar.
@@ -646,13 +821,9 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
       return "cliquei";
     }
     if (a.kind === "open" && a.text) {
-      // Abre um app pelo nome: Win+R → digita → Enter (Windows/Linux com menu).
-      sendInput({ kind: "combo", name: "run" });
-      await wait(500);
-      sendInput({ kind: "type", text: a.text });
-      await wait(250);
-      sendInput({ kind: "combo", name: "enter" });
-      return `abrindo ${a.text}`;
+      // Compatibilidade com memórias antigas: passa pela mesma lista segura de
+      // aplicativos e nunca abre terminal/Executar para contornar confirmações.
+      return orbControl({ kind: "launch", text: a.text });
     }
     return "";
   }
@@ -840,9 +1011,9 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
             <FolderOpen size={14} /> Arquivos
           </button>
           <button
-            onClick={() => setOrbOpen((v) => !v)}
+            onClick={toggleOrb}
             title="Orb — assistente de IA por voz durante o acesso"
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${orbOpen ? "bg-indigo-600 text-white" : "bg-white/5 hover:bg-white/10"}`}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${orbOpen || orbModePickerOpen ? "bg-indigo-600 text-white" : "bg-white/5 hover:bg-white/10"}`}
           >
             <Bot size={14} /> Orb
           </button>
@@ -953,6 +1124,26 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
               ))}
             </div>
           )}
+
+          {/* Cursores colaborativos: cada pessoa conectada aparece com sua cor e nome. */}
+          {Object.values(remoteCursors).map((cursor) => {
+            const point = ghostPx(cursor.x, cursor.y);
+            return (
+              <div
+                key={cursor.id}
+                className={`pointer-events-none ${gameMode || fs ? "fixed" : "absolute"} z-[98] transition-[left,top] duration-75 ease-linear`}
+                style={{ left: `${point.left}px`, top: `${point.top}px` }}
+              >
+                <MousePointer2 size={24} color="white" fill={cursor.color} strokeWidth={1.5} style={{ filter: `drop-shadow(0 2px 4px ${cursor.color})` }} />
+                <span className="absolute left-4 top-4 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-lg" style={{ background: cursor.color }}>
+                  {cursor.name}
+                </span>
+                {cursor.click > 0 && (
+                  <span key={cursor.click} className="absolute left-0 top-0 w-5 h-5 rounded-full border-2 animate-ping" style={{ borderColor: cursor.color, animationIterationCount: 1 }} />
+                )}
+              </div>
+            );
+          })}
 
           {/* Ponteiro fantasma do Orb — desliza até o alvo, com "ping" ao clicar. */}
           {ghost && (
@@ -1214,7 +1405,37 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
         </div>
       )}
 
-      {orbOpen && <Orb slot="orb" title="Orb" contextLabel={agent.name} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={() => setOrbOpen(false)} />}
+      {orbModePickerOpen && (
+        <div role="dialog" aria-modal="true" aria-labelledby="orb-mode-title" className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setOrbModePickerOpen(false)}>
+          <div className="relative w-full max-w-lg rounded-3xl border border-indigo-400/25 bg-[#0b0f16] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.65)]" onClick={(e) => e.stopPropagation()}>
+            <span className="absolute -top-3 right-10 w-6 h-6 rotate-45 border-l border-t border-indigo-400/25 bg-[#0b0f16]" />
+            <button onClick={() => setOrbModePickerOpen(false)} className="absolute right-4 top-4 p-1.5 rounded-lg text-gray-400 hover:bg-white/10 cursor-pointer" aria-label="Fechar">
+              <X size={16} />
+            </button>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="w-11 h-11 rounded-2xl orb-glow flex items-center justify-center"><Bot size={22} className="text-white" /></span>
+              <div>
+                <h3 id="orb-mode-title" className="text-base font-bold text-white">Como o Orb deve trabalhar?</h3>
+                <p className="text-[11px] text-gray-400">A escolha vale somente para esta sessão do assistente.</p>
+              </div>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3 mt-5">
+              <button onClick={() => startOrb("supervised")} className="text-left rounded-2xl border border-emerald-400/30 bg-emerald-500/10 hover:bg-emerald-500/15 p-4 cursor-pointer transition-colors">
+                <span className="flex items-center gap-2 text-sm font-bold text-emerald-200"><ShieldCheck size={18} /> Supervisionado</span>
+                <span className="block text-[11px] leading-relaxed text-gray-300 mt-2">O Orb diagnostica sozinho, mas pede autorização local antes de alterar o computador.</span>
+                <span className="block text-[10px] text-emerald-300/70 mt-3">Recomendado para suporte acompanhado</span>
+              </button>
+              <button onClick={() => startOrb("autonomous")} className="text-left rounded-2xl border border-amber-400/35 bg-amber-500/10 hover:bg-amber-500/15 p-4 cursor-pointer transition-colors">
+                <span className="flex items-center gap-2 text-sm font-bold text-amber-200"><TriangleAlert size={18} /> Sem supervisão</span>
+                <span className="block text-[11px] leading-relaxed text-gray-300 mt-2">Executa instalações e correções comuns sem confirmar cada etapa e tenta alternativas quando falhar.</span>
+                <span className="block text-[10px] text-amber-300/80 mt-3">Alto impacto ainda pede confirmação; ações perigosas são bloqueadas</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {orbOpen && orbMode && <Orb slot="orb" title="Orb" contextLabel={agent.name} mode={orbMode} onPoint={circlePointer} onControl={orbControl} getScreenshot={captureScreen} onClose={closeOrb} />}
       {toolsOpen && <ToolsPicker title="Instalar no cliente" actionLabel="abrir/instalar" onPick={openToolOnClient} onClose={() => setToolsOpen(false)} />}
       {fs && !gameMode && (
         <button onClick={() => setFs(false)} title="Sair da tela cheia" className="fixed top-4 right-4 z-[97] flex items-center gap-1 text-xs bg-black/60 hover:bg-black/80 text-white px-3 py-2 rounded-lg cursor-pointer backdrop-blur">
