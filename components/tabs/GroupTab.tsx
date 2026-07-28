@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Users2, Plus, LogIn, Copy, Check, Crown, Vote, CalendarPlus,
   Link2, Image as ImageIcon, FileText, Send, Video, Megaphone,
-  CalendarDays, ArrowLeft, Paperclip, ShieldCheck,
+  CalendarDays, ArrowLeft, Paperclip, ShieldCheck, Pencil, Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
@@ -38,6 +38,8 @@ type Agenda = {
   done: boolean;
   created_by: string;
   created_at: string;
+  event_ids?: string[] | null;
+  task_ids?: string[] | null;
 };
 
 type Section = "mural" | "chamada" | "agenda" | "membros";
@@ -417,6 +419,9 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDue, setEditDue] = useState("");
   const canEdit = group.leader_id === me || group.created_by === me;
 
   async function load() {
@@ -445,7 +450,31 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
 
   async function toggle(a: Agenda) {
     if (!supabase || !canEdit) return;
-    await supabase.from("group_agenda").update({ done: !a.done }).eq("id", a.id);
+    const { error } = await supabase.rpc("toggle_group_agenda", { p_id: a.id });
+    if (error) { alert(error.message); return; }
+    await load();
+  }
+
+  function startEdit(a: Agenda) {
+    setEditing(a.id); setEditTitle(a.title); setEditDue(a.due || "");
+  }
+  async function saveEdit() {
+    if (!supabase || !editing || !editTitle.trim() || busy) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("edit_group_agenda", {
+        p_id: editing, p_title: editTitle.trim(), p_due: editDue || null,
+      });
+      if (error) { alert(error.message); return; }
+      setEditing(null);
+      await load();
+    } finally { setBusy(false); }
+  }
+  async function remove(a: Agenda) {
+    if (!supabase || !canEdit) return;
+    if (!confirm(`Excluir "${a.title}"? Some do calendário e do Kanban de todos os membros.`)) return;
+    const { error } = await supabase.rpc("delete_group_agenda", { p_id: a.id });
+    if (error) { alert(error.message); return; }
     await load();
   }
 
@@ -472,7 +501,7 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
       ) : (
         <p className="rounded-lg border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs text-slate-400">
           <ShieldCheck size={13} className="mr-1 inline" />
-          Só o líder do grupo edita a agenda. As tarefas caem automaticamente no seu calendário.
+          Só o líder do grupo edita a agenda. As tarefas caem automaticamente no calendário e no Kanban de cada membro.
         </p>
       )}
 
@@ -481,18 +510,45 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
       ) : (
         <div className="space-y-2">
           {items.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/50 p-3">
-              <button
-                onClick={() => toggle(a)}
-                disabled={!canEdit}
-                className={`grid h-5 w-5 place-items-center rounded border ${a.done ? "border-emerald-500 bg-emerald-500" : "border-slate-500"} ${canEdit ? "" : "opacity-60"}`}
-              >
-                {a.done && <Check size={14} className="text-white" />}
-              </button>
-              <div className="flex-1">
-                <p className={`text-sm ${a.done ? "text-slate-500 line-through" : "text-slate-100"}`}>{a.title}</p>
-                {a.due && <p className="text-xs text-indigo-300">{new Date(a.due + "T00:00:00").toLocaleDateString("pt-BR")}</p>}
-              </div>
+            <div key={a.id} className="rounded-xl border border-slate-700 bg-slate-800/50 p-3">
+              {editing === a.id ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="flex-1 rounded-lg border border-indigo-500 bg-slate-900 px-3 py-1.5 text-sm text-white outline-none"
+                    autoFocus
+                  />
+                  <input
+                    type="date"
+                    value={editDue}
+                    onChange={(e) => setEditDue(e.target.value)}
+                    className="rounded-lg border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white outline-none"
+                  />
+                  <button onClick={saveEdit} disabled={busy} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50">Salvar</button>
+                  <button onClick={() => setEditing(null)} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-600">Cancelar</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => toggle(a)}
+                    disabled={!canEdit}
+                    className={`grid h-5 w-5 shrink-0 place-items-center rounded border ${a.done ? "border-emerald-500 bg-emerald-500" : "border-slate-500"} ${canEdit ? "" : "opacity-60"}`}
+                  >
+                    {a.done && <Check size={14} className="text-white" />}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm ${a.done ? "text-slate-500 line-through" : "text-slate-100"}`}>{a.title}</p>
+                    {a.due && <p className="text-xs text-indigo-300">{new Date(a.due + "T00:00:00").toLocaleDateString("pt-BR")}</p>}
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => startEdit(a)} title="Editar" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white"><Pencil size={14} /></button>
+                      <button onClick={() => remove(a)} title="Excluir" className="rounded-lg p-1.5 text-slate-400 hover:bg-red-600/30 hover:text-red-300"><Trash2 size={14} /></button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
