@@ -38,7 +38,20 @@ export const BILLING_TEMPLATES: { id: string; label: string; template: string }[
   },
 ];
 
-export type BillingItem = { descricao: string; valor: number | string };
+// `_key` é só para identidade em listas na UI (nunca é salvo — quem grava no
+// banco projeta explicitamente {descricao, valor}).
+export type BillingItem = { descricao: string; valor: number | string; _key?: string };
+
+let _itemSeq = 0;
+export function newBillingItem(): BillingItem {
+  _itemSeq += 1;
+  return { descricao: "", valor: "", _key: `item-${Date.now()}-${_itemSeq}` };
+}
+// Garante que cada item tenha uma chave estável (para itens vindos do banco,
+// que não têm _key). Chamar ao carregar/inicializar uma lista.
+export function withKeys(itens: BillingItem[] | null | undefined): BillingItem[] {
+  return (itens || []).map((it) => (it._key ? it : { ...it, _key: newBillingItem()._key }));
+}
 export type TemplateVars = { nome?: string; valor?: number | string; vencimento?: string; pix?: string; empresa?: string; extrato?: string; motivo?: string };
 
 const brl = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Building2, ClipboardList, Copy, Cpu, Check as CheckIcon, FolderTree, HardDrive, LayoutGrid, MemoryStick, MessageSquare, Monitor, Pencil, Plus, Search, Table as TableIcon, Trash2, Upload, UserPlus, Wifi, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
+import FolderBrowser from "@/components/FolderBrowser";
 import type { Client, Profile, RemoteAgent } from "@/lib/types";
 
 const TAX_REGIMES = ["MEI", "Simples Nacional", "Lucro Presumido", "Lucro Real", "Isento / Outro"];
@@ -133,6 +134,7 @@ function AgentInfoPanel({ agent }: { agent: RemoteAgent }) {
 export default function ClientsTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [agents, setAgents] = useState<RemoteAgent[]>([]);
+  const [thirdParties, setThirdParties] = useState<{ id: string; name: string }[]>([]);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<RemoteAgent | null>(null);
@@ -148,15 +150,17 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
-    const [cRes, aRes, coRes, sRes] = await Promise.all([
+    const [cRes, aRes, coRes, sRes, tRes] = await Promise.all([
       supabase.from("clients").select("*").eq("company_id", companyId).order("name"),
       supabase.from("remote_agents").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
       supabase.from("companies").select("company_code").eq("id", companyId).maybeSingle(),
       supabase.from("company_settings").select("client_form_extra").eq("company_id", companyId).maybeSingle(),
+      supabase.from("third_parties").select("id,name").eq("company_id", companyId).order("name"),
     ]);
     setClients((cRes.data as Client[]) ?? []);
     setAgents((aRes.data as RemoteAgent[]) ?? []);
     setCompanyCode((coRes.data?.company_code as string) ?? "");
+    setThirdParties((tRes.data as { id: string; name: string }[]) ?? []);
     const ex = Array.isArray(sRes.data?.client_form_extra) ? (sRes.data!.client_form_extra as { id: string; label: string; type?: string }[]) : [];
     // As colunas extras seguem os campos que a empresa adicionou ao formulário de
     // cadastro (rótulo = nome da coluna). Os dados ficam em clients.custom_data.
@@ -170,6 +174,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
       .channel("clients-tab")
       .on("postgres_changes", { event: "*", schema: "public", table: "clients" }, () => load())
       .on("postgres_changes", { event: "*", schema: "public", table: "remote_agents" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "third_parties" }, () => load())
       .subscribe();
     return () => {
       if (supabase) supabase.removeChannel(ch);
@@ -190,6 +195,14 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
     } else {
       await supabase.from("remote_agents").update({ client_id: null }).eq("id", agentId);
     }
+    load();
+  }
+
+  // Vincula/desvincula o terceiro direto no cadastro do cliente (mesmo campo que
+  // a aba "Acesso de terceiros" usa — fica sincronizado nos dois lugares).
+  async function linkThirdParty(clientId: string, thirdPartyId: string | null) {
+    if (!supabase) return;
+    await supabase.from("clients").update({ third_party_id: thirdPartyId }).eq("id", clientId);
     load();
   }
 
@@ -432,6 +445,22 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
                   </select>
                 )}
               </div>
+
+              {canManage && thirdParties.length > 0 && (
+                <div className="bg-black/20 rounded-lg p-2.5">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">Terceiro (contabilidade)</p>
+                  <select
+                    value={c.third_party_id ?? ""}
+                    onChange={(e) => linkThirdParty(c.id, e.target.value || null)}
+                    className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none cursor-pointer"
+                  >
+                    <option value="">Sem terceiro vinculado</option>
+                    {thirdParties.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           );
         })}
@@ -441,7 +470,7 @@ export default function ClientsTab({ profile, onOpenMessages }: { profile: Profi
       {hovered && !viewing && <AgentInfoPanel agent={hovered} />}
       {showForm && <FormLinkModal code={companyCode} onClose={() => setShowForm(false)} />}
       {showFormEditor && <ClientFormEditor companyId={companyId} onClose={() => setShowFormEditor(false)} />}
-      {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} />}
+      {adding && <AddClientModal onClose={() => setAdding(false)} onSaved={load} createdBy={profile?.id ?? null} companyId={companyId} thirdParties={thirdParties} />}
       {viewing && <RemoteViewer agent={viewing} profile={profile} onClose={() => setViewing(null)} />}
     </div>
   );
@@ -452,11 +481,13 @@ function AddClientModal({
   onSaved,
   createdBy,
   companyId,
+  thirdParties,
 }: {
   onClose: () => void;
   onSaved: () => void;
   createdBy: string | null;
   companyId: string | null;
+  thirdParties: { id: string; name: string }[];
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -465,6 +496,7 @@ function AddClientModal({
   const [regime, setRegime] = useState("");
   const [logo, setLogo] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [thirdPartyId, setThirdPartyId] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -488,6 +520,7 @@ function AddClientModal({
       notes: notes.trim() || null,
       company_id: companyId,
       created_by: createdBy,
+      third_party_id: thirdPartyId || null,
     }).select("id").single();
     if (error) {
       setSaving(false);
@@ -566,6 +599,18 @@ function AddClientModal({
             ))}
           </select>
         </div>
+        {thirdParties.length > 0 && (
+          <select
+            value={thirdPartyId}
+            onChange={(e) => setThirdPartyId(e.target.value)}
+            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer"
+          >
+            <option value="">Terceiro (contabilidade) — opcional</option>
+            {thirdParties.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        )}
         {/* Logo/imagem da empresa cliente */}
         <div className="flex items-center gap-3">
           {logo ? (
@@ -621,7 +666,6 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
   const [error, setError] = useState<string | null>(null);
   const [manage, setManage] = useState<ThirdParty | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [allFolders, setAllFolders] = useState<string[]>(DEFAULT_CLIENT_SUBFOLDERS);
 
   const load = useCallback(async () => {
     if (!supabase || !companyId) return;
@@ -629,18 +673,6 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
     setTps((data as ThirdParty[]) ?? []);
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
-
-  // Carrega TODAS as pastas do servidor (nomes distintos) para o gestor escolher
-  // quais o terceiro enxerga — a de "Documentos" já vem marcada por padrão.
-  useEffect(() => {
-    if (!supabase || !companyId) return;
-    supabase.from("files").select("name").eq("company_id", companyId).eq("type", "folder").then(({ data }) => {
-      const names = Array.from(new Set([...(data ?? []).map((f) => f.name as string).filter(Boolean), ...DEFAULT_CLIENT_SUBFOLDERS]));
-      // "Documentos" primeiro, o resto em ordem alfabética.
-      names.sort((a, b) => (a === "Documentos" ? -1 : b === "Documentos" ? 1 : a.localeCompare(b, "pt-BR")));
-      setAllFolders(names);
-    });
-  }, [companyId]);
 
   async function add() {
     if (!supabase || !name.trim()) return;
@@ -731,16 +763,9 @@ function ThirdPartiesManager({ companyId, clients, onChanged }: { companyId: str
                     <button onClick={() => { const p = prompt("Nova senha para este terceiro (deixe vazio para manter):"); if (p) savePerms(t, {}, p); }} className="text-emerald-400 hover:text-emerald-300 cursor-pointer">trocar senha</button>
                   </div>
                   {t.can_view_folders && (
-                    <div className="mb-3 text-[11px] text-gray-300 bg-black/20 rounded-lg p-2">
-                      <span className="text-gray-500">Pastas do servidor que este terceiro pode ver (a de Documentos já vem marcada):</span>
-                      <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap mt-1.5 max-h-32 overflow-y-auto custom-scroll">
-                        {allFolders.map((folder) => {
-                          const on = !t.visible_folders || t.visible_folders.length === 0 || t.visible_folders.includes(folder);
-                          return (
-                            <label key={folder} className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={on} onChange={() => saveFolders(t, folder)} className="accent-emerald-500" /> {folder}</label>
-                          );
-                        })}
-                      </div>
+                    <div className="mb-3 text-[11px] text-gray-300">
+                      <span className="text-gray-500 block mb-1.5">Pastas que este terceiro pode ver — abra as pastas para achar a que você quer marcar:</span>
+                      <FolderBrowser companyId={companyId} selected={t.visible_folders ?? []} onToggle={(folder) => saveFolders(t, folder)} />
                       <span className="text-[10px] text-gray-500 mt-1 block">Nada marcado = todas as pastas. Marque só as que ele deve enxergar.</span>
                     </div>
                   )}

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Pencil, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import { BILLING_DEFAULT_TEMPLATE, BILLING_TEMPLATES, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
+import { BILLING_DEFAULT_TEMPLATE, BILLING_TEMPLATES, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, newBillingItem, withKeys, type BillingItem } from "@/lib/billing";
 
 type Charge = { id: string; name: string; tipo: string; valor: number; recorrencia: string; dia_vencimento: number | null; antecedencia_dias: number | null; template: string | null; agent_id: string | null; number_id: string | null; status: string; itens?: BillingItem[] | null; motivo?: string | null; image_url?: string | null; followup_minutes?: number | null; followup_as_audio?: boolean | null; multa_atraso?: number | null };
 type Target = { id: string; charge_id: string | null; contact_id: string | null; name: string | null; phone: string | null; tipo: string | null; valor: number; due_date: string | null; status: string; sent_at: string | null; reminder_sent_at: string | null; paid_at: string | null; comprovante_url: string | null; comprovante_data: string | null; itens?: BillingItem[] | null; motivo?: string | null; inadimplente?: boolean | null; multa?: number | null };
@@ -100,6 +100,15 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
   }
   async function markPaid(t: Target) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "pago", paid_at: new Date().toISOString() }).eq("id", t.id); load(); }
   async function cancelT(t: Target) { if (!supabase) return; await supabase.from("billing_targets").update({ status: "cancelado" }).eq("id", t.id); load(); }
+  // Exclui a cobrança inteira (a exclusão em cascata já remove os lançamentos
+  // dos clientes ligados a ela, inclusive o histórico pago).
+  async function deleteCharge(c: Charge) {
+    if (!supabase) return;
+    if (!confirm(`Excluir "${c.name}"? Remove também os lançamentos dos clientes ligados a ela (inclusive os já pagos). Não pode ser desfeito.`)) return;
+    const { error } = await supabase.from("billing_charges").delete().eq("id", c.id);
+    if (error) { flash("Não consegui excluir: " + error.message); return; }
+    load(); flash("Cobrança excluída.");
+  }
 
   return (
     <div className="h-full flex flex-col bg-[#0b0f16] text-gray-100 overflow-hidden">
@@ -144,6 +153,7 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-xs text-gray-400">{ct.length} cliente(s)</span>
                       <button onClick={() => setEditCharge(c)} className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 flex items-center gap-1"><Pencil size={12} /> Editar</button>
+                      <button onClick={() => deleteCharge(c)} title="Excluir cobrança" className="p-1.5 rounded-lg bg-white/5 hover:bg-red-600/20 text-gray-400 hover:text-red-300"><Trash2 size={14} /></button>
                     </div>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -263,7 +273,7 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
   const hasItens = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
   const totalItens = itemsTotal(itens);
   const valorFinal = hasItens ? totalItens : Number(f.valor) || 0;
-  const addItem = () => setItens((s) => [...s, { descricao: "", valor: "" }]);
+  const addItem = () => setItens((s) => [...s, newBillingItem()]);
   const setItem = (i: number, k: keyof BillingItem, v: string) => setItens((s) => s.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
   const delItem = (i: number) => setItens((s) => s.filter((_, idx) => idx !== i));
   const [selected, setSelected] = useState<string[]>([]);
@@ -336,10 +346,10 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
               {itens.length === 0 && <p className="text-[11px] text-gray-500">Sem itens — cobra o valor único acima. Adicione itens para mostrar um extrato com total.</p>}
               <div className="space-y-1.5">
                 {itens.map((it, i) => (
-                  <div key={i} className="flex gap-1.5">
-                    <input className="in" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
-                    <input className="in" style={{ width: 90 }} type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
-                    <button type="button" onClick={() => delItem(i)} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400"><X size={14} /></button>
+                  <div key={it._key ?? i} className="flex gap-1.5">
+                    <input className="in min-w-0" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
+                    <input className="in shrink-0" style={{ width: 90 }} type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
+                    <button type="button" onClick={() => delItem(i)} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400 cursor-pointer shrink-0"><X size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -434,7 +444,7 @@ function EditChargeModal({ cid, charge, targets, contacts, agents, numbers, onCl
   const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
   const [template, setTemplate] = useState(charge.template || BILLING_DEFAULT_TEMPLATE);
   const [motivo, setMotivo] = useState(charge.motivo || "");
-  const [itens, setItens] = useState<BillingItem[]>((charge.itens as BillingItem[]) || []);
+  const [itens, setItens] = useState<BillingItem[]>(() => withKeys((charge.itens as BillingItem[]) || []));
   const [imageUrl, setImageUrl] = useState<string | null>(charge.image_url ?? null);
   const [followupAudio, setFollowupAudio] = useState(!!charge.followup_as_audio);
   const [uploadingImg, setUploadingImg] = useState(false);
@@ -588,15 +598,16 @@ function BillingItemsEditorInline({ itens, setItens }: { itens: BillingItem[]; s
   const total = itemsTotal(itens);
   const has = itens.some((i) => (i.descricao || "").trim() || Number(i.valor));
   const setItem = (i: number, k: keyof BillingItem, v: string) => setItens(itens.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+  const removeItem = (i: number) => setItens(itens.filter((_, idx) => idx !== i));
   return (
     <div className="bg-white/5 border border-white/10 rounded-lg p-2.5">
-      <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] text-gray-400">Extrato (itens)</span><button type="button" onClick={() => setItens([...itens, { descricao: "", valor: "" }])} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 flex items-center gap-1"><Plus size={12} /> item</button></div>
+      <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] text-gray-400">Extrato (itens)</span><button type="button" onClick={() => setItens([...itens, newBillingItem()])} className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 flex items-center gap-1"><Plus size={12} /> item</button></div>
       <div className="space-y-1.5">
         {itens.map((it, i) => (
-          <div key={i} className="flex gap-1.5">
-            <input className="flex-1 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
-            <input className="w-20 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
-            <button type="button" onClick={() => setItens(itens.filter((_, idx) => idx !== i))} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400"><X size={14} /></button>
+          <div key={it._key ?? i} className="flex gap-1.5">
+            <input className="flex-1 min-w-0 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" placeholder="Descrição" value={String(it.descricao)} onChange={(e) => setItem(i, "descricao", e.target.value)} />
+            <input className="w-20 shrink-0 bg-[#09090b] border border-white/10 rounded-lg px-2 py-1.5 text-sm" type="number" placeholder="R$" value={String(it.valor)} onChange={(e) => setItem(i, "valor", e.target.value)} />
+            <button type="button" onClick={() => removeItem(i)} className="px-2 rounded bg-white/5 hover:bg-white/10 text-gray-400 cursor-pointer shrink-0"><X size={14} /></button>
           </div>
         ))}
       </div>
