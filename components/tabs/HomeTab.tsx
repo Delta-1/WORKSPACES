@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, Fingerprint, MessageCircle, Network, Tv } from "lucide-react";
+import { Bot, Fingerprint, MessageCircle, Network, Sparkles, Tv } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 
@@ -9,10 +9,12 @@ export default function HomeTab({
   companyName,
   profile,
   onOpenTV,
+  onOpenAgent,
 }: {
   companyName: string;
   profile: Profile | null;
   onOpenTV: () => void;
+  onOpenAgent: () => void;
 }) {
   const [checkedIn, setCheckedIn] = useState(false);
   const [checkInTime, setCheckInTime] = useState<string | null>(null);
@@ -53,14 +55,14 @@ export default function HomeTab({
 
   return (
     <div className="h-full flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-2xl font-bold">Bem-vindo(a) à {companyName}</h3>
           <p className="text-sm text-gray-400 mt-1">
             Use o dock inferior ou a gaveta de aplicativos para navegar entre os módulos.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {profile && !checkedIn && (
             <button
               onClick={bateePonto}
@@ -80,6 +82,12 @@ export default function HomeTab({
             className="flex items-center gap-2 liquid-glass text-xs font-medium px-4 py-2.5 rounded-lg cursor-pointer"
           >
             <Tv size={14} /> Modo TV
+          </button>
+          <button
+            onClick={onOpenAgent}
+            className="flex items-center gap-2 rounded-lg border border-indigo-400/25 bg-indigo-500/10 px-4 py-2.5 text-xs font-medium text-indigo-100 transition hover:bg-indigo-500/20 cursor-pointer"
+          >
+            <Sparkles size={14} /> Modo Agente
           </button>
         </div>
       </div>

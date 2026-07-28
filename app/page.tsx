@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain, Truck, DollarSign } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, Mic, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, GraduationCap, FileText, Presentation, Brain, Truck, DollarSign } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -11,6 +11,7 @@ import Dock from "@/components/Dock";
 import AppDrawer from "@/components/AppDrawer";
 import ProfileMenu from "@/components/ProfileMenu";
 import TVModeOverlay from "@/components/TVModeOverlay";
+import AgentModeOverlay from "@/components/AgentModeOverlay";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
@@ -111,10 +112,14 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(false);
   const [showTV, setShowTV] = useState(false);
+  const [showAgent, setShowAgent] = useState(false);
+  const agentModeActiveRef = useRef(false);
   const [tab, setTab] = useState("inicio");
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false); // copiloto de voz global (tecla "v")
+  const [copilotPushToTalk, setCopilotPushToTalk] = useState(false);
+  const copilotVoiceHeldRef = useRef(false);
   const [editApps, setEditApps] = useState(false); // modo edição (lápis) do menu de apps
   const [quickIds, setQuickIds] = useState<string[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -155,17 +160,56 @@ export default function Home() {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
 
-  // Atalho "v" chama o copiloto de voz (menos quando está digitando num campo).
+  function beginCopilotPushToTalk() {
+    if (copilotVoiceHeldRef.current) return;
+    copilotVoiceHeldRef.current = true;
+    if (!agentModeActiveRef.current) setCopilotOpen(true);
+    setCopilotPushToTalk(true);
+  }
+  function endCopilotPushToTalk() {
+    if (!copilotVoiceHeldRef.current) return;
+    copilotVoiceHeldRef.current = false;
+    setCopilotPushToTalk(false);
+  }
+  function openAgentMode() {
+    agentModeActiveRef.current = true;
+    setCopilotOpen(false);
+    setShowAgent(true);
+  }
+  function closeAgentMode() {
+    endCopilotPushToTalk();
+    agentModeActiveRef.current = false;
+    setShowAgent(false);
+  }
+
+  // Pressione V para falar e solte para enviar. O visualizador remoto assume esse
+  // atalho durante uma sessão para não abrir dois assistentes ao mesmo tempo.
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
+    function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "v" && e.key !== "V") return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      setCopilotOpen(true);
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.documentElement.dataset.remoteViewerActive === "true") return;
+      e.preventDefault();
+      beginCopilotPushToTalk();
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    function onKeyUp(e: KeyboardEvent) {
+      if ((e.key !== "v" && e.key !== "V") || !copilotVoiceHeldRef.current) return;
+      e.preventDefault();
+      endCopilotPushToTalk();
+    }
+    function onBlur() {
+      endCopilotPushToTalk();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
   }, []);
 
   useEffect(() => {
@@ -452,6 +496,19 @@ export default function Home() {
     );
   }
 
+  if (showAgent) {
+    return (
+      <AgentModeOverlay
+        companyName={company.name}
+        logoDataUrl={company.logoDataUrl}
+        pushToTalkActive={copilotPushToTalk}
+        onPushToTalkStart={beginCopilotPushToTalk}
+        onPushToTalkEnd={endCopilotPushToTalk}
+        onClose={closeAgentMode}
+      />
+    );
+  }
+
   return (
     <div className="h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
       <header className="h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
@@ -496,7 +553,7 @@ export default function Home() {
       </header>
 
       <main className="flex-1 overflow-hidden p-3 sm:p-6 pb-24 sm:pb-28">
-        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} />}
+        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} />}
         {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} />}
         {tab === "kanban" && <KanbanTab profile={profile} />}
         {tab === "calendario" && <CalendarTab profile={profile} />}
@@ -552,7 +609,34 @@ export default function Home() {
         )}
       </main>
 
-      {copilotOpen && <Orb slot="internal" title="Copilot" autoVoice onClose={() => setCopilotOpen(false)} />}
+      <button
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          beginCopilotPushToTalk();
+        }}
+        onPointerUp={endCopilotPushToTalk}
+        onPointerCancel={endCopilotPushToTalk}
+        title="Segure para falar com o Copilot"
+        aria-label="Segure para falar com o Copilot e solte para enviar"
+        className={`sm:hidden fixed right-4 bottom-24 z-[70] h-12 px-3 rounded-2xl border text-emerald-200 shadow-2xl backdrop-blur flex items-center gap-2 transition-transform cursor-pointer touch-none select-none ${
+          copilotPushToTalk ? "scale-95 border-emerald-300 bg-emerald-600/40" : "border-emerald-400/35 bg-[#0b0f16]/95"
+        }`}
+      >
+        <span className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center font-black text-sm">V</span>
+        <Mic size={16} />
+        <span className="text-[10px] font-semibold">Segure</span>
+      </button>
+
+      {copilotOpen && (
+        <Orb
+          slot="internal"
+          title="Copilot"
+          pushToTalkActive={copilotPushToTalk}
+          voicePrompt="Como posso ajudar?"
+          onClose={() => setCopilotOpen(false)}
+        />
+      )}
 
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}

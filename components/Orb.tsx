@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, Crosshair, Mic, Send, Volume2, X } from "lucide-react";
+import AgentCore from "@/components/AgentCore";
 import { supabase } from "@/lib/supabase-client";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -26,7 +27,11 @@ export default function Orb({
   slot = "orb",
   title = "Orb",
   contextLabel,
-  autoVoice = false,
+  pushToTalkActive = false,
+  voicePrompt = "Pode falar, estou te ouvindo.",
+  variant = "floating",
+  alwaysListening = false,
+  requireWakeWord = false,
   mode = "supervised",
   onPoint,
   onControl,
@@ -36,7 +41,11 @@ export default function Orb({
   slot?: string;
   title?: string;
   contextLabel?: string;
-  autoVoice?: boolean;
+  pushToTalkActive?: boolean;
+  voicePrompt?: string;
+  variant?: "floating" | "agent";
+  alwaysListening?: boolean;
+  requireWakeWord?: boolean;
   mode?: OrbMode;
   onPoint?: () => void;
   onControl?: (a: ControlAction) => Promise<string>;
@@ -53,6 +62,16 @@ export default function Orb({
   const [minimized, setMinimized] = useState(true); // padrão = BOLA (não abre o chat)
   const recRef = useRef<Rec | null>(null);
   const activeRef = useRef(false);
+  const voiceOnRef = useRef(false);
+  const oneShotVoiceRef = useRef(false);
+  const pushHeldRef = useRef(false);
+  const pushTextRef = useRef("");
+  const pushInterimRef = useRef("");
+  const pushSubmittedRef = useRef(false);
+  const pushSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nameRef = useRef(title);
+  const alwaysListeningRef = useRef(alwaysListening);
+  const wakeArmedUntilRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [agentId, setAgentId] = useState<string | null>(null);
 
@@ -129,6 +148,7 @@ export default function Orb({
       if (data?.name) setName(data.name);
     });
   }, [slot]);
+  useEffect(() => { nameRef.current = name; }, [name]);
 
   // Catálogo da loja (App Hub) — biblioteca de apps oficiais para o Orb usar ao
   // instalar algo (link oficial, sem depender de sites duvidosos).
@@ -225,7 +245,14 @@ export default function Orb({
     const resume = () => {
       speakingRef.current = false;
       setSpeaking(false);
-      if (activeRef.current) { try { recRef.current?.start(); } catch { /* ignore */ } }
+      if (activeRef.current) {
+        try {
+          recRef.current?.start();
+          setListening(true);
+        } catch { /* ignore */ }
+      } else if (alwaysListeningRef.current && !pushHeldRef.current) {
+        startHandsFree();
+      }
     };
     try {
       const headers = await authHeaders();
@@ -342,7 +369,7 @@ export default function Orb({
           count = r.count;
           controlResults = r.results;
         }
-        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOn) speak(reply); if (onControl) showCaption(reply); }
+        if (reply) { convo = [...convo, { role: "assistant", text: reply }]; setMsgs(convo); showFloat(reply); if (voiceOnRef.current) speak(reply); if (onControl) showCaption(reply); }
         const markedDone = /«?\s*fim\s*»?/i.test(raw);
         // Se houve ação neste turno, o Orb ainda precisa observar o resultado
         // real antes de poder declarar a tarefa concluída.
@@ -378,6 +405,17 @@ export default function Orb({
       setMsgs((m) => [...m, { role: "assistant", text: "Tive um problema para responder agora." }]);
     } finally {
       setBusy(false);
+      if (oneShotVoiceRef.current) {
+        oneShotVoiceRef.current = false;
+        if (alwaysListeningRef.current) {
+          voiceOnRef.current = true;
+          setVoiceOn(true);
+          if (!speakingRef.current) startHandsFree();
+        } else {
+          voiceOnRef.current = false;
+          setVoiceOn(false);
+        }
+      }
     }
   }
 
@@ -390,18 +428,59 @@ export default function Orb({
   // Palavra de acordar tolerante a erro de reconhecimento: "orb" e o que costuma
   // ser ouvido errado (orbe, órbi, orbi, orbis, orbiz, barbie, hobby, robie…).
   const WAKE = /\b(orbe?s?|[óo]rb[ie]s?|orbiz|orbes|barb(?:ie|i)|hobb?y|rob(?:ie|y)|orv[ei])\b/gi;
-  function handleTranscript(raw: string) {
-    showFloat(raw); // mostra o que você falou flutuando ao lado da bola
+  function dynamicWakeRegex() {
+    const aliases = [nameRef.current, ...(slot === "internal" ? ["Copilot", "Copiloto"] : ["Orb", "Orbe"])]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .filter((value, index, values) => values.findIndex((item) => item.toLocaleLowerCase("pt-BR") === value.toLocaleLowerCase("pt-BR")) === index)
+      .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return new RegExp(`(?:^|[\\s,.:!?-])(?:${aliases.join("|")})(?=$|[\\s,.:!?-])`, "iu");
+  }
+  function handleTranscript(raw: string, bypassWakeWord = false) {
     const t = raw.trim();
+    if (!t) return;
+
+    const dynamicWake = dynamicWakeRegex();
+    let stripped = t;
+    if (requireWakeWord && !bypassWakeWord) {
+      const now = Date.now();
+      const wasCalled = dynamicWake.test(t);
+      if (!wasCalled && now > wakeArmedUntilRef.current) return;
+      if (wasCalled) {
+        wakeArmedUntilRef.current = now + 8000;
+        stripped = stripped.replace(dynamicWake, " ");
+      }
+    } else {
+      stripped = stripped.replace(dynamicWake, " ");
+    }
+    stripped = stripped.replace(WAKE, " ").replace(/^[\s,.:!?-]+/, "").replace(/\s+/g, " ").trim();
+    showFloat(stripped || t);
+
     // Fechar por voz: "tchau", "bye", "bye bye" (com ou sem "orb").
-    if (/\b(tchau|bye ?bye|bye|adeus)\b/i.test(t) || /(finaliz|encerr|deslig|é isso orb|pode sair orb|obrigado orb)/i.test(t)) {
+    if (/\b(tchau|bye ?bye|bye|adeus)\b/i.test(stripped) || /(finaliz|encerr|deslig|é isso orb|pode sair orb|obrigado orb)/i.test(stripped)) {
       farewellAndClose();
       return;
     }
-    // Tira a palavra de acordar do começo (ex.: "Orbe, abre o WhatsApp" → "abre o
-    // WhatsApp"). Se sobrou só o chamado, responde presente e fica ouvindo.
-    const stripped = t.replace(WAKE, "").replace(/^[\s,.:!?-]+/, "").trim();
-    if (!stripped) { showFloat("Oi! Pode falar."); if (voiceOn) speak("Oi! Estou aqui, pode falar."); return; }
+
+    // Dizer apenas o nome arma uma janela curta para a pergunta seguinte.
+    if (!stripped) {
+      const ready = `Oi! Pode falar.`;
+      showFloat(ready);
+      if (voiceOnRef.current) speak(ready);
+      if (oneShotVoiceRef.current) {
+        oneShotVoiceRef.current = false;
+        if (alwaysListeningRef.current) {
+          voiceOnRef.current = true;
+          setVoiceOn(true);
+          if (!speakingRef.current) startHandsFree();
+        } else {
+          voiceOnRef.current = false;
+          setVoiceOn(false);
+        }
+      }
+      return;
+    }
+    wakeArmedUntilRef.current = 0;
     // Dedup: ignora o mesmo comando (ou quase igual) repetido em até 6s — impede o
     // loop de "abre o YouTube" várias vezes seguidas.
     const norm = stripped.toLowerCase().replace(/[^\wà-ú\s]/gi, "").replace(/\s+/g, " ").trim();
@@ -441,7 +520,10 @@ export default function Orb({
       const err = ev?.error || "";
       // Permissão negada: não adianta religar (evita loop de pedido de permissão).
       if (err === "not-allowed" || err === "service-not-allowed") {
-        activeRef.current = false; setListening(false);
+        activeRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+        setListening(false);
         alert("Para falar com o Orb, permita o microfone neste site (cadeado ao lado do endereço).");
         return;
       }
@@ -451,6 +533,26 @@ export default function Orb({
     return rec;
   }
 
+  function startHandsFree() {
+    if (activeRef.current || pushHeldRef.current || speakingRef.current) return;
+    const rec = makeRec((t) => handleTranscript(t), true);
+    if (!rec) return;
+    recRef.current = rec;
+    activeRef.current = true;
+    voiceOnRef.current = true;
+    setVoiceOn(true); // conversa por voz → responde falando
+    setListening(true);
+    try {
+      rec.start();
+    } catch {
+      activeRef.current = false;
+      recRef.current = null;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
+      setListening(false);
+    }
+  }
+
   // Bola: toca para LIGAR o mic mãos-livres (fica ouvindo continuamente) e toca de
   // novo para desligar. Assim dá pra conversar sem o mic cortar toda hora.
   function toggleHandsFree() {
@@ -458,41 +560,220 @@ export default function Orb({
       activeRef.current = false;
       try { recRef.current?.stop(); } catch { /* ignore */ }
       recRef.current = null;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
       setListening(false);
       return;
     }
-    if (speakingRef.current) { try { audioRef.current?.pause(); } catch {} }
-    const rec = makeRec((t) => handleTranscript(t), true);
-    if (!rec) return;
-    recRef.current = rec;
-    activeRef.current = true;
-    setVoiceOn(true); // conversa por voz → responde falando
-    setListening(true);
-    try { rec.start(); } catch { setListening(false); }
+    startHandsFree();
   }
 
-  function startVoice() {
+  function startVoice(prompt = voicePrompt) {
+    if (activeRef.current && recRef.current) {
+      setMinimized(true);
+      voiceOnRef.current = true;
+      setVoiceOn(true);
+      showFloat(prompt);
+      speak(prompt);
+      return;
+    }
     const rec = makeRec((t) => handleTranscript(t), true);
     if (!rec) return;
+    setMinimized(true);
+    setVoiceOn(true);
+    showFloat(prompt);
     recRef.current = rec;
     activeRef.current = true;
-    try { rec.start(); } catch { /* ignore */ }
-    setVoiceOn(true);
-    setMinimized(true);
-    speak("Pode falar, estou te ouvindo.");
+    voiceOnRef.current = true;
+    try {
+      rec.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+    speak(prompt);
   }
   function stopVoice() {
     activeRef.current = false;
     try { recRef.current?.stop(); } catch { /* ignore */ }
     recRef.current = null;
+    voiceOnRef.current = false;
     setVoiceOn(false);
     setListening(false);
     setMinimized(false);
   }
-  useEffect(() => () => { activeRef.current = false; try { recRef.current?.stop(); } catch {} }, []);
-  // Ao abrir (atalho "v" ou controle remoto), começa como BOLA parada — a pessoa
-  // clica na bola para falar (não fica com o mic sempre ligado).
-  useEffect(() => { if (autoVoice) { setMinimized(true); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  function submitPushToTalk() {
+    if (pushSubmittedRef.current) return;
+    pushSubmittedRef.current = true;
+    if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    pushSubmitTimerRef.current = null;
+    const transcript = `${pushTextRef.current} ${pushInterimRef.current}`.replace(/\s+/g, " ").trim();
+    pushTextRef.current = "";
+    pushInterimRef.current = "";
+    recRef.current = null;
+    setListening(false);
+    if (!transcript) {
+      oneShotVoiceRef.current = false;
+      if (alwaysListeningRef.current) {
+        voiceOnRef.current = true;
+        setVoiceOn(true);
+        startHandsFree();
+      } else {
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+      }
+      showFloat("Não ouvi nada. Segure V e tente novamente.");
+      return;
+    }
+    handleTranscript(transcript, true);
+  }
+
+  function beginPushToTalk() {
+    if (pushHeldRef.current) return;
+    if (speakingRef.current) {
+      try { audioRef.current?.pause(); } catch { /* ignore */ }
+      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+      speakingRef.current = false;
+      setSpeaking(false);
+    }
+    activeRef.current = false;
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+    const w = window as unknown as { webkitSpeechRecognition?: new () => Rec; SpeechRecognition?: new () => Rec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) {
+      alert("Reconhecimento de voz não é suportado neste navegador. Use o Chrome.");
+      return;
+    }
+
+    pushHeldRef.current = true;
+    pushTextRef.current = "";
+    pushInterimRef.current = "";
+    pushSubmittedRef.current = false;
+    oneShotVoiceRef.current = true;
+    voiceOnRef.current = true;
+    setVoiceOn(true);
+    setMinimized(true);
+    setListening(true);
+    showFloat(`${voicePrompt} · solte V para enviar`);
+
+    const rec = new Ctor();
+    rec.lang = "pt-BR";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (e) => {
+      let interim = "";
+      const from = typeof e.resultIndex === "number" ? e.resultIndex : 0;
+      for (let i = from; i < e.results.length; i++) {
+        const result = e.results[i];
+        const text = result?.[0]?.transcript?.trim();
+        if (!text) continue;
+        if (result.isFinal ?? true) pushTextRef.current = `${pushTextRef.current} ${text}`.trim();
+        else interim = `${interim} ${text}`.trim();
+      }
+      pushInterimRef.current = interim;
+      const preview = `${pushTextRef.current} ${interim}`.replace(/\s+/g, " ").trim();
+      showFloat(preview || `${voicePrompt} · solte V para enviar`);
+    };
+    rec.onend = () => {
+      setListening(false);
+      if (pushHeldRef.current) {
+        setTimeout(() => {
+          if (!pushHeldRef.current) return;
+          try {
+            rec.start();
+            setListening(true);
+          } catch { /* ignore */ }
+        }, 120);
+        return;
+      }
+      submitPushToTalk();
+    };
+    rec.onerror = (event) => {
+      const error = event?.error || "";
+      if (error === "not-allowed" || error === "service-not-allowed") {
+        pushHeldRef.current = false;
+        pushSubmittedRef.current = true;
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+        setListening(false);
+        alert("Para falar com o Orb, permita o microfone neste site (cadeado ao lado do endereço).");
+      }
+    };
+    recRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      pushHeldRef.current = false;
+      oneShotVoiceRef.current = false;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
+      setListening(false);
+    }
+  }
+
+  function endPushToTalk() {
+    if (!pushHeldRef.current) return;
+    pushHeldRef.current = false;
+    setListening(false);
+    try {
+      recRef.current?.stop();
+      pushSubmitTimerRef.current = setTimeout(submitPushToTalk, 700);
+    } catch {
+      submitPushToTalk();
+    }
+  }
+
+  useEffect(() => () => {
+    activeRef.current = false;
+    pushHeldRef.current = false;
+    if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+  }, []);
+  // Pressionar V inicia a captura; soltar V encerra e envia uma única transcrição.
+  useEffect(() => {
+    if (pushToTalkActive) beginPushToTalk();
+    else endPushToTalk();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushToTalkActive]);
+  useEffect(() => {
+    alwaysListeningRef.current = alwaysListening;
+    if (alwaysListening) startHandsFree();
+    else if (activeRef.current && variant === "agent") stopVoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alwaysListening]);
+
+  if (variant === "agent") {
+    const coreState = speaking ? "speaking" : busy ? "thinking" : listening ? "listening" : "idle";
+    return (
+      <div className="pointer-events-none absolute inset-0 z-[100] flex flex-col items-center justify-center px-5 pb-16 pt-24">
+        <div className="mb-5 min-h-16 max-w-2xl text-center" aria-live="polite">
+          {floatText ? (
+            <p className="agent-mode-transcript text-balance text-lg font-medium leading-relaxed text-white/90 sm:text-2xl">
+              {floatText}
+            </p>
+          ) : (
+            <p className="text-sm text-white/35">Aguardando você chamar “{name}”</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={startHandsFree}
+          className="pointer-events-auto cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
+          aria-label={`Reativar a escuta de ${name}`}
+          title={`Chame “${name}” ou segure V`}
+        >
+          <AgentCore state={coreState} />
+        </button>
+        <div className="mt-7 text-center">
+          <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl">{name}</h2>
+          <p className="mt-1 text-[11px] uppercase tracking-[0.26em] text-white/40">
+            {speaking ? "Respondendo" : busy ? "Pensando" : listening ? "Escuta ambiente ativa" : "Toque para reativar"}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Modo BOLA (padrão): bolinha pulsante estilo ChatGPT. O texto aparece
   // FLUTUANDO ao lado da bola (sem balão). Toca na bola para ela te ouvir.
@@ -541,7 +822,7 @@ export default function Orb({
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${mode === "autonomous" ? "border-amber-400/40 text-amber-200 bg-amber-500/10" : "border-emerald-400/40 text-emerald-200 bg-emerald-500/10"}`}>
             {mode === "autonomous" ? "livre" : "supervisionado"}
           </span>
-          {voiceOn && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
+          {listening && <span className="text-[10px] text-indigo-300 animate-pulse">• ouvindo</span>}
         </span>
         <div className="flex items-center gap-1">
           {onPoint && (
@@ -549,7 +830,7 @@ export default function Orb({
               <Crosshair size={14} />
             </button>
           )}
-          <button onClick={voiceOn ? stopVoice : startVoice} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
+          <button onClick={voiceOn ? stopVoice : () => startVoice()} title={voiceOn ? "Desligar voz" : "Falar por voz"} className={`p-1.5 rounded-lg cursor-pointer ${voiceOn ? "bg-indigo-600 text-white" : "text-gray-300 hover:bg-white/10"}`}>
             <Mic size={14} />
           </button>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={14} /></button>
