@@ -25,8 +25,13 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
   const isGerente = profile?.role === "gerente";
 
   async function load() {
-    if (!supabase) return;
-    const sectorsRes = await supabase.from("sectors").select("*").order("created_at");
+    const companyId = profile?.company_id;
+    if (!supabase || !companyId) {
+      setSectors([]);
+      setTasks([]);
+      return;
+    }
+    const sectorsRes = await supabase.from("sectors").select("*").eq("company_id", companyId).order("created_at");
     if (sectorsRes.data) setSectors(sectorsRes.data);
 
     const effectiveSector = isGestor ? sectorId : profile?.sector_id ?? null;
@@ -34,7 +39,7 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
       setTasks([]);
       return;
     }
-    let query = supabase.from("tasks").select("*").order("created_at");
+    let query = supabase.from("tasks").select("*").eq("company_id", companyId).order("created_at");
     if (effectiveSector) query = query.eq("sector_id", effectiveSector);
     const tasksRes = await query;
     if (tasksRes.data) setTasks(tasksRes.data);
@@ -43,7 +48,7 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectorId, profile?.id]);
+  }, [sectorId, profile?.id, profile?.company_id]);
 
   useEffect(() => {
     if (isGestor && !sectorId && sectors.length > 0) setSectorId(sectors[0].id);
@@ -69,10 +74,11 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
   }
 
   async function submitModal() {
-    if (!modalTitle.trim() || !modalSectorId || !supabase) return;
+    if (!modalTitle.trim() || !modalSectorId || !supabase || !profile?.company_id) return;
     const { data } = await supabase
       .from("tasks")
       .insert({
+        company_id: profile.company_id,
         title: modalTitle.trim(),
         sector_id: modalSectorId,
         column_name: "a_fazer",
@@ -87,12 +93,14 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
 
   async function moveTask(id: string, column: TaskColumn) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, column_name: column } : t)));
-    await supabase?.from("tasks").update({ column_name: column }).eq("id", id);
+    if (!profile?.company_id) return;
+    await supabase?.from("tasks").update({ column_name: column }).eq("id", id).eq("company_id", profile.company_id);
   }
 
   async function deleteTask(id: string) {
     setTasks((prev) => prev.filter((t) => t.id !== id));
-    await supabase?.from("tasks").delete().eq("id", id);
+    if (!profile?.company_id) return;
+    await supabase?.from("tasks").delete().eq("id", id).eq("company_id", profile.company_id);
   }
 
   if (!isGestor && !profile?.sector_id) {

@@ -603,6 +603,67 @@ export default function Orb({
     setListening(false);
     setMinimized(false);
   }
+  function startOneShotVoice() {
+    if (listening) {
+      stopVoice();
+      return;
+    }
+    if (speakingRef.current) {
+      try { audioRef.current?.pause(); } catch { /* ignore */ }
+      try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+      speakingRef.current = false;
+      setSpeaking(false);
+    }
+    let heard = false;
+    const rec = makeRec((text) => {
+      heard = true;
+      activeRef.current = false;
+      recRef.current = null;
+      setListening(false);
+      handleTranscript(text, true);
+    }, false);
+    if (!rec) return;
+    const originalEnd = rec.onend;
+    rec.onend = () => {
+      originalEnd?.();
+      activeRef.current = false;
+      recRef.current = null;
+      if (!heard) {
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+        showFloat("Não ouvi nada. Toque no núcleo e tente novamente.");
+      }
+    };
+    oneShotVoiceRef.current = true;
+    activeRef.current = true;
+    voiceOnRef.current = true;
+    setVoiceOn(true);
+    setListening(true);
+    showFloat(`${voicePrompt} · fale um comando`);
+    recRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      activeRef.current = false;
+      recRef.current = null;
+      oneShotVoiceRef.current = false;
+      voiceOnRef.current = false;
+      setVoiceOn(false);
+      setListening(false);
+    }
+  }
+  function handleAgentCoreClick() {
+    if (listening) {
+      stopVoice();
+      return;
+    }
+    if (typeof window !== "undefined" && window.matchMedia("(pointer: fine)").matches) {
+      showFloat("Segure V para falar com o Copilot");
+      return;
+    }
+    startOneShotVoice();
+  }
   function submitPushToTalk() {
     if (pushSubmittedRef.current) return;
     pushSubmittedRef.current = true;
@@ -754,22 +815,25 @@ export default function Orb({
               {floatText}
             </p>
           ) : (
-            <p className="text-sm text-white/35">Aguardando você chamar “{name}”</p>
+            <>
+              <p className="text-sm text-white/35 sm:hidden">Microfone desligado · toque no núcleo</p>
+              <p className="hidden text-sm text-white/35 sm:block">Microfone desligado · segure V para falar</p>
+            </>
           )}
         </div>
         <button
           type="button"
-          onClick={startHandsFree}
+          onClick={handleAgentCoreClick}
           className="pointer-events-auto cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
-          aria-label={`Reativar a escuta de ${name}`}
-          title={`Chame “${name}” ou segure V`}
+          aria-label={listening ? `Parar a escuta de ${name}` : `Falar com ${name}`}
+          title={listening ? "Parar de ouvir" : "No celular, toque para falar. No computador, segure V."}
         >
           <AgentCore state={coreState} />
         </button>
         <div className="mt-7 text-center">
           <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl">{name}</h2>
           <p className="mt-1 text-[11px] uppercase tracking-[0.26em] text-white/40">
-            {speaking ? "Respondendo" : busy ? "Pensando" : listening ? "Escuta ambiente ativa" : "Toque para reativar"}
+            {speaking ? "Respondendo" : busy ? "Pensando" : listening ? "Ouvindo este comando" : "Microfone desligado"}
           </p>
         </div>
       </div>

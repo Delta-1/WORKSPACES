@@ -71,6 +71,7 @@ function demoNodes(): PositionedNode[] {
     data_url: null,
     drive_file_id: null,
     chatbot_id: null,
+    company_id: null,
     bot_share_status: "none",
     bot_share_requested_by: null,
     text_content: null,
@@ -244,16 +245,17 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   // parar. Suprimimos os reloads por uma janelinha após salvar.
   const suppressReloadUntil = useRef(0);
   const persistPositions = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     const client = supabase;
+    const companyId = profile.company_id;
     suppressReloadUntil.current = Date.now() + 2500;
     await Promise.all(
       nodesRef.current.map((n) =>
-        client.from("files").update({ pos_x: Math.round(n.pos_x), pos_y: Math.round(n.pos_y) }).eq("id", n.id)
+        client.from("files").update({ pos_x: Math.round(n.pos_x), pos_y: Math.round(n.pos_y) }).eq("id", n.id).eq("company_id", companyId)
       )
     ).catch(() => {});
     suppressReloadUntil.current = Date.now() + 2500;
-  }, []);
+  }, [profile?.company_id]);
 
   const tick = useCallback(() => {
     const all = nodesRef.current;
@@ -447,12 +449,18 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       kick(1);
       return;
     }
+    if (!profile?.company_id) {
+      setNodes([]);
+      setLinks([]);
+      return;
+    }
     const [{ data }, { data: linkRows }] = await Promise.all([
-      supabase.from("files").select("*").order("created_at"),
+      supabase.from("files").select("*").eq("company_id", profile.company_id).order("created_at"),
       supabase.from("file_links").select("id,source_id,target_id"),
     ]);
-    setLinks(linkRows ?? []);
     if (!data) return;
+    const visibleIds = new Set(data.map((node) => node.id));
+    setLinks((linkRows ?? []).filter((link) => visibleIds.has(link.source_id) && visibleIds.has(link.target_id)));
     const withPositions = computeMissingPositions(data) as PositionedNode[];
     setNodes(withPositions);
     nodesRef.current = withPositions;
@@ -461,7 +469,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       return original && (original.pos_x === null || original.pos_y === null);
     });
     for (const n of toPersist) {
-      await supabase.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", n.id);
+      await supabase.from("files").update({ pos_x: n.pos_x, pos_y: n.pos_y }).eq("id", n.id).eq("company_id", profile.company_id);
     }
     kick(0.6);
   }
@@ -479,7 +487,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   // Atualização ao vivo do grafo: qualquer arquivo/pasta novo (upload, automação,
   // servidor) ou ligação aparece na hora, sem precisar recarregar.
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     let t: ReturnType<typeof setTimeout> | null = null;
     const reload = () => {
       if (dragging) return; // não recarrega no meio de um arraste
@@ -491,8 +499,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       }, 600);
     };
     const ch = supabase
-      .channel("files-graph")
-      .on("postgres_changes", { event: "*", schema: "public", table: "files" }, reload)
+      .channel(`files-graph-${profile.company_id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "files", filter: `company_id=eq.${profile.company_id}` }, reload)
       .on("postgres_changes", { event: "*", schema: "public", table: "file_links" }, reload)
       .subscribe();
     return () => {
@@ -500,14 +508,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
       if (supabase) supabase.removeChannel(ch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragging]);
+  }, [dragging, profile?.company_id]);
 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected ? byId.get(selected) ?? null : null;
 
   async function handleUpload(file: File) {
     const client = supabase;
-    if (!client) return;
+    if (!client || !profile?.company_id) return;
     // Alvo: pasta selecionada, senão a primeira pasta.
     const targetFolder = selectedNode?.type === "folder" ? selectedNode.id : nodes.find((n) => n.type === "folder")?.id;
     if (!targetFolder) return;
@@ -522,6 +530,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
           name: file.name,
           type: "file",
           parent_id: targetFolder,
+          company_id: profile.company_id,
           uploaded_by: profile?.id ?? null,
           data_url: dataUrl,
           text_content: textContent,
@@ -540,7 +549,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   async function handleRename(node: PositionedNode) {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     if (node.type === "folder" && !canManage) {
       alert("Apenas gestores e gerentes podem renomear pastas.");
       return;
@@ -548,7 +557,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     const name = prompt("Novo nome:", node.name)?.trim();
     if (!name || name === node.name) return;
     const old = node.name;
-    const { error } = await supabase.from("files").update({ name }).eq("id", node.id);
+    const { error } = await supabase.from("files").update({ name }).eq("id", node.id).eq("company_id", profile.company_id);
     if (error) {
       alert("Não foi possível renomear: " + error.message);
       return;
@@ -564,7 +573,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   async function handleDelete(node: PositionedNode) {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     if (node.type === "folder" && !canManage) {
       alert("Apenas gestores e gerentes podem apagar pastas.");
       return;
@@ -576,7 +585,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     if (node.source_path && node.server_agent_id) {
       await supabase.rpc("enqueue_server_op", { p_agent_id: node.server_agent_id, p_op: "delete", p_path: node.source_path });
     }
-    const { error } = await supabase.from("files").delete().in("id", ids);
+    const { error } = await supabase.from("files").delete().in("id", ids).eq("company_id", profile.company_id);
     if (error) {
       alert("Não foi possível apagar: " + error.message);
       return;
@@ -589,13 +598,14 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   // Compartilhar pasta com o robô de IA (passa por aprovação do gestor/gerente).
   async function requestBotShare(node: PositionedNode) {
-    if (!supabase || node.type !== "folder") return;
+    if (!supabase || !profile?.company_id || node.type !== "folder") return;
     // Gerenciadores aprovam direto; funcionários enviam pedido.
     const status = canManage ? "approved" : "pending";
     const { error } = await supabase
       .from("files")
       .update({ bot_share_status: status, bot_share_requested_by: profile?.id ?? null })
-      .eq("id", node.id);
+      .eq("id", node.id)
+      .eq("company_id", profile.company_id);
     if (error) {
       alert("Não foi possível compartilhar: " + error.message);
       return;
@@ -629,9 +639,9 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   async function reviewBotShare(node: PositionedNode, approve: boolean) {
-    if (!supabase || !canManage) return;
+    if (!supabase || !profile?.company_id || !canManage) return;
     const status = approve ? "approved" : "rejected";
-    const { error } = await supabase.from("files").update({ bot_share_status: status }).eq("id", node.id);
+    const { error } = await supabase.from("files").update({ bot_share_status: status }).eq("id", node.id).eq("company_id", profile.company_id);
     if (error) {
       alert("Falha ao atualizar: " + error.message);
       return;
@@ -640,7 +650,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
   }
 
   async function handleNewFolder() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     if (!canManage) {
       alert("Apenas gestores e gerentes podem criar pastas.");
       return;
@@ -655,6 +665,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
         name: "Nova Pasta",
         type: "folder",
         parent_id: parentId ?? null,
+        company_id: profile.company_id,
         uploaded_by: profile?.id ?? null,
         pos_x: parent ? parent.pos_x + (Math.random() - 0.5) * 40 : w / 2 + (Math.random() - 0.5) * 60,
         pos_y: parent ? parent.pos_y + (Math.random() - 0.5) * 40 : h / 2 + (Math.random() - 0.5) * 60,

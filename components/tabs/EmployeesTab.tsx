@@ -48,8 +48,19 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
 
   async function removeUser(p: Profile, reason: string) {
     if (!supabase) return;
-    const { error } = await supabase.rpc("remove_user_from_company", { p_user_id: p.id, p_reason: reason });
-    if (error) throw error;
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error("Entre novamente no Workspace.");
+    const response = await fetch("/api/company/members/remove", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ userId: p.id, reason }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Não foi possível remover esta pessoa.");
     setPeople((prev) => prev.filter((x) => x.id !== p.id));
     setEditing(null);
   }
@@ -67,9 +78,11 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
     const cid = profile?.company_id ?? null;
     let pplQ = supabase.from("profiles").select("*").order("full_name", { nullsFirst: false });
     if (cid) pplQ = pplQ.eq("company_id", cid);
+    let secQ = supabase.from("sectors").select("*").order("name");
+    if (cid) secQ = secQ.eq("company_id", cid);
     const [pplRes, secRes] = await Promise.all([
       pplQ,
-      supabase.from("sectors").select("*").order("name"),
+      secQ,
     ]);
     setPeople((pplRes.data as Profile[]) ?? []);
     setSectors((secRes.data as Sector[]) ?? []);
@@ -80,8 +93,13 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
     load();
     if (!supabase) return;
     const ch = supabase
-      .channel("employees-tab")
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => load())
+      .channel(`employees-tab-${profile?.company_id ?? "none"}`)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "profiles",
+        ...(profile?.company_id ? { filter: `company_id=eq.${profile.company_id}` } : {}),
+      }, () => load())
       .subscribe();
     return () => {
       if (supabase) supabase.removeChannel(ch);
@@ -97,12 +115,13 @@ export default function EmployeesTab({ profile }: { profile: Profile | null }) {
   });
 
   async function saveEdit(role: Role, sectorId: string | null, financeAccess: boolean, toolAccess: Record<string, boolean> | null) {
-    if (!supabase || !editing) return;
+    if (!supabase || !profile?.company_id || !editing) return;
     setSaving(true);
     const { error } = await supabase
       .from("profiles")
       .update({ role, sector_id: sectorId, finance_access: financeAccess, tool_access: toolAccess })
-      .eq("id", editing.id);
+      .eq("id", editing.id)
+      .eq("company_id", profile.company_id);
     setSaving(false);
     if (error) {
       alert("Não foi possível salvar: " + error.message);

@@ -43,7 +43,7 @@ function autoLayout(sectors: Sector[]): Map<string, { x: number; y: number }> {
   return pos;
 }
 
-export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
+export default function OrgChartTab({ canEdit, profile }: { canEdit: boolean; profile: Profile | null }) {
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -58,10 +58,15 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
   const editing = canEdit && editMode;
 
   async function load() {
-    if (!supabase) return;
+    const companyId = profile?.company_id;
+    if (!supabase || !companyId) {
+      setSectors([]);
+      setProfiles([]);
+      return;
+    }
     const [sectorsRes, profilesRes] = await Promise.all([
-      supabase.from("sectors").select("*").order("created_at"),
-      supabase.from("profiles").select("*"),
+      supabase.from("sectors").select("*").eq("company_id", companyId).order("created_at"),
+      supabase.from("profiles").select("*").eq("company_id", companyId),
     ]);
     if (sectorsRes.data) setSectors(sectorsRes.data);
     if (profilesRes.data) setProfiles(profilesRes.data);
@@ -69,7 +74,7 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [profile?.company_id]);
 
   const byId = useMemo(() => new Map(sectors.map((s) => [s.id, s])), [sectors]);
   const employeesOf = (sectorId: string) => profiles.filter((p) => p.sector_id === sectorId);
@@ -81,14 +86,14 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
   const posOf = (s: Sector) => (editing ? { x: s.pos_x, y: s.pos_y } : layout.get(s.id) ?? { x: 0, y: 0 });
 
   async function addSector() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     const parent = selected ? byId.get(selected) : sectors.find((s) => s.parent_id === null);
     const siblings = sectors.filter((s) => s.parent_id === (parent?.id ?? null));
     const x = 120 + siblings.length * 180;
     const y = parent ? parent.pos_y + 150 : 80;
     const { data } = await supabase
       .from("sectors")
-      .insert({ name: "Novo Setor", parent_id: parent?.id ?? null, pos_x: x, pos_y: y })
+      .insert({ company_id: profile.company_id, name: "Novo Setor", parent_id: parent?.id ?? null, pos_x: x, pos_y: y })
       .select("*")
       .single();
     if (data) {
@@ -98,30 +103,35 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
   }
 
   async function renameSector(id: string, name: string) {
+    if (!profile?.company_id) return;
     setSectors((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
-    await supabase?.from("sectors").update({ name }).eq("id", id);
+    await supabase?.from("sectors").update({ name }).eq("id", id).eq("company_id", profile.company_id);
   }
 
   async function setLeader(id: string, leaderId: string | null) {
+    if (!profile?.company_id) return;
     setSectors((prev) => prev.map((s) => (s.id === id ? { ...s, leader_id: leaderId } : s)));
-    await supabase?.from("sectors").update({ leader_id: leaderId }).eq("id", id);
+    await supabase?.from("sectors").update({ leader_id: leaderId }).eq("id", id).eq("company_id", profile.company_id);
   }
 
   async function setSectorForProfile(profileId: string, sectorId: string | null) {
+    if (!profile?.company_id) return;
     setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, sector_id: sectorId } : p)));
-    await supabase?.from("profiles").update({ sector_id: sectorId }).eq("id", profileId);
+    await supabase?.from("profiles").update({ sector_id: sectorId }).eq("id", profileId).eq("company_id", profile.company_id);
   }
 
   async function setRole(profileId: string, role: Profile["role"]) {
+    if (!profile?.company_id) return;
     setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, role } : p)));
-    await supabase?.from("profiles").update({ role }).eq("id", profileId);
+    await supabase?.from("profiles").update({ role }).eq("id", profileId).eq("company_id", profile.company_id);
   }
 
   async function deleteSector(id: string) {
+    if (!profile?.company_id) return;
     if (!confirm("Remover este setor? Os sub-setores também serão removidos.")) return;
     setSectors((prev) => prev.filter((s) => s.id !== id && s.parent_id !== id));
     setSelected(null);
-    await supabase?.from("sectors").delete().eq("id", id);
+    await supabase?.from("sectors").delete().eq("id", id).eq("company_id", profile.company_id);
   }
 
   function screenToWorld(clientX: number, clientY: number) {
@@ -162,7 +172,9 @@ export default function OrgChartTab({ canEdit }: { canEdit: boolean }) {
     if (!dragging) return;
     const s = byId.get(dragging);
     setDragging(null);
-    if (s) await supabase?.from("sectors").update({ pos_x: s.pos_x, pos_y: s.pos_y }).eq("id", s.id);
+    if (s && profile?.company_id) {
+      await supabase?.from("sectors").update({ pos_x: s.pos_x, pos_y: s.pos_y }).eq("id", s.id).eq("company_id", profile.company_id);
+    }
   }
 
   function onWheel(e: React.WheelEvent) {

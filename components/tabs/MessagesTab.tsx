@@ -202,25 +202,35 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }));
 
   const loadConversations = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) {
+      setConversations([]);
+      return;
+    }
     const { data } = await supabase
       .from("conversations")
       .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id)")
+      .eq("company_id", profile.company_id)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
-  }, []);
+  }, [profile?.company_id]);
 
   const loadSide = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) {
+      setGroups([]);
+      setColleagues([]);
+      setNumbers([]);
+      return;
+    }
+    const companyId = profile.company_id;
     const [g, p, n] = await Promise.all([
-      supabase.from("contact_groups").select("*").order("position"),
-      supabase.from("profiles").select("*").neq("id", profile?.id ?? "").order("full_name"),
-      supabase.from("whatsapp_numbers").select("*").order("created_at"),
+      supabase.from("contact_groups").select("*").eq("company_id", companyId).order("position"),
+      supabase.from("profiles").select("*").eq("company_id", companyId).neq("id", profile.id).order("full_name"),
+      supabase.from("whatsapp_numbers").select("*").eq("company_id", companyId).order("created_at"),
     ]);
     setGroups((g.data as Group[]) ?? []);
     setColleagues((p.data as Profile[]) ?? []);
     setNumbers((n.data as WhatsappNumber[]) ?? []);
-  }, [profile?.id]);
+  }, [profile?.id, profile?.company_id]);
 
   useEffect(() => {
     loadConversations();
@@ -267,12 +277,12 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }, [loadConversations]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     const ch = supabase
-      .channel("messages-tab")
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => loadConversations())
-      .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups" }, () => loadSide())
-      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers" }, () => loadSide())
+      .channel(`messages-tab-${profile.company_id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
+      .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
+      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
         const m = payload.new as WhatsappMessageRow;
         // Toca o som de notificação quando chega mensagem NOVA de cliente (in).
@@ -305,7 +315,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     return () => {
       if (supabase) supabase.removeChannel(ch);
     };
-  }, [loadConversations, loadSide, profile?.id]);
+  }, [loadConversations, loadSide, profile?.id, profile?.company_id]);
 
   async function openConv(id: string) {
     setSelColleagueId(null);
@@ -385,10 +395,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Limpa (apaga) as mensagens da conversa aberta. Não apaga o contato.
   async function clearConversation() {
     setChatMenu(false);
-    if (!supabase || !selConv) return;
+    if (!supabase || !profile?.company_id || !selConv) return;
     if (!confirm(`Limpar todas as mensagens desta conversa com ${contactLabel(selConv.contacts)}? Isso não pode ser desfeito.`)) return;
     await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
-    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id);
+    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).eq("id", selConv.id).eq("company_id", profile.company_id);
     setMessages([]);
     loadConversations();
   }
@@ -396,10 +406,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Apaga a conversa DE VEZ (mensagens + a própria conversa) — some da lista.
   async function deleteConversation() {
     setChatMenu(false);
-    if (!supabase || !selConv) return;
+    if (!supabase || !profile?.company_id || !selConv) return;
     if (!confirm(`Apagar a conversa com ${contactLabel(selConv.contacts)} e todas as mensagens? Não dá pra desfazer.`)) return;
     await supabase.from("whatsapp_messages").delete().eq("conversation_id", selConv.id);
-    await supabase.from("conversations").delete().eq("id", selConv.id);
+    await supabase.from("conversations").delete().eq("id", selConv.id).eq("company_id", profile.company_id);
     setMessages([]);
     setSelConvId(null);
     loadConversations();
@@ -416,7 +426,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   // Backup de TODAS as conversas de uma vez (um .txt com tudo).
   async function backupAllConversations() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     setListMenu(false);
     const ids = visibleConvs.map((c) => c.id);
     if (ids.length === 0) {
@@ -457,21 +467,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   // Limpa (apaga) as mensagens de TODAS as conversas visíveis de uma vez.
   async function clearAllConversations() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     setListMenu(false);
     const ids = visibleConvs.map((c) => c.id);
     if (ids.length === 0) return;
     if (!confirm(`Apagar as mensagens de TODAS as ${ids.length} conversa(s) aqui? Faça o backup antes — isso não pode ser desfeito.`)) return;
     await supabase.from("whatsapp_messages").delete().in("conversation_id", ids);
-    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).in("id", ids);
+    await supabase.from("conversations").update({ last_message: null, last_message_at: null }).in("id", ids).eq("company_id", profile.company_id);
     if (selConv && ids.includes(selConv.id)) setMessages([]);
     loadConversations();
   }
 
   // Finaliza o atendimento (a etiqueta some).
   async function finalizeConv() {
-    if (!supabase || !selConv) return;
-    await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", selConv.id);
+    if (!supabase || !profile?.company_id || !selConv) return;
+    await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", selConv.id).eq("company_id", profile.company_id);
     loadConversations();
   }
 
@@ -491,21 +501,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   async function newGroup() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     const name = prompt("Nome do grupo/categoria:")?.trim();
     if (!name) return;
-    await supabase.from("contact_groups").insert({ name, position: groups.length });
+    await supabase.from("contact_groups").insert({ company_id: profile.company_id, name, position: groups.length });
     loadSide();
   }
   async function moveConv(convId: string, groupId: string | null) {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, group_id: groupId } : c)));
-    await supabase.from("conversations").update({ group_id: groupId }).eq("id", convId);
+    await supabase.from("conversations").update({ group_id: groupId }).eq("id", convId).eq("company_id", profile.company_id);
   }
 
   // Inicia uma conversa a partir de um número de telefone (novo contato ou já existente).
   async function startChat(rawPhone: string, name: string, chosenNumberId?: string | null) {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     let phone = rawPhone.replace(/\D/g, "");
     if (!phone) {
       alert("Digite um número de telefone válido.");
@@ -536,6 +546,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const { data: existingConv } = await supabase
       .from("conversations")
       .select("id")
+      .eq("company_id", profile.company_id)
       .eq("contact_id", contactId)
       .neq("status", "fechado")
       .order("last_message_at", { ascending: false, nullsFirst: false })
@@ -544,7 +555,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!convId) {
       const { data: newConv, error } = await supabase
         .from("conversations")
-        .insert({ contact_id: contactId, number_id: numberId, status: "atendendo" })
+        .insert({ company_id: profile.company_id, contact_id: contactId, number_id: numberId, status: "atendendo" })
         .select("id")
         .single();
       if (error || !newConv) {
@@ -590,13 +601,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Ao responder, "assume" a conversa (fica marcada com quem está atendendo) —
   // só assume se ainda não tem dono, pra não tirar a conversa de quem já pegou.
   async function claimConversation(conv: ConvRow) {
-    if (!supabase || !profile?.id) return;
+    if (!supabase || !profile?.id || !profile.company_id) return;
     const patch: Partial<Pick<ConvRow, "assignee_id" | "status">> = {};
     if (!conv.assignee_id) patch.assignee_id = profile.id;
     if (conv.status === "espera") patch.status = "atendendo";
     if (Object.keys(patch).length === 0) return;
     setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, ...patch } : c)));
-    await supabase.from("conversations").update(patch).eq("id", conv.id);
+    await supabase.from("conversations").update(patch).eq("id", conv.id).eq("company_id", profile.company_id);
   }
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
@@ -613,25 +624,26 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const botOn = Boolean(selNumber?.auto_reply);
 
   async function toggleBot() {
-    if (!supabase || !selNumber) {
+    if (!supabase || !profile?.company_id || !selNumber) {
       alert("Conecte um número de WhatsApp primeiro (botão de engrenagem).");
       return;
     }
     const next = !selNumber.auto_reply;
     if (!next) {
       setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: false } : n)));
-      await supabase.from("whatsapp_numbers").update({ auto_reply: false }).eq("id", selNumber.id);
+      await supabase.from("whatsapp_numbers").update({ auto_reply: false }).eq("id", selNumber.id).eq("company_id", profile.company_id);
       return;
     }
     // Ligar: garante um chatbot vinculado e ATIVADO neste número.
     let chatbotId = selNumber.chatbot_id;
     let apiKeyOk = false;
-    const { data: bots } = await supabase.from("chatbots").select("*").order("created_at");
+    const { data: bots } = await supabase.from("chatbots").select("*").eq("company_id", profile.company_id).order("created_at");
     let bot = chatbotId ? bots?.find((b) => b.id === chatbotId) : bots?.[0];
     if (!bot) {
       const { data: created } = await supabase
         .from("chatbots")
         .insert({
+          company_id: profile.company_id,
           name: "Assistente",
           enabled: true,
           provider: "anthropic",
@@ -650,7 +662,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       if (!bot.enabled) await supabase.from("chatbots").update({ enabled: true }).eq("id", bot.id);
     }
     setNumbers((prev) => prev.map((n) => (n.id === selNumber.id ? { ...n, auto_reply: true, chatbot_id: chatbotId } : n)));
-    await supabase.from("whatsapp_numbers").update({ auto_reply: true, chatbot_id: chatbotId }).eq("id", selNumber.id);
+    await supabase.from("whatsapp_numbers").update({ auto_reply: true, chatbot_id: chatbotId }).eq("id", selNumber.id).eq("company_id", profile.company_id);
     if (!apiKeyOk) {
       alert("Bot ligado! Só falta a chave de IA: vá em Configurações → Chatbot e cole uma API key (Anthropic ou Gemini).");
     }
@@ -899,9 +911,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     : groups.find((g) => g.id === server)?.name ?? "Grupo";
 
   async function deleteGroup(id: string) {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) return;
     if (!confirm("Excluir este grupo? As conversas voltam para 'sem grupo'.")) return;
-    await supabase.from("contact_groups").delete().eq("id", id);
+    await supabase.from("contact_groups").delete().eq("id", id).eq("company_id", profile.company_id);
     if (server === id) setServer("whatsapp");
     loadSide();
     loadConversations();

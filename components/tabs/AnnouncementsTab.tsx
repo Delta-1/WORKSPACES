@@ -17,10 +17,14 @@ export default function AnnouncementsTab({ profile }: { profile: Profile | null 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
 
   async function load() {
-    if (!supabase) return;
+    if (!supabase || !profile?.company_id) {
+      setAnnouncements([]);
+      return;
+    }
     const { data } = await supabase
       .from("announcements")
       .select("*, profiles:author_id(full_name, email)")
+      .eq("company_id", profile.company_id)
       .order("pinned", { ascending: false })
       .order("created_at", { ascending: false });
     if (data) setAnnouncements(data as unknown as Row[]);
@@ -29,13 +33,13 @@ export default function AnnouncementsTab({ profile }: { profile: Profile | null 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [profile?.company_id]);
 
   async function publish() {
-    if (!supabase || !title.trim() || !body.trim()) return;
+    if (!supabase || !profile?.company_id || !title.trim() || !body.trim()) return;
     await supabase
       .from("announcements")
-      .insert({ title: title.trim(), body: body.trim(), pinned, author_id: profile?.id ?? null });
+      .insert({ company_id: profile.company_id, title: title.trim(), body: body.trim(), pinned, author_id: profile.id });
     setTitle("");
     setBody("");
     setPinned(false);
@@ -46,7 +50,8 @@ export default function AnnouncementsTab({ profile }: { profile: Profile | null 
   async function remove(id: string) {
     if (!supabase) return;
     if (!confirm("Remover este aviso?")) return;
-    await supabase.from("announcements").delete().eq("id", id);
+    if (!profile?.company_id) return;
+    await supabase.from("announcements").delete().eq("id", id).eq("company_id", profile.company_id);
     load();
   }
 
