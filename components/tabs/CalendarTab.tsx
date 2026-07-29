@@ -38,16 +38,21 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    if (!supabase) return;
+    const companyId = profile?.company_id;
+    if (!supabase || !companyId) {
+      setEvents([]);
+      setTasks([]);
+      return;
+    }
     const first = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1).toISOString();
     const last = new Date(cursor.getFullYear(), cursor.getMonth() + 2, 0).toISOString();
     const [ev, tk] = await Promise.all([
-      supabase.from("events").select("*").gte("starts_at", first).lte("starts_at", last).order("starts_at"),
-      supabase.from("tasks").select("*").not("due_date", "is", null),
+      supabase.from("events").select("*").eq("company_id", companyId).gte("starts_at", first).lte("starts_at", last).order("starts_at"),
+      supabase.from("tasks").select("*").eq("company_id", companyId).not("due_date", "is", null),
     ]);
     if (ev.data) setEvents(ev.data as CalendarEvent[]);
     if (tk.data) setTasks(tk.data as WorkspaceTask[]);
-  }, [cursor]);
+  }, [cursor, profile?.company_id]);
 
   useEffect(() => {
     load();
@@ -112,7 +117,7 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
   }
 
   async function submit() {
-    if (!supabase || !title.trim()) return;
+    if (!supabase || !title.trim() || !profile?.company_id) return;
     setSaving(true);
     try {
       const startISO = new Date(`${date}T${allDay ? "00:00" : time}`).toISOString();
@@ -131,6 +136,7 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
         }
       }
       await supabase.from("events").insert({
+        company_id: profile.company_id,
         title: title.trim(),
         description: description || null,
         starts_at: startISO,
@@ -153,7 +159,8 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
   async function removeEvent(id: string) {
     if (!supabase) return;
     if (!confirm("Remover este agendamento?")) return;
-    await supabase.from("events").delete().eq("id", id);
+    if (!profile?.company_id) return;
+    await supabase.from("events").delete().eq("id", id).eq("company_id", profile.company_id);
     load();
   }
 
