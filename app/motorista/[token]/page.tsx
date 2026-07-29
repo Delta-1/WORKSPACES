@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
 // Portal do Motorista — página pública acessada por link/token individual.
 // Mobile-first (estilo app de entrega): status da viagem, GPS ao vivo, seletor
@@ -15,8 +16,9 @@ type Msg = { id: string; sender: string; text: string | null; created_at: string
 type Data = { driver: { id: string; nome: string; telefone: string | null; veiculo: string | null }; cargas: Carga[]; messages: Msg[] };
 
 const STAGE_LABEL: Record<string, string> = {
-  proforma: "Proforma", pedido: "Pedido", entrada: "Entrada", fumigacao: "Fumigação",
-  documentacao: "Documentação", transbordo: "Transbordo", exportacao: "Exportação", concluido: "Concluído",
+  proforma: "Negociação & Proforma", pedido: "Pedido de Compra", entrada: "Entrada NF & Romaneio",
+  fumigacao: "Fumigação por Lote", documentacao: "Início da Exportação", transbordo: "Transbordo",
+  exportacao: "Faturamento & Invoice", em_transito: "Em Trânsito", concluido: "Entregue & Concluído",
 };
 
 // Reduz a foto (fotos de câmera de celular vêm com vários MB — em base64 isso
