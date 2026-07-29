@@ -1673,7 +1673,7 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         ? await sel.ilike("codigo", `%${byCode}%`).limit(5)
         : await sel.or(`cliente_nome.ilike.%${q}%,produto.ilike.%${q}%`).limit(5);
       if (!data || !data.length) return { ok: false, message: `Não achei carga para "${q}".` };
-      const stageLbl = { proforma: "Fatura Proforma", pedido: "Pedido/Contas a Pagar", entrada: "Entrada & Romaneio", fumigacao: "Fumigação", documentacao: "Documentação aduaneira", transbordo: "Transbordo na fronteira", exportacao: "Exportação & Invoice", concluido: "Concluído" };
+      const stageLbl = { proforma: "Negociação e Fatura Proforma", pedido: "Pedido de Compra / Contas a Pagar", entrada: "Entrada NF, Estoque e Romaneio", fumigacao: "Fumigação por lote", documentacao: "Início da Exportação / Documentos", transbordo: "Transbordo na fronteira (sem nova fatura)", exportacao: "Faturamento e Invoice", em_transito: "Em trânsito", concluido: "Entregue e concluído" };
       const out = [];
       for (const c of data) {
         let veh = null, drv = null;
