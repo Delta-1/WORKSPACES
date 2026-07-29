@@ -62,6 +62,7 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
     const { data } = await supabase
       .from("group_members")
       .select("groups(*)")
+      .eq("user_id", me)
       .order("joined_at", { ascending: false });
     const gs = ((data as unknown as { groups: Group }[]) || [])
       .map((r) => r.groups)
@@ -77,7 +78,7 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
   useEffect(() => {
     loadGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [me]);
 
   async function createGroup() {
     if (!supabase || !gName.trim() || busy) return;
@@ -423,6 +424,24 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
   const [editTitle, setEditTitle] = useState("");
   const [editDue, setEditDue] = useState("");
   const canEdit = group.leader_id === me || group.created_by === me;
+  const localCompletionKey = `group:completion:${me}:${group.id}`;
+
+  function readLocalCompletion() {
+    if (typeof window === "undefined") return new Map<string, boolean>();
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(localCompletionKey) || "{}") as Record<string, boolean>;
+      return new Map(Object.entries(saved));
+    } catch {
+      return new Map<string, boolean>();
+    }
+  }
+
+  function saveLocalCompletion(agendaId: string, done: boolean) {
+    if (typeof window === "undefined") return;
+    const saved = Object.fromEntries(readLocalCompletion());
+    saved[agendaId] = done;
+    window.localStorage.setItem(localCompletionKey, JSON.stringify(saved));
+  }
 
   async function load() {
     if (!supabase) return;
@@ -431,9 +450,24 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
       .select("*")
       .eq("group_id", group.id)
       .order("due", { ascending: true, nullsFirst: false });
-    setItems((data as unknown as Agenda[]) || []);
+    const agenda = (data as unknown as Agenda[]) || [];
+    if (agenda.length === 0) {
+      setItems([]);
+      return;
+    }
+    const { data: completion, error: completionError } = await supabase
+      .from("group_agenda_completion")
+      .select("agenda_id, done")
+      .eq("user_id", me)
+      .in("agenda_id", agenda.map((item) => item.id));
+    const personalDone = completionError
+      ? readLocalCompletion()
+      : new Map(
+          ((completion as { agenda_id: string; done: boolean }[] | null) ?? []).map((row) => [row.agenda_id, row.done])
+        );
+    setItems(agenda.map((item) => ({ ...item, done: personalDone.get(item.id) ?? false })));
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [group.id]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [group.id, me]);
 
   async function add() {
     if (!supabase || !title.trim() || busy) return;
@@ -449,9 +483,24 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
   }
 
   async function toggle(a: Agenda) {
-    if (!supabase || !canEdit) return;
-    const { error } = await supabase.rpc("toggle_group_agenda", { p_id: a.id });
-    if (error) { alert(error.message); return; }
+    if (!supabase || !me) return;
+    const next = !a.done;
+    setItems((current) => current.map((item) => (item.id === a.id ? { ...item, done: next } : item)));
+    const { error } = await supabase.from("group_agenda_completion").upsert(
+      { agenda_id: a.id, user_id: me, done: next, updated_at: new Date().toISOString() },
+      { onConflict: "agenda_id,user_id" }
+    );
+    if (error) {
+      // Mantém a conclusão isolada no aparelho enquanto a migração do banco ainda
+      // não tiver sido aplicada. Outros erros são exibidos e revertem o estado.
+      if (error.code === "42P01" || error.code === "PGRST205") {
+        saveLocalCompletion(a.id, next);
+        return;
+      }
+      setItems((current) => current.map((item) => (item.id === a.id ? { ...item, done: a.done } : item)));
+      alert(error.message);
+      return;
+    }
     await load();
   }
 
@@ -472,7 +521,7 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
   }
   async function remove(a: Agenda) {
     if (!supabase || !canEdit) return;
-    if (!confirm(`Excluir "${a.title}"? Some do calendário e do Kanban de todos os membros.`)) return;
+    if (!confirm(`Excluir "${a.title}" da agenda compartilhada do grupo?`)) return;
     const { error } = await supabase.rpc("delete_group_agenda", { p_id: a.id });
     if (error) { alert(error.message); return; }
     await load();
@@ -501,7 +550,7 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
       ) : (
         <p className="rounded-lg border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs text-slate-400">
           <ShieldCheck size={13} className="mr-1 inline" />
-          Só o líder do grupo edita a agenda. As tarefas caem automaticamente no calendário e no Kanban de cada membro.
+          Só o líder edita a agenda compartilhada. Cada membro marca a própria conclusão sem alterar a tarefa dos demais.
         </p>
       )}
 
@@ -532,8 +581,8 @@ function AgendaView({ group, me }: { group: Group; me: string }) {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => toggle(a)}
-                    disabled={!canEdit}
-                    className={`grid h-5 w-5 shrink-0 place-items-center rounded border ${a.done ? "border-emerald-500 bg-emerald-500" : "border-slate-500"} ${canEdit ? "" : "opacity-60"}`}
+                    className={`grid h-5 w-5 shrink-0 place-items-center rounded border ${a.done ? "border-emerald-500 bg-emerald-500" : "border-slate-500"}`}
+                    title={a.done ? "Marcar como pendente para mim" : "Marcar como concluída para mim"}
                   >
                     {a.done && <Check size={14} className="text-white" />}
                   </button>
