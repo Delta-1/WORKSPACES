@@ -144,7 +144,7 @@ create table if not exists public.group_agenda_completion (
 
 alter table public.group_agenda_completion enable row level security;
 
-create or replace function public.is_group_member(p_group_id uuid, p_user_id uuid default auth.uid())
+create or replace function public.workspace_is_group_member(p_group_id uuid, p_user_id uuid default auth.uid())
 returns boolean
 language sql
 stable
@@ -160,8 +160,8 @@ as $$
   )
 $$;
 
-revoke all on function public.is_group_member(uuid, uuid) from public;
-grant execute on function public.is_group_member(uuid, uuid) to authenticated;
+revoke all on function public.workspace_is_group_member(uuid, uuid) from public;
+grant execute on function public.workspace_is_group_member(uuid, uuid) to authenticated;
 
 drop policy if exists group_agenda_completion_select on public.group_agenda_completion;
 drop policy if exists group_agenda_completion_insert on public.group_agenda_completion;
@@ -182,7 +182,7 @@ create policy group_agenda_completion_insert
       select 1
       from public.group_agenda ga
       where ga.id = agenda_id
-        and public.is_group_member(ga.group_id)
+        and public.workspace_is_group_member(ga.group_id)
     )
   );
 
@@ -196,7 +196,7 @@ create policy group_agenda_completion_update
       select 1
       from public.group_agenda ga
       where ga.id = agenda_id
-        and public.is_group_member(ga.group_id)
+        and public.workspace_is_group_member(ga.group_id)
     )
   );
 
@@ -238,7 +238,7 @@ $$;
 
 create policy groups_member_select
   on public.groups for select to authenticated
-  using (created_by = auth.uid() or public.is_group_member(id));
+  using (created_by = auth.uid() or public.workspace_is_group_member(id));
 create policy groups_creator_insert
   on public.groups for insert to authenticated
   with check (created_by = auth.uid());
@@ -252,7 +252,7 @@ create policy groups_creator_delete
 
 create policy group_members_member_select
   on public.group_members for select to authenticated
-  using (public.is_group_member(group_id));
+  using (public.workspace_is_group_member(group_id));
 -- Entradas passam exclusivamente pelo RPC join_group, que valida o código.
 create policy group_members_self_or_leader_delete
   on public.group_members for delete to authenticated
@@ -267,21 +267,21 @@ create policy group_members_self_or_leader_delete
 
 create policy group_posts_member_select
   on public.group_posts for select to authenticated
-  using (public.is_group_member(group_id));
+  using (public.workspace_is_group_member(group_id));
 create policy group_posts_member_insert
   on public.group_posts for insert to authenticated
-  with check (user_id = auth.uid() and public.is_group_member(group_id));
+  with check (user_id = auth.uid() and public.workspace_is_group_member(group_id));
 create policy group_posts_author_update
   on public.group_posts for update to authenticated
   using (user_id = auth.uid())
-  with check (user_id = auth.uid() and public.is_group_member(group_id));
+  with check (user_id = auth.uid() and public.workspace_is_group_member(group_id));
 create policy group_posts_author_delete
   on public.group_posts for delete to authenticated
   using (user_id = auth.uid());
 
 create policy group_agenda_member_select
   on public.group_agenda for select to authenticated
-  using (public.is_group_member(group_id));
+  using (public.workspace_is_group_member(group_id));
 create policy group_agenda_leader_insert
   on public.group_agenda for insert to authenticated
   with check (
@@ -312,21 +312,21 @@ create policy group_agenda_leader_delete
 
 create policy group_votes_member_select
   on public.group_leader_votes for select to authenticated
-  using (public.is_group_member(group_id));
+  using (public.workspace_is_group_member(group_id));
 create policy group_votes_self_insert
   on public.group_leader_votes for insert to authenticated
   with check (
     voter_id = auth.uid()
-    and public.is_group_member(group_id)
-    and public.is_group_member(group_id, candidate_id)
+    and public.workspace_is_group_member(group_id)
+    and public.workspace_is_group_member(group_id, candidate_id)
   );
 create policy group_votes_self_update
   on public.group_leader_votes for update to authenticated
   using (voter_id = auth.uid())
   with check (
     voter_id = auth.uid()
-    and public.is_group_member(group_id)
-    and public.is_group_member(group_id, candidate_id)
+    and public.workspace_is_group_member(group_id)
+    and public.workspace_is_group_member(group_id, candidate_id)
   );
 create policy group_votes_self_delete
   on public.group_leader_votes for delete to authenticated
