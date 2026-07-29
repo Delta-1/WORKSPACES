@@ -144,11 +144,13 @@ type Ctx = { userId: string | null; companyId: string | null };
 async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: Record<string, string>) {
   try {
     if (name === "list_sectors") {
-      const { data } = await client.from("sectors").select("id,name").order("name");
+      if (!ctx.companyId) return [];
+      const { data } = await client.from("sectors").select("id,name").eq("company_id", ctx.companyId).order("name");
       return data ?? [];
     }
     if (name === "list_employees") {
-      const { data } = await client.from("profiles").select("id,full_name,role").order("full_name");
+      if (!ctx.companyId) return [];
+      const { data } = await client.from("profiles").select("id,full_name,role").eq("company_id", ctx.companyId).order("full_name");
       return (data ?? []).map((p) => ({ id: p.id, name: p.full_name, role: p.role }));
     }
     if (name === "create_task") {
@@ -164,7 +166,8 @@ async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: 
       return error ? { ok: false, message: error.message } : { ok: true, message: `Tarefa "${input.title}" criada em A fazer.` };
     }
     if (name === "lookup_client") {
-      const { data } = await client.from("clients").select("id,name,phone,email").ilike("name", `%${input.query}%`).limit(10);
+      if (!ctx.companyId) return [];
+      const { data } = await client.from("clients").select("id,name,phone,email").eq("company_id", ctx.companyId).ilike("name", `%${input.query}%`).limit(10);
       return data ?? [];
     }
     if (name === "create_client") {
@@ -194,19 +197,22 @@ async function runAction(client: SupabaseClient, ctx: Ctx, name: string, input: 
       return error ? { ok: false, message: error.message } : { ok: true, message: "Recado enviado." };
     }
     if (name === "list_tasks") {
-      const { data } = await client.from("tasks").select("id,title,column_name").order("created_at", { ascending: false }).limit(20);
+      if (!ctx.companyId) return [];
+      const { data } = await client.from("tasks").select("id,title,column_name").eq("company_id", ctx.companyId).order("created_at", { ascending: false }).limit(20);
       return data ?? [];
     }
     if (name === "move_task") {
       const cols = ["a_fazer", "em_andamento", "concluido"];
       if (!cols.includes(input.column)) return { ok: false, message: "Coluna inválida." };
-      const { error } = await client.from("tasks").update({ column_name: input.column }).eq("id", input.task_id);
+      if (!ctx.companyId) return { ok: false, message: "Ambiente não identificado." };
+      const { error } = await client.from("tasks").update({ column_name: input.column }).eq("id", input.task_id).eq("company_id", ctx.companyId);
       return error ? { ok: false, message: error.message } : { ok: true, message: "Tarefa movida." };
     }
     if (name === "set_attendance") {
       const st = ["espera", "atendendo", "fechado"].includes(input.status) ? input.status : null;
       if (!st) return { ok: false, message: "Status inválido." };
-      const { data: c } = await client.from("contacts").select("id,name").ilike("name", `%${input.contact}%`).limit(1).maybeSingle();
+      if (!ctx.companyId) return { ok: false, message: "Ambiente não identificado." };
+      const { data: c } = await client.from("contacts").select("id,name").eq("company_id", ctx.companyId).ilike("name", `%${input.contact}%`).limit(1).maybeSingle();
       if (!c) return { ok: false, message: "Contato não encontrado." };
       const { data: conv } = await client
         .from("conversations")
