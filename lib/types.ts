@@ -48,6 +48,7 @@ export type Company = {
 
 export type Sector = {
   id: string;
+  company_id: string | null;
   name: string;
   parent_id: string | null;
   leader_id: string | null;
@@ -60,6 +61,7 @@ export type TaskColumn = "a_fazer" | "em_andamento" | "concluido";
 
 export type WorkspaceTask = {
   id: string;
+  company_id: string | null;
   title: string;
   description: string | null;
   sector_id: string;
@@ -161,6 +163,7 @@ export type CompanySettingsRow = {
 
 export type FileNodeRow = {
   id: string;
+  company_id: string | null;
   name: string;
   type: "folder" | "file";
   parent_id: string | null;
@@ -206,6 +209,7 @@ export type ConversationStatus = "espera" | "atendendo" | "fechado" | "cancelado
 
 export type Conversation = {
   id: string;
+  company_id: string | null;
   protocol: number;
   contact_id: string;
   number_id: string | null;
@@ -291,6 +295,7 @@ export type WhatsappNumberStatus = "disconnected" | "connecting" | "qr_pending" 
 
 export type WhatsappNumber = {
   id: string;
+  company_id: string | null;
   label: string;
   phone_number: string | null;
   sector_id: string | null;
@@ -312,6 +317,7 @@ export type WhatsappNumberAccess = {
 
 export type Announcement = {
   id: string;
+  company_id: string | null;
   title: string;
   body: string;
   author_id: string | null;
