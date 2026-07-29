@@ -9,15 +9,11 @@ export default function AgentModeOverlay({
   companyName,
   logoDataUrl,
   pushToTalkActive,
-  onPushToTalkStart,
-  onPushToTalkEnd,
   onClose,
 }: {
   companyName: string;
   logoDataUrl: string | null;
   pushToTalkActive: boolean;
-  onPushToTalkStart: () => void;
-  onPushToTalkEnd: () => void;
   onClose: () => void;
 }) {
   const [agentName, setAgentName] = useState("Copilot");
@@ -90,7 +86,8 @@ export default function AgentModeOverlay({
         <div className="flex max-w-full items-center gap-4 rounded-2xl border border-white/10 bg-black/35 px-4 py-2.5 text-[11px] text-white/55 backdrop-blur-xl">
           <span className="flex items-center gap-1.5">
             <Mic size={13} style={{ color: accent }} />
-            Chame <strong className="text-white/90">“{agentName}”</strong>
+            <span className="sm:hidden">Toque no núcleo para falar</span>
+            <span className="hidden sm:inline">O microfone fica desligado até você usar o atalho</span>
           </span>
           <span className="h-4 w-px bg-white/10" />
           <span className="hidden items-center gap-1.5 sm:flex">
@@ -100,32 +97,10 @@ export default function AgentModeOverlay({
         </div>
       </div>
 
-      <button
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          onPushToTalkStart();
-        }}
-        onPointerUp={onPushToTalkEnd}
-        onPointerCancel={onPushToTalkEnd}
-        className={`fixed bottom-20 right-4 z-[120] flex h-12 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold text-white shadow-2xl backdrop-blur touch-none select-none sm:hidden ${
-          pushToTalkActive
-            ? "scale-95 border-emerald-200/70 bg-emerald-500/35"
-            : "border-white/15 bg-black/45"
-        }`}
-        aria-label="Segure para falar e solte para enviar"
-      >
-        <span className="grid h-7 w-7 place-items-center rounded-lg border border-white/15 bg-white/10 font-mono font-black">V</span>
-        <Mic size={15} />
-        Segure
-      </button>
-
       <Orb
         slot="internal"
         title={agentName}
         variant="agent"
-        alwaysListening
-        requireWakeWord
         pushToTalkActive={pushToTalkActive}
         voicePrompt="Estou ouvindo"
         onClose={onClose}
