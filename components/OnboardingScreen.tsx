@@ -5,7 +5,15 @@ import { Building2, Home, KeyRound, Layers } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 
 const COMPANY_TYPES = ["MEI", "Microempresa (ME)", "Pequena empresa (EPP)", "Média empresa", "Grande empresa", "Outro"];
-const SEGMENTS = ["Suporte técnico / TI", "Escritório / Administrativo", "Comércio / Loja", "Serviços", "Saúde", "Educação", "Restaurante / Food", "Contabilidade", "Imobiliária", "Outro"];
+const SEGMENTS = ["Suporte técnico / TI", "Escritório / Administrativo", "Comércio / Loja", "Serviços", "Saúde", "Educação", "Restaurante / Food", "Contabilidade", "Imobiliária", "Transportadora / Logística", "Outro"];
+
+function presetForSegment(segment: string) {
+  if (/transport|log[ií]st/i.test(segment)) return ["mensagens", "remoto", "logistica"];
+  if (/suporte|tecnologia|\bti\b/i.test(segment)) return ["mensagens", "remoto", "labs", "clientes"];
+  if (/com[eé]rcio|loja|imobili/i.test(segment)) return ["mensagens", "remoto", "clientes"];
+  if (/contab|escrit[oó]rio|administr/i.test(segment)) return ["mensagens", "remoto", "financeiro", "clientes"];
+  return ["mensagens", "remoto", "clientes"];
+}
 
 export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
   const [mode, setMode] = useState<"owner" | "home" | "employee">("owner");
@@ -49,6 +57,18 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
     setLoading(false);
     if (error) setError(error.message);
     else {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: current } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+        if (current?.company_id) {
+          await supabase.from("company_settings").update({
+            enabled_features: presetForSegment(segment),
+            wa_number_limit: 1,
+            remote_access_limit: 1,
+            onboarding_niche: segment,
+          }).eq("company_id", current.company_id);
+        }
+      }
       localStorage.removeItem("pendingCompanyCode");
       onDone();
     }
@@ -61,7 +81,22 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
     const { error } = await supabase.rpc("create_home", { p_name: homeName.trim() });
     setLoading(false);
     if (error) setError(error.message);
-    else { localStorage.removeItem("pendingCompanyCode"); onDone(); }
+    else {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: current } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+        if (current?.company_id) {
+          await supabase.from("company_settings").update({
+            enabled_features: ["mensagens", "remoto"],
+            wa_number_limit: 1,
+            remote_access_limit: 1,
+            onboarding_niche: "Pessoal / Casa",
+          }).eq("company_id", current.company_id);
+        }
+      }
+      localStorage.removeItem("pendingCompanyCode");
+      onDone();
+    }
   }
 
   async function joinCompany() {
