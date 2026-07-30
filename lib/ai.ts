@@ -80,6 +80,32 @@ async function runGemini(apiKey: string, history: ChatTurn[], systemPrompt: stri
   return text;
 }
 
+async function runOpenAI(apiKey: string, history: ChatTurn[], systemPrompt: string): Promise<string> {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...history.map((turn) => ({
+      role: turn.role,
+      content: turn.image
+        ? [
+            { type: "text", text: turn.text || "(imagem enviada)" },
+            { type: "image_url", image_url: { url: `data:${turn.image.mediaType};base64,${turn.image.base64}` } },
+          ]
+        : turn.text,
+    })),
+  ];
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "gpt-4o-mini", messages }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`OpenAI API error (${response.status}): ${detail.slice(0, 300)}`);
+  }
+  const json = await response.json();
+  return json.choices?.[0]?.message?.content ?? "";
+}
+
 export async function runChat(
   history: ChatTurn[],
   systemPrompt: string,
@@ -95,6 +121,9 @@ export async function runChat(
 
   if (provider === "gemini") {
     return runGemini(apiKey, history, systemPrompt);
+  }
+  if (provider === "openai") {
+    return runOpenAI(apiKey, history, systemPrompt);
   }
   return runAnthropic(apiKey, history, systemPrompt);
 }
