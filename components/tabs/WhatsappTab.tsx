@@ -30,7 +30,8 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
   const [live, setLive] = useState<LiveState | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [connectingLong, setConnectingLong] = useState(false);
-  const [numberLimit, setNumberLimit] = useState<number>(3); // números de WhatsApp do plano
+  const [numberLimit, setNumberLimit] = useState<number>(1); // números de WhatsApp do plano
+  const [numberUnlimited, setNumberUnlimited] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false); // aviso "atualize o plano p/ mais números"
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -42,7 +43,7 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
       supabase.from("chatbots").select("*").order("created_at"),
       supabase.from("profiles").select("*").order("full_name"),
       supabase.from("whatsapp_number_access").select("*"),
-      supabase.from("company_settings").select("wa_number_limit").maybeSingle(),
+      supabase.from("company_settings").select("wa_number_limit,wa_unlimited").maybeSingle(),
     ]);
     if (n.data) setNumbers(n.data as WhatsappNumber[]);
     if (s.data) setSectors(s.data as Sector[]);
@@ -50,6 +51,7 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
     if (p.data) setColleagues(p.data as Profile[]);
     if (a.data) setAccess(a.data as WhatsappNumberAccess[]);
     if (cs.data?.wa_number_limit != null) setNumberLimit(cs.data.wa_number_limit as number);
+    setNumberUnlimited(!!cs.data?.wa_unlimited);
   }, []);
 
   useEffect(() => {
@@ -81,7 +83,7 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
     if (!supabase || !newLabel.trim()) return;
     // Trava por plano: R$10 por número registrado. Ao bater o limite, o gestor
     // precisa atualizar o plano (aba Planos) para registrar mais números.
-    if (numbers.length >= numberLimit) {
+    if (!numberUnlimited && numbers.length >= numberLimit) {
       setShowUpgrade(true);
       return;
     }
@@ -206,8 +208,8 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
               </button>
             </div>
             <p className="text-[10px] text-gray-500 mt-1.5">
-              {numbers.length} de {numberLimit} {numberLimit === 1 ? "número" : "números"} registrados
-              {numbers.length >= numberLimit && " — limite do plano atingido"}
+              {numberUnlimited ? `${numbers.length} números · plano ilimitado` : `${numbers.length} de ${numberLimit} ${numberLimit === 1 ? "número" : "números"} registrados`}
+              {!numberUnlimited && numbers.length >= numberLimit && " — limite do plano atingido"}
             </p>
           </div>
         )}
