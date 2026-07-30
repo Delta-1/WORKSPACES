@@ -5,6 +5,7 @@ import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadshee
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
+import InitialSetupWizard from "@/components/InitialSetupWizard";
 import BlockedScreen from "@/components/BlockedScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
@@ -34,7 +35,7 @@ import VisaoAdmTab from "@/components/tabs/VisaoAdmTab";
 import GameTab from "@/components/tabs/GameTab";
 import GodsEyeTab from "@/components/tabs/GodsEyeTab";
 import PlansTab from "@/components/tabs/PlansTab";
-import { appEnabled, type FeatureId } from "@/lib/plan";
+import { appEnabled, RECOMMENDED, type FeatureId } from "@/lib/plan";
 import FinanceTab from "@/components/tabs/FinanceTab";
 import AutomationTab from "@/components/tabs/AutomationTab";
 import LabsTab from "@/components/tabs/LabsTab";
@@ -366,12 +367,19 @@ export default function Home() {
   // Plano da empresa: quais ferramentas estão ligadas (null = todas).
   const [enabledFeatures, setEnabledFeatures] = useState<FeatureId[] | null>(null);
   const [gameEnabled, setGameEnabled] = useState(false); // Modo Game ligado nas Configurações
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!supabase || !profile?.company_id) return;
-    supabase.from("company_settings").select("enabled_features, game_enabled").eq("company_id", profile.company_id).maybeSingle()
-      .then(({ data }) => {
+    if (!supabase || !profile?.company_id) {
+      setOnboardingComplete(null);
+      return;
+    }
+    setOnboardingComplete(null);
+    supabase.from("company_settings").select("enabled_features, game_enabled, onboarding_completed").eq("company_id", profile.company_id).maybeSingle()
+      .then(({ data, error }) => {
         setEnabledFeatures((data?.enabled_features as FeatureId[]) ?? null);
         setGameEnabled(!!data?.game_enabled);
+        // Antes da migração, não bloqueia contas existentes por falta da coluna.
+        setOnboardingComplete(error ? true : data?.onboarding_completed ?? true);
       });
   }, [profile?.company_id]);
 
@@ -472,6 +480,28 @@ export default function Home() {
     if (blocked) {
       return <BlockedScreen company={myCompany} isOwner={myCompany.owner_id === profile.id} onLogout={handleLogout} />;
     }
+  }
+
+  if (
+    profile &&
+    myCompany &&
+    myCompany.owner_id === profile.id &&
+    !superAdmin &&
+    onboardingComplete === false
+  ) {
+    const setupFeatures = enabledFeatures ?? (myCompany.company_type === "Casa" ? ["mensagens", "remoto"] : RECOMMENDED);
+    return (
+      <InitialSetupWizard
+        profile={profile}
+        company={myCompany}
+        enabledFeatures={setupFeatures}
+        onDone={() => {
+          setOnboardingComplete(true);
+          void refreshIdentity();
+        }}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   if (showSplash) {

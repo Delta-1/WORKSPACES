@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseForRequest, supabaseService } from "@/lib/supabase-server";
+import { planPrice, type FeatureId } from "@/lib/plan";
 
 export const runtime = "nodejs";
 
@@ -24,9 +25,15 @@ export async function POST(request: Request) {
 
   const { data: company } = await svc
     .from("companies")
-    .select("pay_method, mp_preapproval_id")
+    .select("pay_method, mp_preapproval_id, owner_id, company_type")
     .eq("id", companyId)
     .maybeSingle();
+
+  const sb = supabaseForRequest(request);
+  const { data: { user } } = sb ? await sb.auth.getUser() : { data: { user: null } };
+  if (!user || company?.owner_id !== user.id) {
+    return NextResponse.json({ error: "sem permissão para alterar este plano" }, { status: 403 });
+  }
 
   // Só o cartão tem assinatura recorrente para cancelar+recriar.
   if (company?.pay_method !== "card" || !company?.mp_preapproval_id) {
@@ -34,13 +41,19 @@ export async function POST(request: Request) {
   }
 
   let payerEmail = "";
-  const sb = supabaseForRequest(request);
-  if (sb) {
-    const { data: { user } } = await sb.auth.getUser();
-    payerEmail = user?.email ?? "";
-  }
+  payerEmail = user.email ?? "";
   const origin = request.headers.get("origin") ?? new URL(request.url).origin;
-  const value = typeof amount === "number" && amount > 0 ? amount : 50;
+  const { data: settings } = await svc
+    .from("company_settings")
+    .select("enabled_features,wa_number_limit,remote_access_limit")
+    .eq("company_id", companyId)
+    .maybeSingle();
+  const value = settings?.enabled_features
+    ? planPrice(settings.enabled_features as FeatureId[], settings.wa_number_limit ?? 1, {
+        remoteLimit: settings.remote_access_limit ?? 1,
+        accountKind: company.company_type === "Casa" ? "home" : "business",
+      })
+    : typeof amount === "number" && amount >= 0 ? amount : 0;
 
   try {
     // 1) Cancela a assinatura atual.
@@ -49,6 +62,14 @@ export async function POST(request: Request) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ status: "cancelled" }),
     });
+
+    if (value === 0) {
+      await svc
+        .from("companies")
+        .update({ mp_preapproval_id: null, subscription_status: "active", mp_updated_at: new Date().toISOString() })
+        .eq("id", companyId);
+      return NextResponse.json({ ok: true, activated: true, free: true });
+    }
 
     // 2) Cria a nova assinatura com o novo valor.
     const res = await fetch("https://api.mercadopago.com/preapproval", {

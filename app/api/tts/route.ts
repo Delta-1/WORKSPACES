@@ -29,6 +29,18 @@ export async function POST(request: Request) {
     if (bot?.elevenlabs_key) key = bot.elevenlabs_key;
     botVoice = bot?.elevenlabs_voice_id || null;
 
+    // Chave pessoal cadastrada no onboarding/Configurações.
+    const { data: { user } } = await client.auth.getUser();
+    if (user && !bot?.elevenlabs_key) {
+      const { data: personalVoice } = await client
+        .from("ai_config")
+        .select("elevenlabs_key,elevenlabs_voice_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (personalVoice?.elevenlabs_key) key = personalVoice.elevenlabs_key;
+      if (!botVoice) botVoice = personalVoice?.elevenlabs_voice_id || null;
+    }
+
     // 2) Voz padrão da empresa.
     const { data: cs } = await client.from("company_settings").select("default_voice_id").limit(1).maybeSingle();
     companyVoice = cs?.default_voice_id || null;

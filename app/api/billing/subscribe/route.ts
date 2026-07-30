@@ -42,11 +42,19 @@ export async function POST(request: Request) {
   if (companyId && svc) {
     const { data: st } = await svc
       .from("company_settings")
-      .select("enabled_features, wa_number_limit")
+      .select("enabled_features, wa_number_limit, remote_access_limit")
       .eq("company_id", companyId)
       .maybeSingle();
     if (st?.enabled_features) {
-      const computed = planPrice((st.enabled_features as FeatureId[]) ?? [], st.wa_number_limit ?? RECOMMENDED_WA_LIMIT);
+      const { data: company } = await svc.from("companies").select("company_type").eq("id", companyId).maybeSingle();
+      const computed = planPrice(
+        (st.enabled_features as FeatureId[]) ?? [],
+        st.wa_number_limit ?? RECOMMENDED_WA_LIMIT,
+        {
+          remoteLimit: st.remote_access_limit ?? 1,
+          accountKind: company?.company_type === "Casa" ? "home" : "business",
+        }
+      );
       if (computed > 0) value = computed;
     }
   }

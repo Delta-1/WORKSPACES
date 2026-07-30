@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, Sparkles, Wallet } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import { FEATURES, RECOMMENDED, RECOMMENDED_WA_LIMIT, planPrice, whatsappPrice, type FeatureId } from "@/lib/plan";
+import { ACCESS_PRICE, FEATURES, RECOMMENDED, RECOMMENDED_REMOTE_LIMIT, RECOMMENDED_WA_LIMIT, planPrice, type FeatureId } from "@/lib/plan";
 
 // Aba PLANOS (só o gestor/dono da empresa). Escolhe as ferramentas que quer, o
 // limite de contatos do WhatsApp, e vê o valor mensal ao vivo. Salva no plano da
@@ -12,6 +12,8 @@ export default function PlansTab() {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [features, setFeatures] = useState<FeatureId[]>(RECOMMENDED);
   const [waLimit, setWaLimit] = useState(RECOMMENDED_WA_LIMIT);
+  const [remoteLimit, setRemoteLimit] = useState(RECOMMENDED_REMOTE_LIMIT);
+  const [isHome, setIsHome] = useState(false);
   const [kind, setKind] = useState<"recomendado" | "personalizado">("recomendado");
   const [saved, setSaved] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -25,26 +27,30 @@ export default function PlansTab() {
       const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
       if (!p?.company_id) return;
       setCompanyId(p.company_id);
-      const { data: cs } = await supabase.from("company_settings").select("enabled_features, wa_number_limit, plan_kind").eq("company_id", p.company_id).maybeSingle();
+      const { data: cs } = await supabase.from("company_settings").select("enabled_features, wa_number_limit, remote_access_limit, plan_kind").eq("company_id", p.company_id).maybeSingle();
       const feats = (cs?.enabled_features as FeatureId[] | null) ?? RECOMMENDED;
       const waNum = cs?.wa_number_limit ?? RECOMMENDED_WA_LIMIT;
+      const remoteNum = cs?.remote_access_limit ?? RECOMMENDED_REMOTE_LIMIT;
       if (cs?.enabled_features) setFeatures(cs.enabled_features as FeatureId[]);
       if (cs?.wa_number_limit != null) setWaLimit(cs.wa_number_limit);
+      if (cs?.remote_access_limit != null) setRemoteLimit(cs.remote_access_limit);
       if (cs?.plan_kind === "personalizado" || cs?.plan_kind === "recomendado") setKind(cs.plan_kind);
-      setSavedPrice(planPrice(feats, waNum)); // valor atualmente contratado
-      const { data: c } = await supabase.from("companies").select("subscription_status, license_until").eq("id", p.company_id).maybeSingle();
+      const { data: c } = await supabase.from("companies").select("subscription_status, license_until, company_type").eq("id", p.company_id).maybeSingle();
+      const home = c?.company_type === "Casa";
+      setIsHome(home);
+      setSavedPrice(planPrice(feats, waNum, { remoteLimit: remoteNum, accountKind: home ? "home" : "business" }));
       if (c) setStatus(c.subscription_status || null);
     })();
   }, []);
 
-  const price = planPrice(features, waLimit);
+  const price = planPrice(features, waLimit, { remoteLimit, accountKind: isHome ? "home" : "business" });
   const has = (f: FeatureId) => features.includes(f);
   const toggle = (f: FeatureId) => { setKind("personalizado"); setFeatures((cur) => (cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f])); };
-  function useRecommended() { setKind("recomendado"); setFeatures(RECOMMENDED); setWaLimit(RECOMMENDED_WA_LIMIT); }
+  function useRecommended() { setKind("recomendado"); setFeatures(RECOMMENDED); setWaLimit(RECOMMENDED_WA_LIMIT); setRemoteLimit(RECOMMENDED_REMOTE_LIMIT); }
 
   async function save() {
     if (!supabase || !companyId) return;
-    await supabase.from("company_settings").update({ enabled_features: features, wa_number_limit: waLimit, plan_kind: kind, monthly_price: price }).eq("company_id", companyId);
+    await supabase.from("company_settings").update({ enabled_features: features, wa_number_limit: waLimit, remote_access_limit: remoteLimit, plan_kind: kind, monthly_price: price }).eq("company_id", companyId);
     setSaved(true);
 
     // Se o VALOR mudou e a empresa paga no cartão, cancela a assinatura atual e
@@ -69,7 +75,7 @@ export default function PlansTab() {
     <div className="h-full overflow-y-auto custom-scroll">
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
       <h2 className="text-lg font-bold flex items-center gap-2 mb-1"><Wallet size={18} className="text-emerald-400" /> Planos</h2>
-      <p className="text-[12px] text-gray-400 mb-4">Monte o plano da sua empresa: ligue só as ferramentas que você quer usar. O valor é mensal.</p>
+      <p className="text-[12px] text-gray-400 mb-4">Calendário, Kanban, Setores e Arquivos formam o Básico gratuito. Personalize somente os adicionais.</p>
 
       {status && status !== "active" && (
         <div className="mb-4 text-[12px] rounded-lg px-3 py-2 bg-amber-950/40 border border-amber-800/40 text-amber-200">
@@ -96,21 +102,42 @@ export default function PlansTab() {
                 <span className="text-[11px] text-gray-400 block">{f.desc}</span>
               </span>
               <span className="text-sm font-bold text-emerald-300 shrink-0">
-                {f.id === "mensagens" ? `R$ ${whatsappPrice(waLimit)}` : `R$ ${f.price}`}
+                {f.id === "mensagens"
+                  ? `R$ ${Math.max(0, waLimit - (isHome ? 1 : 0)) * ACCESS_PRICE}`
+                  : f.id === "remoto"
+                  ? `R$ ${Math.max(0, remoteLimit - (isHome ? 1 : 0)) * ACCESS_PRICE}`
+                  : `R$ ${f.price}`}
               </span>
             </label>
             {f.id === "mensagens" && has("mensagens") && (
               <div className="mt-2 pl-7 flex items-center gap-2 flex-wrap">
                 <span className="text-[11px] text-gray-400">Números de WhatsApp:</span>
                 <select value={waLimit} onChange={(e) => { setKind("personalizado"); setWaLimit(Number(e.target.value)); }} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-xs outline-none">
-                  {[1, 2, 3, 4, 5, 6, 8, 10, 15, 20].map((n) => <option key={n} value={n}>{n} {n === 1 ? "número" : "números"} — R$ {whatsappPrice(n)}</option>)}
+                  {[1, 2, 3, 4, 5, 6, 8, 10, 15, 20].map((n) => <option key={n} value={n}>{n} {n === 1 ? "número" : "números"} — R$ {Math.max(0, n - (isHome ? 1 : 0)) * ACCESS_PRICE}</option>)}
                 </select>
-                <span className="text-[10px] text-gray-500">R$10 por número registrado (linha conectada por QR) • 3 inclusos</span>
+                <span className="text-[10px] text-gray-500">R$ {ACCESS_PRICE} por conta vinculada {isHome ? "• primeira incluída" : ""}</span>
+              </div>
+            )}
+            {f.id === "remoto" && has("remoto") && (
+              <div className="mt-2 pl-7 flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-gray-400">Máquinas:</span>
+                <select value={remoteLimit} onChange={(e) => { setKind("personalizado"); setRemoteLimit(Number(e.target.value)); }} className="bg-black/30 border border-white/10 rounded px-2 py-1 text-xs outline-none">
+                  {[1, 2, 3, 4, 5, 6, 8, 10, 15, 20].map((n) => <option key={n} value={n}>{n} — R$ {Math.max(0, n - (isHome ? 1 : 0)) * ACCESS_PRICE}</option>)}
+                </select>
+                <span className="text-[10px] text-gray-500">R$ {ACCESS_PRICE} por máquina {isHome ? "• primeira incluída" : ""}</span>
               </div>
             )}
           </div>
         ))}
       </div>
+      <a
+        href={`https://wa.me/5519989478465?text=${encodeURIComponent("Olá! Gostaria de contratar o plano ilimitado de Acesso Remoto/Mensagens do Workspace.")}`}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-3 block text-center text-xs text-emerald-300 hover:text-emerald-200"
+      >
+        Solicitar plano ilimitado pelo WhatsApp
+      </a>
 
       <div className="mt-5 flex items-center justify-between gap-3 bg-black/30 border border-white/10 rounded-xl p-4">
         <div>
@@ -121,7 +148,7 @@ export default function PlansTab() {
           {saved ? <><Check size={15} /> Salvo</> : "Salvar plano"}
         </button>
       </div>
-      <p className="text-[10px] text-gray-500 mt-2">Ao salvar, o app passa a mostrar só as ferramentas ligadas. A cobrança (Mercado Pago) será ativada em breve — por enquanto seu acesso segue liberado.</p>
+      <p className="text-[10px] text-gray-500 mt-2">Ao salvar, o app aplica as ferramentas e limites. Mudanças de valor seguem para a cobrança configurada no Mercado Pago.</p>
     </div>
     </div>
   );

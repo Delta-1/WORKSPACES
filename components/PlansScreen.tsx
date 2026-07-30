@@ -5,13 +5,14 @@ import { Check, Sparkles, Gift } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Company } from "@/lib/types";
 import {
+  ACCESS_PRICE,
   CRIACAO_PRICE,
   FEATURES,
   PLAN_TIERS,
+  RECOMMENDED_REMOTE_LIMIT,
   RECOMMENDED_WA_LIMIT,
   TRIAL_DAYS,
   planPrice,
-  tierPrice,
   whatsappPrice,
   type FeatureId,
   type PlanTierId,
@@ -24,6 +25,8 @@ import {
 export default function PlansScreen({ company, onDone, onLogout }: { company: Company; onDone: () => void; onLogout: () => void }) {
   const [tier, setTier] = useState<PlanTierId>("avancado");
   const [custom, setCustom] = useState<FeatureId[]>(["mensagens", "remoto", "labs", "clientes"]);
+  const [waLimit, setWaLimit] = useState(RECOMMENDED_WA_LIMIT);
+  const [remoteLimit, setRemoteLimit] = useState(RECOMMENDED_REMOTE_LIMIT);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mpConfigured, setMpConfigured] = useState<boolean | null>(null);
@@ -32,7 +35,22 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
 
   useEffect(() => {
     fetch("/api/billing/config").then((r) => r.json()).then((d) => setMpConfigured(!!d.configured)).catch(() => setMpConfigured(false));
-  }, []);
+    if (supabase) {
+      supabase
+        .from("company_settings")
+        .select("enabled_features,wa_number_limit,remote_access_limit")
+        .eq("company_id", company.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (Array.isArray(data?.enabled_features) && data.enabled_features.length) {
+            setCustom(data.enabled_features as FeatureId[]);
+            setTier("customizado");
+          }
+          if (data?.wa_number_limit) setWaLimit(data.wa_number_limit);
+          if (data?.remote_access_limit) setRemoteLimit(data.remote_access_limit);
+        });
+    }
+  }, [company.id]);
 
   const activeFeatures: FeatureId[] = useMemo(() => {
     if (tier === "customizado") return custom;
@@ -40,9 +58,9 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
   }, [tier, custom]);
 
   const price = useMemo(() => {
-    if (tier === "customizado") return planPrice(custom, RECOMMENDED_WA_LIMIT);
-    return tierPrice(tier);
-  }, [tier, custom]);
+    if (tier === "criacao") return CRIACAO_PRICE;
+    return planPrice(activeFeatures, waLimit, { remoteLimit });
+  }, [activeFeatures, remoteLimit, tier, waLimit]);
 
   function toggle(f: FeatureId) {
     setCustom((cur) => (cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f]));
@@ -56,18 +74,22 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
       // Plano Criação: sob medida. Registra a escolha (fica pendente, sem liberar
       // o site) e mostra o aviso — a equipe combina os R$2000 (parcelável) e o resto.
       if (isCriacao) {
-        const { error } = await supabase.rpc("choose_plan", { p_features: [], p_wa_limit: RECOMMENDED_WA_LIMIT, p_activate: false });
+        const { error } = await supabase.rpc("choose_plan", { p_features: [], p_wa_limit: waLimit, p_activate: false });
         if (error) { setError(error.message); return; }
         setCriacaoDone(true);
         return;
       }
-      const activate = mpConfigured === false; // sem cobrança configurada → libera na hora
+      const activate = price === 0 || mpConfigured === false; // plano gratuito ou ambiente sem cobrança → libera na hora
       const { error } = await supabase.rpc("choose_plan", {
         p_features: activeFeatures,
-        p_wa_limit: RECOMMENDED_WA_LIMIT,
+        p_wa_limit: waLimit,
         p_activate: activate,
       });
       if (error) { setError(error.message); return; }
+      await supabase
+        .from("company_settings")
+        .update({ remote_access_limit: remoteLimit, remote_unlimited: false, wa_unlimited: false })
+        .eq("company_id", company.id);
       // Com cobrança: a empresa ficou "pending" → o gate leva para a tela de
       // pagamento. Sem cobrança: já está ativa com os 3 dias grátis.
       onDone();
@@ -89,7 +111,7 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {PLAN_TIERS.map((t) => {
             const selected = tier === t.id;
-            const tPrice = t.custom || t.bespoke ? price : tierPrice(t.id);
+            const tPrice = t.custom || t.bespoke ? price : planPrice(t.features, waLimit, { remoteLimit });
             return (
               <button
                 key={t.id}
@@ -123,7 +145,12 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
                   {(t.bespoke ? ["Projeto sob medida", "Auditoria do Victor", "Parcelável"] : t.custom ? ["Escolha cada ferramenta abaixo"] : t.features.map((f) => FEATURES.find((x) => x.id === f)?.label ?? f)).map((f) => (
                     <li key={f} className="flex items-center gap-1.5"><Check size={12} className="text-emerald-400 shrink-0" /> {f}</li>
                   ))}
-                  {!t.custom && !t.bespoke && t.id === "simples" && <li className="text-[11px] text-amber-300/80 pl-4">Sem agentes de IA</li>}
+                  {!t.custom && !t.bespoke && t.id === "simples" && (
+                    <>
+                      {["Calendário", "Kanban", "Setores", "Arquivos com servidor"].map((item) => <li key={item} className="flex items-center gap-1.5"><Check size={12} className="text-emerald-400 shrink-0" /> {item}</li>)}
+                      <li className="text-[11px] text-amber-300/80 pl-4">Adicionais podem ser ligados depois</li>
+                    </>
+                  )}
                 </ul>
               </button>
             );
@@ -137,7 +164,7 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
             <div className="grid sm:grid-cols-2 gap-2">
               {FEATURES.map((f) => {
                 const on = custom.includes(f.id);
-                const fPrice = f.id === "mensagens" ? whatsappPrice(RECOMMENDED_WA_LIMIT) : f.price;
+                const fPrice = f.id === "mensagens" || f.id === "remoto" ? ACCESS_PRICE : f.price;
                 return (
                   <button
                     key={f.id}
@@ -149,13 +176,42 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
                         <span className={`w-4 h-4 rounded border flex items-center justify-center ${on ? "bg-emerald-600 border-emerald-600" : "border-gray-500"}`}>{on && <Check size={11} className="text-white" />}</span>
                         {f.label}
                       </span>
-                      <span className="text-emerald-400 font-semibold text-xs">R$ {fPrice}{f.id === "mensagens" ? "" : "/mês"}</span>
+                      <span className="text-emerald-400 font-semibold text-xs">R$ {fPrice}{f.id === "mensagens" || f.id === "remoto" ? "/acesso" : "/mês"}</span>
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-1 ml-6">{f.desc}{f.id === "mensagens" ? ` (${RECOMMENDED_WA_LIMIT} números inclusos)` : ""}</p>
+                    <p className="text-[11px] text-gray-400 mt-1 ml-6">{f.desc}</p>
                   </button>
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {!isCriacao && (
+          <div className="mt-4 liquid-glass rounded-2xl p-5">
+            <p className="text-sm font-semibold">Acessos do plano</p>
+            <p className="text-[11px] text-gray-500 mt-1 mb-3">O Básico é gratuito. Cada máquina ou conta de WhatsApp custa R$ {ACCESS_PRICE}/mês.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <span className="text-xs font-semibold block mb-2">Máquinas no Acesso Remoto</span>
+                <select value={remoteLimit} onChange={(event) => setRemoteLimit(Number(event.target.value))} className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-2 text-xs">
+                  {[1, 2, 3, 4, 5, 8, 10, 15, 20].map((count) => <option key={count} value={count}>{count} — R$ {count * ACCESS_PRICE}/mês</option>)}
+                </select>
+              </label>
+              <label className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <span className="text-xs font-semibold block mb-2">Contas de WhatsApp</span>
+                <select value={waLimit} onChange={(event) => setWaLimit(Number(event.target.value))} className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-2 text-xs">
+                  {[1, 2, 3, 4, 5, 8, 10, 15, 20].map((count) => <option key={count} value={count}>{count} — R$ {whatsappPrice(count)}/mês</option>)}
+                </select>
+              </label>
+            </div>
+            <a
+              href={`https://wa.me/5519989478465?text=${encodeURIComponent("Olá! Gostaria de contratar o plano ilimitado de Acesso Remoto/Mensagens do Workspace.")}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 block text-center text-xs text-emerald-300 hover:text-emerald-200"
+            >
+              Precisa de acessos ilimitados? Solicitar plano pelo WhatsApp
+            </a>
           </div>
         )}
 
@@ -171,7 +227,7 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
               <>
                 <p className="text-sm text-gray-400">Total mensal após o teste</p>
                 <p className="text-3xl font-bold">R$ {price}<span className="text-sm text-gray-400 font-normal">/mês</span></p>
-                <p className="text-[11px] text-gray-500 mt-1">Inclui {RECOMMENDED_WA_LIMIT} números de WhatsApp. Você pode mudar o plano depois.</p>
+                <p className="text-[11px] text-gray-500 mt-1">Básico gratuito + {remoteLimit} máquina(s) e {waLimit} conta(s) de WhatsApp. Você pode mudar depois.</p>
               </>
             )}
           </div>
@@ -179,10 +235,10 @@ export default function PlansScreen({ company, onDone, onLogout }: { company: Co
             {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
             <button
               onClick={confirmPlan}
-              disabled={loading || (!isCriacao && activeFeatures.length === 0) || mpConfigured === null}
+              disabled={loading || mpConfigured === null}
               className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-3 rounded-lg cursor-pointer disabled:opacity-50"
             >
-              {loading ? "Processando..." : isCriacao ? "Escolher o Plano Criação" : mpConfigured ? "Continuar para o pagamento" : `Começar ${TRIAL_DAYS} dias grátis`}
+              {loading ? "Processando..." : isCriacao ? "Escolher o Plano Criação" : price === 0 ? "Começar com o Básico gratuito" : mpConfigured ? "Continuar para o pagamento" : `Começar ${TRIAL_DAYS} dias grátis`}
             </button>
             <p className="text-[11px] text-gray-500 text-center mt-2">
               {isCriacao

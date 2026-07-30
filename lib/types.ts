@@ -158,6 +158,12 @@ export type CompanySettingsRow = {
   google_drive_root_folder_id: string | null;
   theme_color: string;
   logo_size: number;
+  onboarding_completed?: boolean;
+  onboarding_niche?: string | null;
+  remote_access_limit?: number;
+  remote_unlimited?: boolean;
+  wa_number_limit?: number;
+  wa_unlimited?: boolean;
   updated_at: string;
 };
 
@@ -190,6 +196,8 @@ export type AiConfigRow = {
   user_id: string;
   provider: AiProvider;
   api_key: string;
+  elevenlabs_key?: string | null;
+  elevenlabs_voice_id?: string | null;
   created_at: string;
   updated_at: string;
 };
