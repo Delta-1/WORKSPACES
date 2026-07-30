@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, BrainCircuit, FileText, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FileText, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Send, Sparkles, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
@@ -27,6 +27,7 @@ const CAPS: { id: string; label: string; desc: string }[] = [
   { id: "academico", label: "Estúdio Acadêmico", desc: "Gerar e enviar trabalhos (.docx/.pdf) e apresentações (.pptx)" },
   { id: "logistica", label: "Logística Internacional", desc: "Status de cargas, localização de motoristas e documentos aduaneiros" },
   { id: "cobranca", label: "Cobrador (cobranças)", desc: "Consulta cobranças pendentes e situação de cada cliente" },
+  { id: "calendar", label: "Calendário", desc: "Consultar horários livres e criar agendamentos confirmados" },
 ];
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];
@@ -47,6 +48,12 @@ const TEMPLATE_INSTRUCTIONS =
   "Entenda bem o que a pessoa quer antes de responder. Seja claro e conciso. Use o histórico e o conhecimento abaixo como verdade. " +
   "Quando precisar de uma informação, pergunte de forma objetiva. Confirme dados importantes antes de agir. " +
   "Nunca invente valores; se não souber, diga que vai verificar.";
+
+const SCHEDULER_INSTRUCTIONS =
+  "Você recebe possíveis clientes que chegam pelo link do Instagram. A primeira mensagem costuma trazer os campos “Seu nome”, “Como posso te chamar?”, “O que vamos criar?”, “Selecione uma opção” e “Sua ideia”. " +
+  "Extraia esses dados sem pedir novamente o que já foi informado e cumprimente a pessoa pelo nome que ela prefere. Diga de forma natural que gostou da ideia e faça uma ou duas perguntas curtas por vez para entender objetivo, público, funcionalidades, referências, prazo e orçamento quando forem relevantes. " +
+  "Converse por texto ou entenda áudio normalmente. Quando compreender o projeto, procure horários livres no calendário, proponha uma data e hora e peça confirmação. Só crie o compromisso depois da confirmação explícita do cliente. " +
+  "Ao confirmar, resuma o que será conversado, informe a data e o horário e agradeça, pedindo que aguarde o contato. Se não houver horário adequado, peça uma preferência. Nunca invente disponibilidade e nunca marque dois compromissos no mesmo horário.";
 
 // Modelos rápidos de agente (preenchem persona/instruções/capacidades/fluxo).
 const AGENT_TEMPLATES: { id: string; label: string; persona: string; instructions: string; caps: string[]; flow?: BotFlow }[] = [
@@ -115,7 +122,13 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   const [screenTeach, setScreenTeach] = useState<Agent | null>(null); // agente escolhido para ensinar por tela
   const [teachMachine, setTeachMachine] = useState<RemoteAgent | null>(null); // máquina vinculada para a aula
   const [teaching, setTeaching] = useState<Agent | null>(null);
-  const canManage = profile?.role === "gestor" || profile?.role === "gerente";
+  const [genesisOpen, setGenesisOpen] = useState(false);
+  // Quem recebeu a ferramenta Labs explicitamente também pode usar a Genesis
+  // e criar seus próprios agentes, mesmo fora dos cargos administrativos.
+  const canManage =
+    profile?.role === "gestor" ||
+    profile?.role === "gerente" ||
+    profile?.tool_access?.labs === true;
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -123,7 +136,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
     // Garante os agentes de sistema (Orb, Copiloto interno e Cobrador) na lista do Labs.
     if (canManage && profile?.company_id) {
       const allCaps = CAPS.map((c) => c.id);
-      const need: { slot: string; name: string; accent: string; caps: string[]; persona: string }[] = [];
+      const need: { slot: string; name: string; accent: string; caps: string[]; persona: string; provider?: AiProvider }[] = [];
       if (!list.some((x) => x.slot === "orb"))
         need.push({ slot: "orb", name: "Orb", accent: "#6366f1", caps: ["files", "tasks", "clients", "attendance", "remote"], persona: "Orb, o copiloto de voz do acesso remoto — objetivo, calmo e prestativo." });
       if (!list.some((x) => x.slot === "internal"))
@@ -136,8 +149,45 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
           slot: "cobrador", name: "Cobrador", accent: "#22c55e", caps: ["cobranca"],
           persona: "Cobrador, especialista em cobranças e lembretes de pagamento — educado, direto e nunca inconveniente. Nunca ameaça nem constrange o cliente; apenas lembra com gentileza, informa o Pix e agradece.",
         });
+      // O Agendador é pessoal: existe somente no HOME da conta solicitada e
+      // fica privado para não aparecer aos demais usuários do ambiente.
+      const isSchedulerOwner = profile.email.trim().toLowerCase() === "deltaspriggan@gmail.com";
+      if (isSchedulerOwner && !list.some((x) => x.slot === "scheduler")) {
+        const [{ data: company }, { data: aiConfig }] = await Promise.all([
+          supabase.from("companies").select("name,company_type").eq("id", profile.company_id).maybeSingle(),
+          supabase.from("ai_config").select("provider").eq("user_id", profile.id).maybeSingle(),
+        ]);
+        const isHome = company?.company_type === "Casa" || company?.name?.trim().toUpperCase() === "HOME";
+        if (isHome) {
+          need.push({
+            slot: "scheduler",
+            name: "Agendador",
+            accent: "#0ea5e9",
+            caps: ["clients", "attendance", "calendar"],
+            persona: "Agendador, um consultor cordial e curioso que entende ideias de projetos e organiza reuniões.",
+            provider: (aiConfig?.provider || "gemini") as AiProvider,
+          });
+        }
+      }
       if (need.length) {
-        await supabase.from("chatbots").insert(need.map((s) => ({ name: s.name, slot: s.slot, provider: "gemini", accent: s.accent, capabilities: s.caps, persona: s.persona, instructions: TEMPLATE_INSTRUCTIONS, enabled: true, test_mode: false, company_id: profile.company_id })));
+        await supabase.from("chatbots").insert(need.map((s) => ({
+          name: s.name,
+          slot: s.slot,
+          provider: s.provider || "gemini",
+          accent: s.accent,
+          capabilities: s.caps,
+          persona: s.persona,
+          instructions: s.slot === "scheduler" ? SCHEDULER_INSTRUCTIONS : TEMPLATE_INSTRUCTIONS,
+          // O Agendador deixa a própria IA abrir a conversa para conseguir usar
+          // o nome extraído da primeira mensagem, sem mandar duas saudações.
+          greeting: null,
+          enabled: true,
+          continuous: s.slot === "scheduler",
+          voice_reply: true,
+          test_mode: false,
+          company_id: profile.company_id,
+          owner_id: s.slot === "scheduler" ? profile.id : null,
+        })));
         list = ((await supabase.from("chatbots").select("*").order("created_at")).data as Agent[]) ?? list;
       }
     }
@@ -146,7 +196,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
     list = list.filter((a) => { const o = (a as { owner_id?: string | null }).owner_id; return !o || o === me; });
     setAgents(list);
     setNumbers(((await supabase.from("whatsapp_numbers").select("*").order("created_at")).data as WhatsappNumber[]) ?? []);
-  }, [canManage, profile?.company_id, profile?.id]);
+  }, [canManage, profile]);
 
   useEffect(() => {
     load();
@@ -162,6 +212,11 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
   }, [load]);
 
   function newAgent() {
+    setGenesisOpen(true);
+  }
+
+  function newManualAgent() {
+    setGenesisOpen(false);
     setEditing({ name: "", provider: "gemini", api_key: "", persona: TEMPLATE_PERSONA, instructions: TEMPLATE_INSTRUCTIONS, greeting: "", knowledge: "", enabled: true, test_mode: false, capabilities: ["files"], accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)] });
   }
 
@@ -232,7 +287,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
                 <span key={c} className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-gray-300">{CAPS.find((x) => x.id === c)?.label ?? c}</span>
               ))}
             </div>
-            {canManage && !ag.slot && numbers.length > 0 && (
+            {canManage && (!ag.slot || ag.slot === "scheduler") && numbers.length > 0 && (
               <div className="mt-1 border-t border-white/10 pt-2">
                 <p className="text-[10px] text-gray-500 mb-1">Responde nos números:</p>
                 <div className="space-y-1">
@@ -251,6 +306,23 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
       </div>
 
       {editing && <AgentEditor agent={editing} profile={profile} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {genesisOpen && (
+        <GenesisModal
+          onClose={() => setGenesisOpen(false)}
+          onManual={newManualAgent}
+          onDraft={(draft) => {
+            setGenesisOpen(false);
+            setEditing({
+              ...draft,
+              provider: draft.provider || "gemini",
+              api_key: "",
+              knowledge: "",
+              enabled: true,
+              accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)],
+            });
+          }}
+        />
+      )}
       {teaching && <TeachModal agent={teaching} onClose={() => setTeaching(null)} />}
       {screenTeach && !teachMachine && <MachinePicker companyId={profile?.company_id ?? null} onPick={(m) => setTeachMachine(m)} onClose={() => setScreenTeach(null)} />}
       {screenTeach && teachMachine && (
@@ -261,6 +333,111 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
           onClose={() => { setTeachMachine(null); setScreenTeach(null); }}
         />
       )}
+    </div>
+  );
+}
+
+type GenesisDraft = Pick<Agent, "name" | "provider" | "persona" | "instructions" | "greeting" | "capabilities" | "continuous" | "voice_reply" | "test_mode">;
+type GenesisTurn = { role: "user" | "assistant"; text: string };
+
+function GenesisModal({ onClose, onManual, onDraft }: { onClose: () => void; onManual: () => void; onDraft: (draft: GenesisDraft) => void }) {
+  const [history, setHistory] = useState<GenesisTurn[]>([
+    { role: "assistant", text: "Olá! Eu sou a Genesis. Que tipo de bot você quer criar e o que ele precisa fazer?" },
+  ]);
+  const [message, setMessage] = useState("");
+  const [draft, setDraft] = useState<GenesisDraft | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history, sending]);
+
+  async function send() {
+    const text = message.trim();
+    if (!text || sending) return;
+    setMessage("");
+    setError(null);
+    const context = history.slice(1);
+    setHistory((prev) => [...prev, { role: "user", text }]);
+    setSending(true);
+    try {
+      const headers = await authHeaders();
+      const response = await fetch("/api/labs/genesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ message: text, history: context }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "A Genesis não conseguiu responder.");
+      setHistory((prev) => [...prev, { role: "assistant", text: data.reply }]);
+      if (data.ready && data.draft) setDraft({ ...data.draft, provider: data.provider || "gemini" } as GenesisDraft);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao falar com a Genesis.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-xl h-[min(680px,90vh)] bg-[#0b0f16] border border-indigo-400/20 rounded-3xl overflow-hidden flex flex-col shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white"><Sparkles size={19} /></div>
+            <div>
+              <h3 className="text-sm font-bold">Genesis</h3>
+              <p className="text-[10px] text-gray-500">Assistente fixa para criar agentes no Labs</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"><X size={17} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scroll p-4 space-y-3">
+          {history.map((turn, index) => (
+            <div key={index} className={`flex ${turn.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${turn.role === "user" ? "bg-indigo-600 text-white rounded-br-md" : "bg-white/8 text-gray-200 rounded-bl-md"}`}>
+                {turn.text}
+              </div>
+            </div>
+          ))}
+          {sending && <p className="text-xs text-indigo-300 animate-pulse">Genesis está pensando…</p>}
+          {error && <p className="text-xs text-red-300 bg-red-950/30 border border-red-500/20 rounded-lg p-2">{error}</p>}
+          {draft && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-3">
+              <p className="text-xs font-bold text-emerald-300 mb-1">Rascunho pronto: {draft.name}</p>
+              <p className="text-[11px] text-gray-400 line-clamp-3">{draft.instructions}</p>
+              <button onClick={() => onDraft(draft)} className="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg px-3 py-2 cursor-pointer">
+                Revisar e salvar agente
+              </button>
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
+
+        <div className="p-3 border-t border-white/10">
+          <div className="flex gap-2">
+            <textarea
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              rows={1}
+              placeholder="Explique o bot que você quer criar…"
+              className="flex-1 resize-none bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500/50"
+            />
+            <button onClick={() => void send()} disabled={!message.trim() || sending} className="w-10 h-10 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 flex items-center justify-center cursor-pointer">
+              <Send size={16} />
+            </button>
+          </div>
+          <button onClick={onManual} className="mt-2 text-[10px] text-gray-500 hover:text-gray-300 cursor-pointer">Prefiro criar manualmente</button>
+        </div>
+      </div>
     </div>
   );
 }
