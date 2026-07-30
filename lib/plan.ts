@@ -5,8 +5,8 @@
 export type FeatureId = "mensagens" | "remoto" | "labs" | "financeiro" | "clientes" | "automacao" | "logistica" | "cobranca";
 
 export const FEATURES: { id: FeatureId; label: string; desc: string; price: number }[] = [
-  { id: "mensagens", label: "WhatsApp / Mensagens", desc: "Atendimento por WhatsApp com bots e etiquetas", price: 0 /* por número registrado */ },
-  { id: "remoto", label: "Acesso Remoto", desc: "Ver e controlar computadores à distância", price: 40 },
+  { id: "mensagens", label: "WhatsApp / Mensagens", desc: "Atendimento por WhatsApp com bots e etiquetas — R$ 5 por conta vinculada", price: 0 },
+  { id: "remoto", label: "Acesso Remoto", desc: "Ver e controlar computadores à distância — R$ 5 por máquina", price: 0 },
   { id: "labs", label: "Agentes de IA + Copiloto", desc: "Criar robôs de IA e o copiloto interno", price: 50 },
   { id: "financeiro", label: "Financeiro", desc: "Controle de contas da empresa e de casa", price: 20 },
   { id: "clientes", label: "Clientes (CRM)", desc: "Cadastro de clientes, formulário e acesso de terceiros", price: 20 },
@@ -31,12 +31,14 @@ export const APP_FEATURE: Record<string, FeatureId> = {
   cobrador: "cobranca",
 };
 
-// Plano recomendado (já vem marcado): WhatsApp/mensagens, acesso remoto, agentes
-// de IA e clientes. Automação e Financeiro NÃO vêm inclusos — a empresa adiciona
-// à parte se quiser. O WhatsApp vem com 3 números por padrão.
+// Plano recomendado: adiciona Mensagens, Acesso Remoto, agentes e CRM sobre o
+// Básico gratuito (Calendário, Kanban, Setores e Arquivos).
 export const RECOMMENDED: FeatureId[] = ["mensagens", "remoto", "labs", "clientes"];
-export const RECOMMENDED_WA_LIMIT = 3; // números de WhatsApp (linhas/QR) inclusos
-export const WA_PRICE_PER_NUMBER = 10; // R$ por número registrado
+export const RECOMMENDED_WA_LIMIT = 1;
+export const RECOMMENDED_REMOTE_LIMIT = 1;
+export const ACCESS_PRICE = 5;
+export const WA_PRICE_PER_NUMBER = ACCESS_PRICE;
+export const REMOTE_PRICE_PER_MACHINE = ACCESS_PRICE;
 export const TRIAL_DAYS = 3; // dias grátis de teste ao criar a empresa
 
 // Planos da tela de cadastro. "Simples" = o essencial com limitação (sem agentes
@@ -55,9 +57,9 @@ export const PLAN_TIERS: {
 }[] = [
   {
     id: "simples",
-    name: "Plano Simples",
-    tagline: "O essencial para começar — sem agentes de IA.",
-    features: ["mensagens", "remoto", "clientes"],
+    name: "Básico Gratuito",
+    tagline: "Calendário, Kanban, Setores e Arquivos, sem mensalidade.",
+    features: [],
   },
   {
     id: "avancado",
@@ -90,17 +92,29 @@ export function tierPrice(tier: PlanTierId): number {
 }
 
 // Preço do WhatsApp: R$10 por NÚMERO registrado (linha/conexão via QR Code).
-// Ex.: 3 números = R$30. "Número registrado" é a linha de WhatsApp que aparece
+// Ex.: 3 números = R$15. "Número registrado" é a linha de WhatsApp que aparece
 // dentro do Workspace — não é o contato de um cliente.
 export function whatsappPrice(numbers: number): number {
-  return Math.max(1, Math.floor(numbers)) * WA_PRICE_PER_NUMBER;
+  return Math.max(0, Math.floor(numbers)) * WA_PRICE_PER_NUMBER;
 }
 
+export function remotePrice(machines: number): number {
+  return Math.max(0, Math.floor(machines)) * REMOTE_PRICE_PER_MACHINE;
+}
+
+export type PlanPriceOptions = {
+  remoteLimit?: number;
+  accountKind?: "home" | "business";
+};
+
 // Valor mensal total do plano.
-export function planPrice(features: FeatureId[], waLimit: number): number {
+export function planPrice(features: FeatureId[], waLimit: number, options: PlanPriceOptions = {}): number {
+  const accountKind = options.accountKind ?? "business";
+  const included = accountKind === "home" ? 1 : 0;
   let total = 0;
   for (const f of features) {
-    if (f === "mensagens") total += whatsappPrice(waLimit);
+    if (f === "mensagens") total += whatsappPrice(Math.max(0, waLimit - included));
+    else if (f === "remoto") total += remotePrice(Math.max(0, (options.remoteLimit ?? RECOMMENDED_REMOTE_LIMIT) - included));
     else total += FEATURES.find((x) => x.id === f)?.price ?? 0;
   }
   return total;
