@@ -30,6 +30,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
   const [serverPassword, setServerPassword] = useState(""); // senha "root" configurada pela empresa
+  const [remoteLimit, setRemoteLimit] = useState(1);
+  const [remoteUnlimited, setRemoteUnlimited] = useState(false);
   // Esta empresa pode marcar a máquina como servidor? Sim se for DELA, ou se a
   // máquina ainda não tem dono (company_id nulo — máquina antiga/avulsa). Máquinas
   // de OUTRA empresa (só compartilhadas por código) não — lá é computador comum.
@@ -47,8 +49,10 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     // Dispositivos que a empresa possui OU tem acesso pelo código (compartilhados).
     const { data } = await supabase.rpc("my_remote_agents");
     if (data) setAgents(data as RemoteAgent[]);
-    const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", companyId).maybeSingle();
+    const { data: cs } = await supabase.from("company_settings").select("server_password,remote_access_limit,remote_unlimited").eq("company_id", companyId).maybeSingle();
     setServerPassword(cs?.server_password ?? "");
+    setRemoteLimit(cs?.remote_access_limit ?? 1);
+    setRemoteUnlimited(!!cs?.remote_unlimited);
   }, [companyId]);
 
   useEffect(() => {
@@ -66,6 +70,11 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   async function syncAgent() {
     const clean = code.replace(/\D/g, "");
     if (!supabase || clean.length < 6) return;
+    const ownedCount = agents.filter((agent) => agent.company_id === companyId).length;
+    if (!remoteUnlimited && ownedCount >= remoteLimit) {
+      alert(`Seu plano permite ${remoteLimit} máquina(s). Cada acesso adicional custa R$ 5; atualize pela aba Planos.`);
+      return;
+    }
     setSyncing(true);
     try {
       const { data, error } = await supabase.rpc("claim_agent", {
@@ -149,6 +158,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-lg font-bold flex items-center gap-2">
           <MonitorSmartphone className="text-emerald-400" size={20} /> Acesso Remoto
+          <span className="text-[10px] font-normal text-gray-500">{remoteUnlimited ? "ilimitado" : `${agents.filter((agent) => agent.company_id === companyId).length}/${remoteLimit} máquinas`}</span>
         </h3>
         {canManage && (
           <div className="flex items-center gap-2 flex-wrap">
