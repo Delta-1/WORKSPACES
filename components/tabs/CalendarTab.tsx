@@ -15,6 +15,15 @@ const MONTHS = [
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+function addDaysYmd(value: string, amount: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + amount);
+  return ymd(date);
+}
+function dateOnly(value: string | null | undefined) {
+  return value?.slice(0, 10) ?? "";
+}
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -80,9 +89,14 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
 
   const itemsFor = useCallback(
     (day: Date) => {
-      const evs = events.filter((e) => sameDay(new Date(e.starts_at), day)).map((e) => ({ kind: "event" as const, e }));
+      const dayKey = ymd(day);
+      const evs = events
+        .filter((e) => e.all_day ? dateOnly(e.starts_at) === dayKey : ymd(new Date(e.starts_at)) === dayKey)
+        .map((e) => ({ kind: "event" as const, e }));
       const tks = tasks
-        .filter((t) => t.due_date && sameDay(new Date(t.due_date), day))
+        // "YYYY-MM-DD" não pode passar por new Date(): o navegador interpreta
+        // como UTC e, em fusos negativos, exibe o dia anterior.
+        .filter((t) => dateOnly(t.due_date) === dayKey)
         .map((t) => ({ kind: "task" as const, t }));
       return { evs, tks };
     },
@@ -105,7 +119,8 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
       description: ev.description || undefined,
       location: ev.location || undefined,
       start: ev.allDay ? { date: ev.date } : { dateTime: ev.startISO },
-      end: ev.allDay ? { date: ev.date } : { dateTime: ev.endISO },
+      // No Google Agenda o fim de um evento de dia inteiro é exclusivo.
+      end: ev.allDay ? { date: addDaysYmd(ev.date, 1) } : { dateTime: ev.endISO },
     };
     const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
       method: "POST",
@@ -120,8 +135,12 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
     if (!supabase || !title.trim() || !profile?.company_id) return;
     setSaving(true);
     try {
-      const startISO = new Date(`${date}T${allDay ? "00:00" : time}`).toISOString();
-      const endISO = new Date(new Date(startISO).getTime() + 60 * 60 * 1000).toISOString();
+      // Meio-dia mantém a data civil estável para eventos de dia inteiro em
+      // qualquer fuso; nesses eventos a hora não é exibida nem utilizada.
+      const startISO = new Date(`${date}T${allDay ? "12:00" : time}:00`).toISOString();
+      const endISO = allDay
+        ? new Date(`${addDaysYmd(date, 1)}T12:00:00`).toISOString()
+        : new Date(new Date(startISO).getTime() + 60 * 60 * 1000).toISOString();
       let googleId: string | null = null;
       if (toGoogle) {
         const { data } = await supabase.auth.getSession();
