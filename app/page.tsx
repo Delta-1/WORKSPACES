@@ -378,6 +378,20 @@ export default function Home() {
   // App "Game" (ícone de controle): só em conta Casa e com o Modo Game ligado.
   const showGame = myCompany?.company_type === "Casa" && gameEnabled;
 
+  // Mesma checagem (cargo + override por funcionário + ferramenta do plano) usada
+  // para montar o menu de apps — reaproveitada para liberar/esconder a sub-aba
+  // de Automação dentro do Labs, sem duplicar a regra de permissão.
+  const canAccessApp = (appId: string): boolean => {
+    if (appId === "clientes_ia" && !superAdmin) return false; // exclusivo do Admin Geral
+    const ta = profile?.tool_access as Record<string, boolean> | null | undefined;
+    const hasOverride = !!(ta && Object.prototype.hasOwnProperty.call(ta, appId));
+    if (hasOverride && ta![appId] === false) return false; // bloqueado p/ esta pessoa
+    const def = APPS.find((a) => a.id === appId);
+    const roleOk = !!def && (def.roles.includes(role) || (hasOverride && ta![appId] === true)); // liberado supera o cargo
+    const featOk = superAdmin || appId === "planos" || appEnabled(appId, enabledFeatures); // super admin vê TUDO; empresa precisa ter a ferramenta
+    return roleOk && featOk;
+  };
+
   // VisãoADM é a central do Administrador Geral: aparece para o super admin em
   // QUALQUER ambiente (não depende mais de estar numa casa chamada "HUB").
   const visibleApps: AppDef[] = [
@@ -385,16 +399,7 @@ export default function Home() {
       { id: "visaoadm", label: "VisãoADM", icon: Crown, accent: "bg-amber-900/60", roles: [] as Role[] },
       { id: "godseye", label: "God's Eye", icon: Eye, accent: "bg-red-900/60", roles: [] as Role[] },
     ] : []),
-    ...APPS.filter((a) => {
-      if (a.id === "clientes_ia" && !superAdmin) return false; // exclusivo do Admin Geral
-      // Permissão por ferramenta (definida em Funcionários): override do cargo.
-      const ta = profile?.tool_access as Record<string, boolean> | null | undefined;
-      const hasOverride = ta && Object.prototype.hasOwnProperty.call(ta, a.id);
-      if (hasOverride && ta![a.id] === false) return false;             // bloqueado p/ esta pessoa
-      const roleOk = a.roles.includes(role) || (hasOverride && ta![a.id] === true); // liberado supera o cargo
-      const featOk = superAdmin || a.id === "planos" || appEnabled(a.id, enabledFeatures); // super admin vê TUDO; empresa precisa ter a ferramenta
-      return roleOk && featOk;
-    }),
+    ...APPS.filter((a) => canAccessApp(a.id)),
     ...(showGame ? [{ id: "game", label: "Game", icon: Gamepad2, accent: "bg-fuchsia-900/60", roles: [] as Role[] }] : []),
   ];
 
@@ -578,7 +583,7 @@ export default function Home() {
         {tab === "planos" && <PlansTab />}
         {tab === "remoto" && <RemoteAccessTab profile={profile} />}
         {tab === "automacao" && <AutomationTab profile={profile} />}
-        {tab === "labs" && <LabsTab profile={profile} />}
+        {tab === "labs" && <LabsTab profile={profile} canUseAutomation={canAccessApp("automacao")} />}
         {tab === "memorias" && <MemoriesTab profile={profile} />}
         {tab === "log" && <LogTab profile={profile} />}
         {tab === "config" && (

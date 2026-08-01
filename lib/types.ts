@@ -269,10 +269,10 @@ export type Chatbot = {
 // Fluxograma visual do bot (blocos ligados) — ver components/BotFlowBuilder.
 export type BotFlowNode = {
   id: string;
-  type: "start" | "message" | "ask" | "condition" | "buttons" | "ai" | "action" | "end";
+  type: "start" | "message" | "ask" | "condition" | "buttons" | "ai" | "action" | "wait" | "tool" | "end";
   x: number;
   y: number;
-  data: { text?: string; keywords?: string; options?: string[]; action?: string };
+  data: { text?: string; keywords?: string; options?: string[]; action?: string; minutes?: number; tool?: string; extra?: string };
 };
 export type BotFlow = { nodes: BotFlowNode[]; edges: { id: string; from: string; handle: string; to: string }[] };
 
