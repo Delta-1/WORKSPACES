@@ -885,11 +885,62 @@ function httpsDownload(url, dest, redirects = 0) {
   });
 }
 
+// Faz um POST JSON simples (usado só pra chamar a RPC de política de
+// atualização — sem depender do @supabase/supabase-js aqui no processo principal).
+function httpsPostJson(url, headers, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(bodyObj));
+    const req = https.request(
+      url,
+      { method: "POST", headers: { ...headers, "Content-Type": "application/json", "Content-Length": body.length } },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error("HTTP " + res.statusCode));
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "null"));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// A empresa liga/desliga a instalação automática na aba Configurações do
+// Acesso Remoto (company_settings.remote_auto_update, por padrão DESLIGADA).
+// Sem isso ligado, a máquina só atualiza quando alguém clicar em "Atualizar"
+// no menu da bandeja — nunca sozinha. Qualquer falha na consulta = mantém
+// desligado (não arrisca instalar sem permissão).
+async function isAutoUpdateEnabled(cfg) {
+  try {
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.agentId || !cfg.accessCode) return false;
+    const result = await httpsPostJson(
+      `${cfg.supabaseUrl}/rest/v1/rpc/agent_update_policy`,
+      { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}` },
+      { p_agent_id: cfg.agentId, p_access_code: cfg.accessCode }
+    );
+    return result === true;
+  } catch (e) {
+    console.error("isAutoUpdateEnabled", e?.message || e);
+    return false;
+  }
+}
+
 let updating = false;
 async function checkForUpdate(cfg, manual = false) {
   const { dialog } = require("electron");
   if (updating) return;
   try {
+    // Verificação SILENCIOSA (em segundo plano, sem o usuário pedir) só roda se
+    // a empresa ligou a instalação automática. A verificação MANUAL (menu da
+    // bandeja "Atualizar") sempre funciona, senão ninguém consegue atualizar.
+    if (!manual && !(await isAutoUpdateEnabled(cfg))) return;
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) return;
     const buf = await httpsGet(`${cfg.supabaseUrl}/rest/v1/app_releases?select=updated_at,version,url_win,url_linux&limit=1`, {
       apikey: cfg.supabaseAnonKey,
@@ -999,8 +1050,11 @@ app.whenReady().then(() => {
     /* tray opcional */
   }
 
-  // Verifica atualização ao abrir e depois a cada 30 min (silencioso, instala
-  // sozinho sem perguntar nada) — fica sempre na versão mais nova.
+  // Verifica atualização ao abrir e depois a cada 30 min. SÓ instala sozinho
+  // (sem perguntar nada) se a empresa tiver ligado a instalação automática nas
+  // configurações do Acesso Remoto — checkForUpdate confere isso e sai sem
+  // fazer nada quando está desligado (padrão). Do contrário, fica manual: só
+  // atualiza quando clicarem em "Atualizar" no menu da bandeja.
   setTimeout(() => checkForUpdate(payload, false), 8000);
   setInterval(() => checkForUpdate(payload, false), 30 * 60 * 1000);
 });

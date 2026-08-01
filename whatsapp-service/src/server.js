@@ -2358,8 +2358,15 @@ async function startSession(numberId) {
           await logOutgoingEcho(sock, numberId, msg, jid);
           continue;
         }
-        // Marca como visualizada (tique azul) — sem travar o recebimento (não aguarda).
-        sock.readMessages([msg.key]).catch(() => {});
+        // Marca como visualizada (tique azul) só quando o BOT for de fato
+        // responder — não assim que a mensagem chega. Evita o "visualizou e
+        // sumiu": só aparece o tique azul quando a resposta está a caminho.
+        let seen = false;
+        const markSeen = () => {
+          if (seen) return;
+          seen = true;
+          sock.readMessages([msg.key]).catch(() => {});
+        };
         // Desembrulha documentos com legenda
         const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
         const mediaKind = inner.imageMessage
@@ -2423,6 +2430,7 @@ async function startSession(numberId) {
           // o arquivo, tentamos ler a DATA, damos baixa (pago) e confirmamos.
           if (media && (media.type === "image" || media.type === "document") && contact?.id) {
             try {
+              markSeen(); // pode ser um comprovante — se for, o Cobrador confirma na hora
               const handled = await handleBillingProof({ sock, jid: contactJid, conversation, cid, contactId: contact.id, media, imageBuffer, mime: node?.mimetype || null });
               if (handled) continue; // comprovante tratado — não aciona o bot de atendimento
             } catch (e) {
@@ -2444,6 +2452,7 @@ async function startSession(numberId) {
             try {
               const replies = await handleConfigia({ jid: contactJid, text, numberId, number, companyId: cid });
               if (replies && replies.length) {
+                markSeen();
                 for (const r of replies) {
                   await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
                 }
@@ -2461,6 +2470,7 @@ async function startSession(numberId) {
             try {
               const replies = await handleCopilotAuth({ jid: contactJid, text, numberId, number, companyId: cid, contact });
               if (replies && replies.length) {
+                markSeen();
                 for (const r of replies) await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
                 continue; // ainda autenticando (ou acabou de liberar) — não aciona o bot de atendimento
               }
@@ -2508,6 +2518,7 @@ async function startSession(numberId) {
             !conversation.bot_paused &&
             !conversation.assignee_id;
           if (isCopilot || botOn) {
+            markSeen(); // só agora, que o bot vai mesmo processar e responder
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
             const botElevenKey = agentForReply?.elevenlabs_key || elevenKey;

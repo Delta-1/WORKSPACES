@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, FolderCheck, FolderSearch, Link2, Monitor, MonitorSmartphone, Server, Settings2, Trash2, X } from "lucide-react";
+import { Copy, FolderCheck, FolderSearch, Link2, Monitor, MonitorSmartphone, RefreshCw, Server, Settings2, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import RemoteViewer from "@/components/RemoteViewer";
 import AgentFolderPicker from "@/components/AgentFolderPicker";
@@ -26,6 +26,11 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   const [sharedList, setSharedList] = useState<string[]>([]); // pastas liberadas (allowlist)
   const [pickTarget, setPickTarget] = useState<"root" | "shared" | null>(null); // seletor visual aberto
   const [permsFor, setPermsFor] = useState<RemoteAgent | null>(null); // engrenagem: permissões da máquina
+  // Aba interna: "Máquinas" (lista de sempre) ou "Configurações" (política de
+  // atualização do agente — vale para TODAS as máquinas da empresa).
+  const [view, setView] = useState<"maquinas" | "configuracoes">("maquinas");
+  const [autoUpdate, setAutoUpdate] = useState(false); // company_settings.remote_auto_update
+  const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
 
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
   const companyId = profile?.company_id ?? null;
@@ -47,9 +52,22 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     // Dispositivos que a empresa possui OU tem acesso pelo código (compartilhados).
     const { data } = await supabase.rpc("my_remote_agents");
     if (data) setAgents(data as RemoteAgent[]);
-    const { data: cs } = await supabase.from("company_settings").select("server_password").eq("company_id", companyId).maybeSingle();
+    const { data: cs } = await supabase.from("company_settings").select("server_password,remote_auto_update").eq("company_id", companyId).maybeSingle();
     setServerPassword(cs?.server_password ?? "");
+    setAutoUpdate(cs?.remote_auto_update ?? false);
   }, [companyId]);
+
+  // Liga/desliga a instalação automática pra TODAS as máquinas da empresa. Com
+  // isso desligado (padrão), cada máquina só atualiza quando alguém clicar em
+  // "Atualizar" no menu da bandeja do próprio app instalado nela.
+  async function toggleAutoUpdate(on: boolean) {
+    if (!supabase || !companyId || savingAutoUpdate) return;
+    setSavingAutoUpdate(true);
+    setAutoUpdate(on); // otimista
+    const { error } = await supabase.from("company_settings").update({ remote_auto_update: on }).eq("company_id", companyId);
+    if (error) setAutoUpdate(!on); // desfaz se falhar
+    setSavingAutoUpdate(false);
+  }
 
   useEffect(() => {
     load();
@@ -150,33 +168,75 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
         <h3 className="text-lg font-bold flex items-center gap-2">
           <MonitorSmartphone className="text-emerald-400" size={20} /> Acesso Remoto
         </h3>
-        {canManage && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Nome do cliente (opcional)"
-              className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-44"
-            />
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && syncAgent()}
-              placeholder="Código do cliente"
-              inputMode="numeric"
-              className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-40 tracking-widest font-mono"
-            />
-            <button
-              onClick={syncAgent}
-              disabled={syncing || code.replace(/\D/g, "").length < 6}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50"
-            >
-              <Link2 size={14} /> Sincronizar
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {canManage && (
+            <div className="flex items-center gap-0.5 bg-black/20 border border-white/10 rounded-lg p-0.5">
+              <button
+                onClick={() => setView("maquinas")}
+                className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md cursor-pointer ${view === "maquinas" ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"}`}
+              >
+                <MonitorSmartphone size={12} /> Máquinas
+              </button>
+              <button
+                onClick={() => setView("configuracoes")}
+                className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md cursor-pointer ${view === "configuracoes" ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"}`}
+              >
+                <Settings2 size={12} /> Configurações
+              </button>
+            </div>
+          )}
+          {view === "maquinas" && canManage && (
+            <>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Nome do cliente (opcional)"
+                className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-44"
+              />
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && syncAgent()}
+                placeholder="Código do cliente"
+                inputMode="numeric"
+                className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none w-40 tracking-widest font-mono"
+              />
+              <button
+                onClick={syncAgent}
+                disabled={syncing || code.replace(/\D/g, "").length < 6}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                <Link2 size={14} /> Sincronizar
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
+      {view === "configuracoes" ? (
+        <div className="flex-1 overflow-y-auto custom-scroll space-y-3 max-w-xl">
+          <div className="liquid-glass rounded-2xl p-4 space-y-3">
+            <h4 className="text-sm font-bold flex items-center gap-2"><RefreshCw size={15} className="text-emerald-400" /> Atualização do agente</h4>
+            <p className="text-[11px] text-gray-400">
+              Por padrão, a atualização é <b>manual</b>: cada máquina só atualiza quando alguém clica em <b>&quot;Atualizar&quot;</b> no
+              menu da bandeja do app instalado nela. Ligando a opção abaixo, <b>todas as máquinas desta empresa</b> passam a
+              atualizar sozinhas — sem nenhuma confirmação, clique ou janela — assim que uma nova versão for publicada.
+            </p>
+            <button
+              onClick={() => toggleAutoUpdate(!autoUpdate)}
+              disabled={savingAutoUpdate}
+              className={`w-full flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 border cursor-pointer text-left transition-colors disabled:opacity-60 ${autoUpdate ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 bg-black/20 hover:bg-white/5"}`}
+            >
+              <span className="min-w-0">
+                <span className="text-sm font-semibold block">Instalação automática</span>
+                <span className="text-[11px] text-gray-400">Baixa e instala a nova versão sozinha, por cima da atual, sem interação humana.</span>
+              </span>
+              <span className={`text-[11px] font-bold shrink-0 ${autoUpdate ? "text-emerald-300" : "text-gray-500"}`}>{autoUpdate ? "LIGADA" : "desligada (manual)"}</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
         O cliente abre o <b>Workspace Acesso Remoto</b> no computador (.exe) ou celular Android (.apk) e informa o{" "}
         <b>código de suporte</b>. Digite o código acima e clique em <b>Sincronizar</b>. Quando estiver <b>Online</b>, clique
@@ -299,6 +359,8 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
           );
         })}
       </div>
+      </>
+      )}
 
       {pwFor && (
         <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setPwFor(null)}>
