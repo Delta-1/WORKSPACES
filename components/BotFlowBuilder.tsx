@@ -213,7 +213,12 @@ export default function BotFlowBuilder({
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
   return (
-    <div className="fixed inset-0 z-[70] bg-[#070b12] flex flex-col">
+    // Este editor é renderizado como IRMÃO do fundo do modal do agente (que
+    // fecha ao clicar fora, onClick={onClose} lá no LabsTab). Sem parar a
+    // propagação aqui, qualquer clique dentro do fluxograma — num bloco, na
+    // paleta, no "Salvar fluxo" — subia até esse fundo e fechava a tela
+    // inteira de edição do agente por engano.
+    <div className="fixed inset-0 z-[70] bg-[#070b12] flex flex-col" onClick={(e) => e.stopPropagation()}>
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div>
