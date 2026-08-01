@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  Clock,
   Flag,
   GitBranch,
   ListChecks,
@@ -10,19 +11,21 @@ import {
   MessagesSquare,
   Play,
   Plus,
+  Puzzle,
   Save,
   Trash2,
   Wrench,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { CAPS } from "@/lib/capabilities";
 
 // ---------------------------------------------------------------------------
 // Tipos do fluxo (salvos em chatbots.flow como JSON)
 // ---------------------------------------------------------------------------
 export type FlowNode = {
   id: string;
-  type: "start" | "message" | "ask" | "condition" | "buttons" | "ai" | "action" | "end";
+  type: "start" | "message" | "ask" | "condition" | "buttons" | "ai" | "action" | "wait" | "tool" | "end";
   x: number;
   y: number;
   data: {
@@ -30,6 +33,9 @@ export type FlowNode = {
     keywords?: string;
     options?: string[];
     action?: "handoff" | "close" | "send_address" | "send_phone" | "send_website";
+    minutes?: number; // nó "wait": minutos sem resposta até disparar o lembrete
+    tool?: string; // nó "tool": capacidade/ferramenta acionada (ver lib/capabilities)
+    extra?: string; // nó "tool": instrução extra opcional pra IA que usa a ferramenta
   };
 };
 export type FlowEdge = { id: string; from: string; handle: string; to: string };
@@ -44,10 +50,22 @@ const NODE_DEFS: Record<
   ask: { label: "Perguntar", color: "#0ea5e9", icon: MessagesSquare, hint: "Pergunta e espera a resposta" },
   buttons: { label: "Opções", color: "#f59e0b", icon: ListChecks, hint: "Oferece opções e desvia por escolha" },
   condition: { label: "Condição", color: "#a855f7", icon: GitBranch, hint: "Desvia por palavras-chave" },
-  ai: { label: "IA responde", color: "#ec4899", icon: Bot, hint: "A IA responde livre com o conhecimento" },
+  ai: { label: "IA responde", color: "#ec4899", icon: Bot, hint: "A IA responde livre com o conhecimento (e ferramentas, se o agente tiver)" },
+  tool: { label: "Ferramenta", color: "#06b6d4", icon: Puzzle, hint: "Aciona uma capacidade do agente (ex.: gerar apresentação, criar tarefa)" },
+  wait: { label: "Lembrete (sem resposta)", color: "#eab308", icon: Clock, hint: "Se o contato não responder em X minutos, manda um lembrete" },
   action: { label: "Ação", color: "#ef4444", icon: Wrench, hint: "Transferir, encerrar, mandar endereço…" },
   end: { label: "Fim", color: "#64748b", icon: Flag, hint: "Encerra o fluxo" },
 };
+
+// Ferramentas disponíveis pro nó "Ferramenta" — mesma lista de capacidades do
+// Labs. Quando `agentCapabilities` é passado, filtra só o que o agente tem
+// ligado (evita montar um passo que o agente não tem permissão de executar).
+function toolOptionsFor(agentCapabilities?: string[]) {
+  if (agentCapabilities && agentCapabilities.length) {
+    return CAPS.filter((c) => agentCapabilities.includes(c.id));
+  }
+  return CAPS;
+}
 
 const ACTIONS: { id: NonNullable<FlowNode["data"]["action"]>; label: string }[] = [
   { id: "handoff", label: "Transferir para atendente humano" },
@@ -63,6 +81,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 function handlesOf(n: FlowNode): { id: string; label: string }[] {
   if (n.type === "end") return [];
   if (n.type === "condition") return [{ id: "sim", label: "combina" }, { id: "nao", label: "senão" }];
+  if (n.type === "wait") return [{ id: "respondeu", label: "respondeu" }, { id: "sem_resposta", label: "sem resposta" }];
   if (n.type === "buttons") return (n.data.options ?? []).map((o, i) => ({ id: `opt${i}`, label: o || `Opção ${i + 1}` }));
   return [{ id: "out", label: "" }];
 }
@@ -73,12 +92,14 @@ export default function BotFlowBuilder({
   agentId,
   agentName,
   initial,
+  agentCapabilities,
   onClose,
   onSaved,
 }: {
   agentId: string;
   agentName: string;
   initial: BotFlow | null;
+  agentCapabilities?: string[];
   onClose: () => void;
   onSaved?: (flow: BotFlow) => void;
 }) {
@@ -105,6 +126,8 @@ export default function BotFlowBuilder({
       : type === "condition" ? { keywords: "" }
       : type === "buttons" ? { text: "Escolha uma opção:", options: ["Opção 1", "Opção 2"] }
       : type === "action" ? { action: "handoff" }
+      : type === "wait" ? { minutes: 30, text: "Oi! Ainda por aí? 🙂 Fico à disposição se precisar de algo." }
+      : type === "tool" ? { tool: toolOptionsFor(agentCapabilities)[0]?.id ?? "" }
       : {};
     setNodes((p) => [...p, { id, type, x: base.x, y: base.y, data }]);
     setSelected(id);
@@ -280,6 +303,10 @@ export default function BotFlowBuilder({
                       <span className="line-clamp-2">{n.data.text || "—"}</span>
                     ) : n.type === "condition" ? (
                       <span>se contém: <b className="text-gray-200">{n.data.keywords || "…"}</b></span>
+                    ) : n.type === "wait" ? (
+                      <span>sem resposta em <b className="text-gray-200">{n.data.minutes ?? 30} min</b> → manda lembrete</span>
+                    ) : n.type === "tool" ? (
+                      <span>usa: <b className="text-gray-200">{CAPS.find((c) => c.id === n.data.tool)?.label ?? "…"}</b></span>
                     ) : n.type === "action" ? (
                       <span>{ACTIONS.find((a) => a.id === n.data.action)?.label ?? "—"}</span>
                     ) : n.type === "ai" ? (
@@ -329,6 +356,50 @@ export default function BotFlowBuilder({
               <div>
                 <label className="text-[11px] text-gray-400">Texto que o bot envia</label>
                 <textarea value={selNode.data.text ?? ""} onChange={(e) => patchNode(selNode.id, { text: e.target.value })} rows={3} className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-none" />
+              </div>
+            )}
+
+            {selNode.type === "wait" && (
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[11px] text-gray-400">Esperar (minutos) sem resposta</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={selNode.data.minutes ?? 30}
+                    onChange={(e) => patchNode(selNode.id, { minutes: Math.max(1, Number(e.target.value) || 1) })}
+                    className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-400">Lembrete que o bot envia se não responder</label>
+                  <textarea value={selNode.data.text ?? ""} onChange={(e) => patchNode(selNode.id, { text: e.target.value })} rows={3} className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-none" />
+                </div>
+                <p className="text-[10px] text-gray-500">Se o contato responder antes do prazo → saída &quot;respondeu&quot;. Se estourar o prazo → manda o lembrete e segue por &quot;sem resposta&quot;.</p>
+              </div>
+            )}
+
+            {selNode.type === "tool" && (
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[11px] text-gray-400">Ferramenta a acionar</label>
+                  <select
+                    value={selNode.data.tool ?? ""}
+                    onChange={(e) => patchNode(selNode.id, { tool: e.target.value })}
+                    className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none cursor-pointer"
+                  >
+                    <option value="">— escolha —</option>
+                    {toolOptionsFor(agentCapabilities).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                  {toolOptionsFor(agentCapabilities).length === 0 && (
+                    <p className="text-[10px] text-amber-400 mt-1">Este agente não tem nenhuma capacidade ligada — marque alguma em &quot;O que ele pode fazer&quot; antes de usar este bloco.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-400">Instrução extra (opcional)</label>
+                  <textarea value={selNode.data.extra ?? ""} onChange={(e) => patchNode(selNode.id, { extra: e.target.value })} rows={2} placeholder="Ex.: gere sempre uma apresentação de vendas curta, de 6 slides" className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-none" />
+                </div>
+                <p className="text-[10px] text-gray-500">A IA usa essa ferramenta (e só ela) pra atender o pedido nesta etapa — junta os arquivos/tarefas ao que já sabe do agente.</p>
               </div>
             )}
 

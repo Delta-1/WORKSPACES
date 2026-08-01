@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
 import RemoteViewer from "@/components/RemoteViewer";
+import AutomationTab from "@/components/tabs/AutomationTab";
+import { CAPS } from "@/lib/capabilities";
 import type { Chatbot, Profile, WhatsappNumber, AiProvider, AgentApi, RemoteAgent } from "@/lib/types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -13,21 +15,6 @@ async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
-
-// Capacidades que um agente pode ter dentro do workspace.
-const CAPS: { id: string; label: string; desc: string }[] = [
-  { id: "files", label: "Arquivos", desc: "Buscar e enviar arquivos/imagens da empresa" },
-  { id: "tasks", label: "Tarefas", desc: "Criar e mover tarefas no Kanban" },
-  { id: "clients", label: "Clientes", desc: "Consultar e cadastrar clientes (CRM)" },
-  { id: "announcements", label: "Mural", desc: "Publicar avisos no mural" },
-  { id: "attendance", label: "Atendimento", desc: "Abrir/encerrar atendimentos" },
-  { id: "relay", label: "Assessor", desc: "Enviar mensagens no WhatsApp por você" },
-  { id: "remote", label: "Acesso remoto (beta)", desc: "Ver/controlar máquinas via acesso remoto" },
-  { id: "forms", label: "Formulários", desc: "Registrar dados em planilhas/formulários da empresa" },
-  { id: "academico", label: "Estúdio Acadêmico", desc: "Gerar e enviar trabalhos (.docx/.pdf) e apresentações (.pptx)" },
-  { id: "logistica", label: "Logística Internacional", desc: "Status de cargas, localização de motoristas e documentos aduaneiros" },
-  { id: "cobranca", label: "Cobrador (cobranças)", desc: "Consulta cobranças pendentes e situação de cada cliente" },
-];
 
 const ACCENTS = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6", "#ef4444"];
 
@@ -108,13 +95,17 @@ const AGENT_TEMPLATES: { id: string; label: string; persona: string; instruction
 
 type Agent = Chatbot;
 
-export default function LabsTab({ profile }: { profile: Profile | null }) {
+export default function LabsTab({ profile, canUseAutomation }: { profile: Profile | null; canUseAutomation?: boolean }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [editing, setEditing] = useState<Partial<Agent> | null>(null);
   const [screenTeach, setScreenTeach] = useState<Agent | null>(null); // agente escolhido para ensinar por tela
   const [teachMachine, setTeachMachine] = useState<RemoteAgent | null>(null); // máquina vinculada para a aula
   const [teaching, setTeaching] = useState<Agent | null>(null);
+  // Labs deixou de ser só "criar agente": tem uma sub-aba de Automação
+  // (mesma ferramenta de sempre, migrada pra dentro do Labs). Só aparece para
+  // quem já tem a ferramenta Automação liberada no plano/permissões.
+  const [view, setView] = useState<"agentes" | "automacao">("agentes");
   const canManage = profile?.role === "gestor" || profile?.role === "gerente";
 
   const load = useCallback(async () => {
@@ -185,17 +176,42 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-lg font-bold flex items-center gap-2">
-            <FlaskConical className="text-indigo-400" size={20} /> Labs — Agentes de IA
+            <FlaskConical className="text-indigo-400" size={20} /> Labs — {view === "agentes" ? "Agentes de IA" : "Automação"}
           </h3>
-          <p className="text-[11px] text-gray-500 mt-0.5">Crie, treine e dê poderes a agentes. Cada um com sua chave de IA, personalidade, memória e número de WhatsApp.</p>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            {view === "agentes"
+              ? "Crie, treine e dê poderes a agentes. Cada um com sua chave de IA, personalidade, memória e número de WhatsApp."
+              : "Rotinas de coleta/sincronização de arquivos entre computadores e servidores."}
+          </p>
         </div>
-        {canManage && (
-          <button onClick={newAgent} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
-            <Plus size={14} /> Novo agente
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canUseAutomation && (
+            <div className="flex items-center gap-0.5 bg-black/20 border border-white/10 rounded-lg p-0.5">
+              <button
+                onClick={() => setView("agentes")}
+                className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md cursor-pointer ${view === "agentes" ? "bg-indigo-600 text-white" : "text-gray-400 hover:text-white"}`}
+              >
+                <FlaskConical size={12} /> Agentes de IA
+              </button>
+              <button
+                onClick={() => setView("automacao")}
+                className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md cursor-pointer ${view === "automacao" ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"}`}
+              >
+                <Bot size={12} /> Automação
+              </button>
+            </div>
+          )}
+          {view === "agentes" && canManage && (
+            <button onClick={newAgent} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer">
+              <Plus size={14} /> Novo agente
+            </button>
+          )}
+        </div>
       </div>
 
+      {view === "automacao" ? (
+        <AutomationTab profile={profile} />
+      ) : (
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
         {agents.length === 0 && (
           <p className="text-sm text-gray-500 italic col-span-full text-center py-10">Nenhum agente ainda. Clique em “Novo agente”.</p>
@@ -249,6 +265,7 @@ export default function LabsTab({ profile }: { profile: Profile | null }) {
           </div>
         ))}
       </div>
+      )}
 
       {editing && <AgentEditor agent={editing} profile={profile} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {teaching && <TeachModal agent={teaching} onClose={() => setTeaching(null)} />}
@@ -533,6 +550,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           agentId={f.id}
           agentName={f.name ?? "Agente"}
           initial={(f.flow as BotFlow) ?? null}
+          agentCapabilities={caps}
           onClose={() => setShowFlow(false)}
           onSaved={(flow) => set({ flow })}
         />

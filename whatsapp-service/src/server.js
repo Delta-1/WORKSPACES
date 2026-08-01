@@ -1149,48 +1149,75 @@ function flowKeywordHit(text, keywords) {
     .some((k) => t.includes(k));
 }
 
-async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, history) {
-  const flow = chatbot?.flow;
-  if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return false;
+function buildFlowGraph(flow) {
   const nodes = new Map(flow.nodes.map((n) => [n.id, n]));
   const edges = Array.isArray(flow.edges) ? flow.edges : [];
   const nextFrom = (nodeId, handle = "out") => {
     const e = edges.find((x) => x.from === nodeId && x.handle === handle);
     return e ? nodes.get(e.to) : null;
   };
+  return { nodes, edges, nextFrom };
+}
+
+// Entrega os arquivos/mensagens que uma resposta com FERRAMENTAS (Copiloto)
+// pediu para mandar — mesma lógica usada no atendimento normal, reaproveitada
+// pelos nós "IA" e "Ferramenta" do fluxograma.
+async function deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, { files = [], sends = [] } = {}) {
+  const numberId = conversation.number_id;
+  for (const s of sends) {
+    try {
+      let media = null;
+      if (s.file) {
+        const url = await uploadMedia(s.file.buffer, s.file.mime, "out");
+        if (url) {
+          const isImg = (s.file.mime || "").startsWith("image/");
+          media = { type: isImg ? "image" : "document", url, name: s.file.name, mime: s.file.mime };
+        }
+      } else if (s.asAudio) {
+        const key = chatbot?.elevenlabs_key || elevenKey;
+        const mp3 = key ? await synthesizeSpeech(sanitizeForSpeech(s.text), key, chatbot?.elevenlabs_voice_id) : null;
+        const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
+        const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
+        if (url) media = { type: "audio", url, name: null, mime: "audio/ogg" };
+      }
+      await sendMessage(numberId, s.to, media ? "" : s.text, null, media);
+    } catch (e) {
+      console.error("flow tool: envio para outro contato falhou:", e?.message || e);
+    }
+  }
+  for (const f of files) {
+    try {
+      const isImg = (f.mime || "").startsWith("image/");
+      // Sobe o arquivo ANTES para registrar a linha com a mídia (log-first).
+      const url = await uploadMedia(f.buffer, f.mime, "out");
+      await sendBotMessage(sock, jid, conversation.id, cid, {
+        text: f.name,
+        media: url ? { type: isImg ? "image" : "document", url, name: f.name, mime: f.mime } : null,
+        content: isImg ? { image: f.buffer, caption: f.name } : { document: f.buffer, fileName: f.name, mimetype: f.mime },
+      });
+    } catch (e) {
+      console.error("flow tool: entrega de arquivo falhou:", e?.message || e);
+    }
+  }
+}
+
+async function clearFlowTimer(conversationId) {
+  if (!supabase) return;
+  await supabase.from("bot_flow_timers").delete().eq("conversation_id", conversationId).then(() => {}, () => {});
+}
+
+// Caminha executando os blocos do fluxo a partir de `current`, até parar num
+// nó de ENTRADA (ask/buttons/wait), de FIM, ou sem saída. Reaproveitado tanto
+// pelo runBotFlow (reage a uma mensagem do cliente) quanto pelo flowTimerSweep
+// (reage a um lembrete de inatividade vencido, sem mensagem nenhuma).
+async function walkFlow({ sock, jid, conversation, chatbot, customerText, cid, history, graph, current }) {
+  const { nextFrom } = graph;
   const send = async (text) => {
     if (!text) return;
     await sendBotMessage(sock, jid, conversation.id, cid, { text });
   };
   const info = await getCompanyInfo(conversation.company_id);
 
-  // Ponto de partida: se estávamos esperando num nó de entrada, processa a
-  // resposta; senão começa do "start".
-  let current = null;
-  const waiting = conversation.flow_node ? nodes.get(conversation.flow_node) : null;
-  if (waiting) {
-    if (waiting.type === "buttons") {
-      const opts = waiting.data?.options ?? [];
-      let idx = -1;
-      const num = parseInt((customerText || "").trim(), 10);
-      if (Number.isInteger(num) && num >= 1 && num <= opts.length) idx = num - 1;
-      if (idx < 0) idx = opts.findIndex((o) => (customerText || "").toLowerCase().includes(String(o).toLowerCase()));
-      if (idx < 0) {
-        // Não entendeu a opção → repete as opções.
-        await send(`${waiting.data?.text || "Escolha uma opção:"}\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}`);
-        return true;
-      }
-      current = nextFrom(waiting.id, `opt${idx}`);
-    } else {
-      // ask (ou qualquer nó de espera): segue adiante.
-      current = nextFrom(waiting.id);
-    }
-  } else {
-    const start = flow.nodes.find((n) => n.type === "start") || flow.nodes[0];
-    current = nextFrom(start.id);
-  }
-
-  // Caminha executando os blocos até parar num de entrada / fim / sem saída.
   let guard = 0;
   let sentAnything = false;
   while (current && guard++ < 40) {
@@ -1202,6 +1229,39 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
     } else if (n.type === "condition") {
       const hit = flowKeywordHit(customerText, n.data?.keywords);
       current = nextFrom(n.id, hit ? "sim" : "nao");
+    } else if (n.type === "wait") {
+      // Lembrete por inatividade: agenda o timer e PAUSA o fluxo aqui. Se o
+      // cliente responder antes, runBotFlow segue pela saída "respondeu"; se o
+      // flowTimerSweep disparar primeiro, manda o lembrete (n.data.text) e
+      // segue o fluxo pela saída "sem_resposta".
+      const minutes = Math.max(1, Number(n.data?.minutes) || 30);
+      await clearFlowTimer(conversation.id);
+      await supabase.from("bot_flow_timers").insert({
+        conversation_id: conversation.id,
+        chatbot_id: chatbot.id,
+        company_id: conversation.company_id,
+        node_id: n.id,
+        due_at: new Date(Date.now() + minutes * 60000).toISOString(),
+      });
+      await supabase.from("conversations").update({ flow_node: n.id }).eq("id", conversation.id);
+      return true;
+    } else if (n.type === "tool") {
+      // Aciona explicitamente UMA ferramenta/capacidade do agente (ex.: a Nina
+      // gerando uma apresentação) como etapa do fluxo, em vez de depender da IA
+      // decidir sozinha. Reaproveita o motor de ferramentas do Copiloto,
+      // restrito a essa única capacidade.
+      const cap = n.data?.tool;
+      if (cap && customerText) {
+        try {
+          const scoped = { ...chatbot, capabilities: [cap], instructions: [chatbot?.instructions, n.data?.extra].filter(Boolean).join("\n") };
+          const out = await runCopilotReply(conversation.company_id, scoped, customerText, history, false, null);
+          await deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, out);
+          if (out.reply) { await send(out.reply); sentAnything = true; }
+        } catch (e) {
+          console.error("flow tool node failed:", e?.message || e);
+        }
+      }
+      current = nextFrom(n.id);
     } else if (n.type === "action") {
       const a = n.data?.action;
       if (a === "send_address") await send(info?.address ? `📍 ${info.address}${info.address_link ? `\n${info.address_link}` : ""}` : "Ainda não temos o endereço cadastrado.");
@@ -1210,12 +1270,14 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
       else if (a === "handoff") {
         await send("Um momento, vou te transferir para um atendente. 🙋");
         // Espera humana + bot em silêncio (evita loop por cima do atendente).
+        await clearFlowTimer(conversation.id);
         await supabase.from("conversations").update({ status: "espera", bot_paused: true, flow_node: null }).eq("id", conversation.id);
         return true;
       } else if (a === "close") {
         let msg = "Atendimento encerrado. Obrigado pelo contato! 😊";
         if (info?.review_link) msg += `\n\nAvalie nosso atendimento: ${info.review_link}`;
         await send(msg);
+        await clearFlowTimer(conversation.id);
         await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), flow_node: null, bot_paused: true }).eq("id", conversation.id);
         void generateContactReport({ ...conversation, status: "fechado" });
         return true;
@@ -1223,7 +1285,19 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
       sentAnything = true;
       current = nextFrom(n.id);
     } else if (n.type === "ai") {
-      const reply = await runChatbotReply(chatbot, customerText, history, "ai", conversation.company_id);
+      // Agente com capacidades ligadas no Labs → responde com FERRAMENTAS (pode
+      // buscar/entregar arquivo, gerar apresentação, criar tarefa, etc.), igual
+      // ao atendimento normal — antes, dentro do fluxo, só respondia texto puro
+      // e não conseguia realmente FAZER nada.
+      const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
+      let reply = null;
+      if (agentHasCaps) {
+        const out = await runCopilotReply(conversation.company_id, chatbot, customerText, history, false, null);
+        reply = out.reply;
+        await deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, out);
+      } else {
+        reply = await runChatbotReply(chatbot, customerText, history, "ai", conversation.company_id);
+      }
       if (reply) { await send(reply); sentAnything = true; }
       // Se a IA tem continuação no fluxo, segue; senão fica na IA (conversa livre).
       const nx = nextFrom(n.id);
@@ -1241,6 +1315,7 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
       await supabase.from("conversations").update({ flow_node: n.id }).eq("id", conversation.id);
       return true;
     } else if (n.type === "end") {
+      await clearFlowTimer(conversation.id);
       await supabase.from("conversations").update({ flow_node: null }).eq("id", conversation.id);
       return sentAnything;
     } else {
@@ -1250,6 +1325,89 @@ async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, h
   // Chegou ao fim do caminho sem nó de entrada: limpa o estado.
   await supabase.from("conversations").update({ flow_node: null }).eq("id", conversation.id);
   return sentAnything;
+}
+
+async function runBotFlow(sock, jid, conversation, chatbot, customerText, cid, history) {
+  const flow = chatbot?.flow;
+  if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return false;
+  const graph = buildFlowGraph(flow);
+  const { nodes, nextFrom } = graph;
+
+  // Ponto de partida: se estávamos esperando num nó de entrada, processa a
+  // resposta; senão começa do "start".
+  let current = null;
+  const waiting = conversation.flow_node ? nodes.get(conversation.flow_node) : null;
+  if (waiting) {
+    if (waiting.type === "buttons") {
+      const opts = waiting.data?.options ?? [];
+      let idx = -1;
+      const num = parseInt((customerText || "").trim(), 10);
+      if (Number.isInteger(num) && num >= 1 && num <= opts.length) idx = num - 1;
+      if (idx < 0) idx = opts.findIndex((o) => (customerText || "").toLowerCase().includes(String(o).toLowerCase()));
+      if (idx < 0) {
+        // Não entendeu a opção → repete as opções.
+        await sendBotMessage(sock, jid, conversation.id, cid, { text: `${waiting.data?.text || "Escolha uma opção:"}\n${opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}` });
+        return true;
+      }
+      current = nextFrom(waiting.id, `opt${idx}`);
+    } else if (waiting.type === "wait") {
+      // Cliente respondeu antes do lembrete disparar: cancela o timer e segue.
+      await clearFlowTimer(conversation.id);
+      current = nextFrom(waiting.id, "respondeu");
+    } else {
+      // ask (ou qualquer nó de espera): segue adiante.
+      current = nextFrom(waiting.id);
+    }
+  } else {
+    const start = flow.nodes.find((n) => n.type === "start") || flow.nodes[0];
+    current = nextFrom(start.id);
+  }
+
+  return walkFlow({ sock, jid, conversation, chatbot, customerText, cid, history, graph, current });
+}
+
+// Dispara os lembretes de "sem resposta" (nó "wait") vencidos — roda a cada
+// minuto. Se a conversa já saiu do nó (respondeu, foi transferida, encerrada,
+// bot pausado) o timer virou lixo e é só descartado sem mandar nada.
+async function flowTimerSweep() {
+  if (!supabase) return;
+  const { data: timers } = await supabase
+    .from("bot_flow_timers")
+    .select("*")
+    .lte("due_at", new Date().toISOString())
+    .limit(50);
+  for (const timer of timers ?? []) {
+    try {
+      const { data: conversation } = await supabase.from("conversations").select("*").eq("id", timer.conversation_id).maybeSingle();
+      if (!conversation || conversation.flow_node !== timer.node_id || conversation.bot_paused) {
+        await supabase.from("bot_flow_timers").delete().eq("id", timer.id);
+        continue;
+      }
+      const { data: chatbot } = await supabase.from("chatbots").select("*").eq("id", timer.chatbot_id).maybeSingle();
+      const flow = chatbot?.flow;
+      if (!chatbot || !flow) {
+        await supabase.from("bot_flow_timers").delete().eq("id", timer.id);
+        continue;
+      }
+      const s = conversation.number_id ? getSession(conversation.number_id) : null;
+      if (!s || !s.sock || s.state.status !== "connected") continue; // sem sessão conectada — tenta de novo no próximo ciclo
+      const { data: contact } = await supabase.from("contacts").select("jid,phone").eq("id", conversation.contact_id).maybeSingle();
+      const jid = contact?.jid || (contact?.phone ? `${contact.phone}@s.whatsapp.net` : null);
+      if (!jid) {
+        await supabase.from("bot_flow_timers").delete().eq("id", timer.id);
+        continue;
+      }
+      // Remove ANTES de mandar, para não repetir se algo falhar no meio do caminho.
+      await supabase.from("bot_flow_timers").delete().eq("id", timer.id);
+      const graph = buildFlowGraph(flow);
+      const node = graph.nodes.get(timer.node_id);
+      if (node?.data?.text) await sendBotMessage(s.sock, jid, conversation.id, conversation.company_id, { text: node.data.text });
+      const next = graph.nextFrom(timer.node_id, "sem_resposta");
+      await walkFlow({ sock: s.sock, jid, conversation, chatbot, customerText: "", cid: conversation.company_id, history: [], graph, current: next });
+    } catch (err) {
+      console.error("flowTimerSweep item failed:", err?.message || err);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2471,48 +2629,10 @@ async function startSession(numberId) {
             // Se o bot já falou antes nesta conversa (ou já mandamos a saudação de
             // abertura), tira uma saudação repetida no começo da resposta.
             if (reply) reply = stripRepeatedGreeting(reply, history, created && !!chatbot?.greeting);
-            // Assessor pessoal: envia as mensagens que o copiloto pediu p/ outros contatos.
-            for (const s of copilotSends) {
-              try {
-                let media = null;
-                if (s.file) {
-                  // Encaminha um arquivo: sobe o conteúdo e envia como imagem/documento.
-                  const url = await uploadMedia(s.file.buffer, s.file.mime, "out");
-                  if (url) {
-                    const isImg = (s.file.mime || "").startsWith("image/");
-                    media = { type: isImg ? "image" : "document", url, name: s.file.name, mime: s.file.mime };
-                  }
-                } else if (s.asAudio) {
-                  // Gera a nota de voz (ElevenLabs) e manda como áudio.
-                  const key = chatbot?.elevenlabs_key || elevenKey;
-                  const mp3 = key ? await synthesizeSpeech(sanitizeForSpeech(s.text), key, chatbot?.elevenlabs_voice_id) : null;
-                  const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
-                  const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
-                  if (url) media = { type: "audio", url, name: null, mime: "audio/ogg" };
-                }
-                await sendMessage(numberId, s.to, media ? "" : s.text, null, media);
-              } catch (e) {
-                console.error("copilot relay send failed:", e);
-              }
-            }
-            // Entrega os arquivos que o copiloto decidiu mandar (imagem/documento).
-            for (const f of copilotFiles) {
-              try {
-                const isImg = (f.mime || "").startsWith("image/");
-                // Sobe o arquivo ANTES para registrar a linha com a mídia (log-first),
-                // então a entrega já aparece no Mensagens em tempo real.
-                const url = await uploadMedia(f.buffer, f.mime, "out");
-                await sendBotMessage(sock, jid, conversation.id, cid, {
-                  text: f.name,
-                  media: url ? { type: isImg ? "image" : "document", url, name: f.name, mime: f.mime } : null,
-                  content: isImg
-                    ? { image: f.buffer, caption: f.name }
-                    : { document: f.buffer, fileName: f.name, mimetype: f.mime },
-                });
-              } catch (e) {
-                console.error("copilot send file failed:", e);
-              }
-            }
+            // Assessor pessoal (relay p/ outro contato) + entrega de arquivos que o
+            // copiloto decidiu mandar — mesma lógica reaproveitada pelos nós
+            // "IA"/"Ferramenta" do fluxograma (deliverCopilotOutputs).
+            await deliverCopilotOutputs(sock, jid, conversation, cid, agentForReply, { files: copilotFiles, sends: copilotSends });
             if (reply) {
               // Split opcional: a IA pode marcar "[[TEXTO]]" (ou "[[LISTA]]") para
               // FALAR a parte de cima por áudio e mandar a parte de baixo por TEXTO
@@ -2724,51 +2844,28 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     jid = resolved || (to.replace(/\D/g, "").length >= 14 ? `${to}@lid` : `${to}@s.whatsapp.net`);
   }
 
-  let sent = null;
-  if (media?.url) {
-    const resp = await fetch(media.url);
-    if (!resp.ok) throw new Error("Não consegui baixar o arquivo para enviar.");
-    const buf = Buffer.from(await resp.arrayBuffer());
-    const mimetype = media.mime || undefined;
-    let content;
-    if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
-    else if (media.type === "audio") {
-      // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
-      // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).
-      const ogg = await mp3ToOpusOgg(buf).catch(() => null); // ffmpeg detecta o formato de entrada
-      content = ogg
-        ? { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true }
-        : { audio: buf, mimetype: mimetype || "audio/ogg; codecs=opus", ptt: true };
-    }
-    else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
-    else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
-    sent = await s.sock.sendMessage(jid, content);
-  } else {
-    sent = await s.sock.sendMessage(jid, { text });
-  }
-  // Envio pelo site: marca o wa_id para o eco não duplicar a linha já salva.
-  if (messageId && sent?.key?.id) {
-    webSentWaIds.add(sent.key.id);
-    setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
-  }
-
+  // Estratégia "log-first" (igual ao sendBotMessage): resolve contato/conversa e
+  // GRAVA a mensagem no Supabase ANTES de mandar pelo WhatsApp. Assim qualquer
+  // envio automático (Cobrador, encerramento por inatividade, assessor/relay)
+  // também aparece na hora no app Mensagens, e não só depois de sair no WhatsApp.
   const phone = jid.split("@")[0];
   const { number } = await getNumberConfig(numberId);
   const cid = number?.company_id ?? null;
   const contact = await upsertContact(phone, null, cid, jid);
+  let conversationId = null;
   if (contact) {
-    // Registra na conversa mais recente do contato. Só REABRE uma conversa fechada
-    // quando quem enviou foi um HUMANO (senderId). Mensagens do sistema/robô (ex.:
-    // encerramento por inatividade, senderId nulo) NÃO reabrem — senão o sweep
-    // fechava, mandava, reabria e mandava de novo num loop infinito.
+    // Só REABRE uma conversa fechada quando quem enviou foi um HUMANO (senderId).
+    // Mensagens do sistema/robô (ex.: encerramento por inatividade, senderId nulo)
+    // NÃO reabrem — senão o sweep fechava, mandava, reabria e mandava de novo num
+    // loop infinito.
     const { data: convo } = await supabase
       .from("conversations")
-      .select("id,status")
+      .select("id")
       .eq("contact_id", contact.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    let conversationId = convo?.id ?? null;
+    conversationId = convo?.id ?? null;
     if (!conversationId) {
       const { data: created } = await supabase
         .from("conversations")
@@ -2777,25 +2874,62 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
         .single();
       conversationId = created?.id ?? null;
     }
-    if (conversationId) {
-      if (messageId) {
-        // A web já SALVOU a mensagem no banco (não some mais). Aqui só marcamos o
-        // wa_id (evita duplicar com o eco) e a mídia, se houver.
-        const patch = { wa_id: sent?.key?.id ?? null };
-        if (media) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
-        await supabase.from("whatsapp_messages").update(patch).eq("id", messageId).then(() => {}, () => {});
-      } else {
-        await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent?.key?.id ?? null);
+  }
+  // Se a web já mandou o messageId, a linha JÁ está salva (log-first do lado do
+  // site); aqui só carimba o wa_id depois de enviar. Senão, grava agora.
+  let loggedId = messageId;
+  if (conversationId && !messageId) {
+    loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid);
+  }
+
+  let sent = null;
+  try {
+    if (media?.url) {
+      const resp = await fetch(media.url);
+      if (!resp.ok) throw new Error("Não consegui baixar o arquivo para enviar.");
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const mimetype = media.mime || undefined;
+      let content;
+      if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
+      else if (media.type === "audio") {
+        // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
+        // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).
+        const ogg = await mp3ToOpusOgg(buf).catch(() => null); // ffmpeg detecta o formato de entrada
+        content = ogg
+          ? { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true }
+          : { audio: buf, mimetype: mimetype || "audio/ogg; codecs=opus", ptt: true };
       }
-      // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
-      if (senderId) {
-        await supabase
-          .from("conversations")
-          .update({ status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true })
-          .eq("id", conversationId);
+      else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
+      else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
+      sent = await s.sock.sendMessage(jid, content);
+    } else {
+      sent = await s.sock.sendMessage(jid, { text });
+    }
+  } catch (e) {
+    console.error("sendMessage: envio no WhatsApp falhou:", e?.message || e);
+    throw e;
+  } finally {
+    // Carimba o wa_id na linha já gravada (dedup contra o eco fromMe) e, se veio
+    // pelo messageId (envio pelo site), atualiza também os dados de mídia.
+    if (sent?.key?.id) {
+      webSentWaIds.add(sent.key.id);
+      setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
+      if (loggedId) {
+        const patch = { wa_id: sent.key.id };
+        if (media && messageId) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
+        await supabase.from("whatsapp_messages").update(patch).eq("id", loggedId).then(() => {}, () => {});
       }
     }
   }
+
+  // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
+  if (senderId && conversationId) {
+    await supabase
+      .from("conversations")
+      .update({ status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true })
+      .eq("id", conversationId);
+  }
+  return sent;
 }
 
 // No boot, retoma automaticamente todo número que tem sessão salva no banco.
@@ -3400,5 +3534,6 @@ app.listen(PORT, () => {
   setInterval(watchdog, 60000);
   setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
   setInterval(billingSweep, 180000); // Cobrador: envia cobranças/lembretes e regenera ciclos
+  setInterval(flowTimerSweep, 60000); // fluxograma: lembretes de "sem resposta" (nó wait)
   setTimeout(billingSweep, 15000); // primeira passada logo após subir
 });
