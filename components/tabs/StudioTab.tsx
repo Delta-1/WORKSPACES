@@ -2,12 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FileText, Plus, Trash2, ArrowLeft, Bold, Italic, Underline, Strikethrough,
+  FileText, Trash2, ArrowLeft, Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Image as ImageIcon,
   Table as TableIcon, Undo2, Redo2, RemoveFormatting, SeparatorHorizontal, Sparkles,
   Loader2, FileDown, Printer, Save, Heading1, Heading2, Heading3, Wand2, Baseline, Highlighter,
+  Presentation, GraduationCap, User, FileSignature, Receipt, ListChecks, BookOpen, Layers, Lock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import SlidesTab from "@/components/tabs/SlidesTab";
+import ResumeEditor from "@/components/studio/ResumeEditor";
+import AcademicEditor from "@/components/studio/AcademicEditor";
+import { DOC_MODELS, GROUP_LABEL, isAcademicModel, modelById, type DocGroup } from "@/lib/doc-templates";
 import type { Profile } from "@/lib/types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -21,22 +26,29 @@ type Doc = { id: string; title: string; template: string | null; content: string
 const FONTS = ["Times New Roman", "Arial", "Calibri", "Georgia", "Verdana", "Courier New"];
 const SIZES = [10, 11, 12, 14, 16, 18, 24, 32, 48];
 
-const TEMPLATES: { id: string; label: string; desc: string; html: (m?: Record<string, string>) => string }[] = [
-  { id: "blank", label: "Em branco", desc: "Documento vazio", html: () => `<p><br></p>` },
-  {
-    id: "abnt", label: "ABNT", desc: "Trabalho acadêmico (capa + estrutura)",
-    html: (m) => `<p style="text-align:center"><b>${m?.instituicao || "INSTITUIÇÃO"}</b></p><p style="text-align:center">${m?.curso || "Curso"}</p><p style="text-align:center"><br></p><p style="text-align:center"><br></p><p style="text-align:center">${m?.autor || "Autor(a)"}</p><p style="text-align:center"><br></p><p style="text-align:center"><br></p><h1 style="text-align:center">${m?.tema || "TÍTULO DO TRABALHO"}</h1><p style="text-align:center"><br></p><p style="text-align:center"><br></p><p style="text-align:center">${m?.cidade || "Cidade"}</p><p style="text-align:center">${m?.ano || new Date().getFullYear()}</p><div data-pagebreak="1"></div><h1>1 INTRODUÇÃO</h1><p>Escreva aqui…</p><h1>2 DESENVOLVIMENTO</h1><p>Escreva aqui…</p><h1>3 CONCLUSÃO</h1><p>Escreva aqui…</p><h1>REFERÊNCIAS</h1><p>SOBRENOME, Nome. <i>Título</i>. Cidade: Editora, ano.</p>`,
-  },
-  { id: "apa", label: "APA", desc: "Formato APA", html: () => `<h1 style="text-align:center">Título</h1><p style="text-align:center">Autor · Instituição</p><h2>Introdução</h2><p>Escreva aqui…</p><h2>Método</h2><p>Escreva aqui…</p><h2>Referências</h2><p>Autor (ano). Título. Editora.</p>` },
-  { id: "carta", label: "Carta", desc: "Carta / ofício", html: () => `<p style="text-align:right">Cidade, ${new Date().toLocaleDateString("pt-BR")}</p><p><br></p><p>Prezado(a),</p><p>Escreva aqui…</p><p><br></p><p>Atenciosamente,</p><p>Seu nome</p>` },
-  { id: "relatorio", label: "Relatório", desc: "Relatório simples", html: () => `<h1>Relatório</h1><h2>1. Objetivo</h2><p>…</p><h2>2. Desenvolvimento</h2><p>…</p><h2>3. Conclusão</h2><p>…</p>` },
-];
+// Ícone de cada modelo da galeria (o registry é dado puro, sem React).
+const MODEL_ICON: Record<string, typeof FileText> = {
+  curriculo: User,
+  monografia: GraduationCap,
+  trabalho: BookOpen,
+  contrato: FileSignature,
+  orcamento: Receipt,
+  questionario: ListChecks,
+  resumo: FileText,
+  resumao: Layers,
+  livre: FileText,
+};
+
+const GROUP_ORDER: DocGroup[] = ["carreira", "academico", "negocios", "estudo"];
 
 export default function StudioTab({ profile }: { profile: Profile | null }) {
+  // O Estúdio agora é um hub: escolhe-se Documentos ou Apresentações.
+  const [view, setView] = useState<"hub" | "documentos" | "apresentacoes">("hub");
   const [docs, setDocs] = useState<Doc[]>([]);
   const [open, setOpen] = useState<Doc | null>(null);
   const [loading, setLoading] = useState(true);
   const companyId = profile?.company_id ?? null;
+  const authorName = profile?.full_name ?? "";
 
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -46,13 +58,20 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  async function create(templateId: string) {
+  // Cria um documento já com o modelo escolhido. Currículo e trabalhos
+  // acadêmicos guardam JSON (têm editor próprio); os demais guardam HTML.
+  async function create(modelId: string) {
     if (!supabase) return;
-    const tpl = TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0];
+    const model = modelById(modelId);
+    if (!model || model.status !== "pronto") return;
     const { data } = await supabase.from("studio_documents").insert({
-      company_id: companyId, created_by: profile?.id ?? null, kind: "document",
-      title: tpl.id === "blank" ? "Novo documento" : `Documento (${tpl.label})`,
-      template: tpl.id, content: tpl.html({ autor: profile?.full_name ?? "" }),
+      company_id: companyId,
+      created_by: profile?.id ?? null,
+      kind: "document",
+      title: model.id === "livre" ? "Novo documento" : model.label,
+      template: model.id,
+      content: model.id === "livre" ? "<p><br></p>" : null,
+      meta: { modelo: model.id },
     }).select("*").single();
     if (data) { await load(); setOpen(data as Doc); }
   }
@@ -92,49 +111,138 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
     if (doc) { await load(); setOpen(doc as Doc); }
   }
 
-  if (open) return <Editor doc={open} onClose={() => { setOpen(null); load(); }} />;
+  // Documento aberto: cada modelo tem o seu editor.
+  if (open) {
+    const close = () => { setOpen(null); load(); };
+    if (open.template === "curriculo") return <ResumeEditor row={open} authorName={authorName} onClose={close} />;
+    if (isAcademicModel(open.template)) {
+      return <AcademicEditor row={open} modelLabel={modelById(open.template)?.label ?? "Trabalho"} authorName={authorName} onClose={close} />;
+    }
+    return <Editor doc={open} onClose={close} />;
+  }
 
+  // ── Hub: escolher entre Documentos e Apresentações ────────────────────────
+  if (view === "hub") {
+    return (
+      <div className="h-full flex flex-col gap-4 overflow-hidden">
+        <div>
+          <h3 className="text-lg font-bold flex items-center gap-2"><Sparkles className="text-blue-400" size={20} /> Estúdio</h3>
+          <p className="text-[11px] text-gray-500 mt-0.5">Tudo que a empresa escreve e apresenta, num lugar só.</p>
+        </div>
+        <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 gap-4 content-start">
+          <button onClick={() => setView("documentos")} className="text-left rounded-2xl border border-white/10 bg-gradient-to-br from-blue-950/40 to-transparent hover:border-blue-500/50 p-5 cursor-pointer transition group">
+            <div className="w-11 h-11 rounded-xl bg-blue-500/20 text-blue-300 grid place-items-center mb-3 group-hover:scale-105 transition"><FileText size={22} /></div>
+            <p className="text-base font-bold">Documentos</p>
+            <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+              Currículo, monografia, trabalho acadêmico, contrato, orçamento e mais — com modelos prontos, editor completo e exportação em Word e PDF.
+            </p>
+            <div className="flex flex-wrap gap-1 mt-3">
+              {DOC_MODELS.filter((m) => m.status === "pronto" && m.id !== "livre").map((m) => (
+                <span key={m.id} className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-gray-300">{m.label}</span>
+              ))}
+            </div>
+          </button>
+          <button onClick={() => setView("apresentacoes")} className="text-left rounded-2xl border border-white/10 bg-gradient-to-br from-amber-950/40 to-transparent hover:border-amber-500/50 p-5 cursor-pointer transition group">
+            <div className="w-11 h-11 rounded-xl bg-amber-500/20 text-amber-300 grid place-items-center mb-3 group-hover:scale-105 transition"><Presentation size={22} /></div>
+            <p className="text-base font-bold">Apresentações</p>
+            <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+              Slides criados com a Nina, editáveis um a um, com temas prontos e exportação em PowerPoint e PDF.
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Apresentações (o editor de slides de sempre, agora dentro do Estúdio) ──
+  if (view === "apresentacoes") {
+    return (
+      <div className="h-full flex flex-col overflow-hidden">
+        <button onClick={() => setView("hub")} className="self-start text-xs text-gray-400 hover:text-white cursor-pointer flex items-center gap-1 mb-2 shrink-0"><ArrowLeft size={14} /> Estúdio</button>
+        <div className="flex-1 min-h-0"><SlidesTab profile={profile} /></div>
+      </div>
+    );
+  }
+
+  // ── Documentos ────────────────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h3 className="text-lg font-bold flex items-center gap-2"><FileText className="text-blue-400" size={20} /> Estúdio <span className="text-xs font-normal text-gray-500">documentos</span></h3>
+        <div>
+          <button onClick={() => setView("hub")} className="text-xs text-gray-400 hover:text-white cursor-pointer flex items-center gap-1 mb-1"><ArrowLeft size={14} /> Estúdio</button>
+          <h3 className="text-lg font-bold flex items-center gap-2"><FileText className="text-blue-400" size={20} /> Documentos</h3>
+        </div>
+        <label className="text-[11px] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
+          <FileDown size={13} className="text-blue-400" /> Importar arquivo (PDF/Word) para editar
+          <input type="file" accept=".pdf,.docx,.doc,.txt,.md,.html,.htm" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
+        </label>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] text-gray-400">Começar um novo documento:</p>
-          <label className="text-[11px] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
-            <FileText size={13} className="text-blue-400" /> Importar arquivo (PDF/Word) para editar
-            <input type="file" accept=".pdf,.docx,.doc,.txt,.md,.html,.htm" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
-          </label>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-          {TEMPLATES.map((t) => (
-            <button key={t.id} onClick={() => create(t.id)} className="text-left rounded-xl border border-white/10 bg-white/5 hover:border-blue-500/50 hover:bg-white/10 p-3 cursor-pointer transition">
-              <div className="flex items-center gap-1.5 font-semibold text-sm"><Plus size={14} className="text-blue-400" /> {t.label}</div>
-              <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{t.desc}</p>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto custom-scroll">
-        <p className="text-[11px] text-gray-400 mb-2">Seus documentos:</p>
-        {loading ? <p className="text-sm text-gray-500 p-2">Carregando…</p> : docs.length === 0 ? (
-          <p className="text-sm text-gray-500 p-2">Nenhum documento ainda.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {docs.map((d) => (
-              <div key={d.id} onClick={() => setOpen(d)} className="cursor-pointer rounded-2xl border border-white/10 bg-white/5 hover:border-blue-500/40 p-4 transition group">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-bold truncate flex items-center gap-1.5"><FileText size={14} className="text-blue-400" /> {d.title}</p>
-                  <span onClick={(e) => { e.stopPropagation(); remove(d.id); }} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={14} /></span>
+      <div className="flex-1 overflow-y-auto custom-scroll space-y-5">
+        {/* Galeria de modelos */}
+        <div>
+          <p className="text-xs font-bold text-gray-300 mb-2">Selecione o modelo</p>
+          <div className="space-y-3">
+            {GROUP_ORDER.map((g) => {
+              const models = DOC_MODELS.filter((m) => m.group === g);
+              if (!models.length) return null;
+              return (
+                <div key={g}>
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">{GROUP_LABEL[g]}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {models.map((m) => {
+                      const Icon = MODEL_ICON[m.id] ?? FileText;
+                      const pronto = m.status === "pronto";
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => pronto && create(m.id)}
+                          disabled={!pronto}
+                          title={pronto ? m.desc : "Em breve"}
+                          className={`text-left rounded-xl border p-3 transition ${pronto ? "border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer" : "border-white/5 bg-white/[0.02] cursor-not-allowed opacity-60"}`}
+                          style={pronto ? { borderLeftWidth: 3, borderLeftColor: m.accent } : undefined}
+                        >
+                          <div className="flex items-center gap-1.5 font-semibold text-sm">
+                            <Icon size={14} style={{ color: m.accent }} />
+                            <span className="truncate">{m.label}</span>
+                            {!pronto && <Lock size={11} className="text-gray-600 ml-auto shrink-0" />}
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{pronto ? m.desc : "Em breve."}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <p className="text-[10px] text-gray-500 mt-2">{d.template?.toUpperCase() || "DOC"} · {new Date(d.updated_at).toLocaleDateString("pt-BR")}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        )}
+        </div>
+
+        {/* Documentos já criados */}
+        <div>
+          <p className="text-xs font-bold text-gray-300 mb-2">Seus documentos</p>
+          {loading ? <p className="text-sm text-gray-500 p-2">Carregando…</p> : docs.length === 0 ? (
+            <p className="text-sm text-gray-500 p-2">Nenhum documento ainda — escolha um modelo acima.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {docs.map((d) => {
+                const m = modelById(d.template);
+                const Icon = MODEL_ICON[d.template ?? ""] ?? FileText;
+                return (
+                  <div key={d.id} onClick={() => setOpen(d)} className="cursor-pointer rounded-2xl border border-white/10 bg-white/5 hover:border-blue-500/40 p-4 transition">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-bold truncate flex items-center gap-1.5">
+                        <Icon size={14} style={{ color: m?.accent ?? "#60a5fa" }} /> {d.title}
+                      </p>
+                      <span onClick={(e) => { e.stopPropagation(); remove(d.id); }} className="text-gray-500 hover:text-red-400 cursor-pointer shrink-0"><Trash2 size={14} /></span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-2">{m?.label ?? (d.template === "import" ? "Importado" : "Documento")} · {new Date(d.updated_at).toLocaleDateString("pt-BR")}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
