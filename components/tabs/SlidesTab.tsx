@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import type { Deck, Slide } from "@/lib/studio-pptx";
+import { DECK_THEMES, SLIDE_LAYOUTS, layoutOf, renderSlideHtml, themeOf, type Deck, type Slide } from "@/lib/doc-templates/deck";
 
 async function authHeaders(): Promise<Record<string, string>> {
   if (!supabase) return {};
@@ -17,14 +17,8 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 type Row = { id: string; title: string; content: string | null; kind: string; updated_at: string; meta?: { tema?: string } | null };
 
-const THEMES: { id: string; label: string; bg: string; title: string; text: string; accent: string }[] = [
-  { id: "azul", label: "Azul", bg: "#0B1220", title: "#fff", text: "#CBD5E1", accent: "#3B82F6" },
-  { id: "claro", label: "Claro", bg: "#fff", title: "#0F172A", text: "#334155", accent: "#2563EB" },
-  { id: "roxo", label: "Roxo", bg: "#1E1B4B", title: "#fff", text: "#DDD6FE", accent: "#A78BFA" },
-  { id: "verde", label: "Verde", bg: "#052E24", title: "#fff", text: "#BBF7D0", accent: "#10B981" },
-  { id: "grafite", label: "Grafite", bg: "#111318", title: "#fff", text: "#D1D5DB", accent: "#F59E0B" },
-];
-const themeOf = (id?: string) => THEMES.find((t) => t.id === id) || THEMES[0];
+// Cores vêm sem "#" (o pptxgenjs exige assim) — na web precisamos com.
+const hx = (c: string) => `#${c}`;
 
 export default function SlidesTab({ profile }: { profile: Profile | null }) {
   const [rows, setRows] = useState<Row[]>([]);
@@ -71,7 +65,7 @@ export default function SlidesTab({ profile }: { profile: Profile | null }) {
               const th = themeOf(r.meta?.tema);
               return (
                 <div key={r.id} onClick={() => setOpen(r)} className="cursor-pointer rounded-2xl border border-white/10 overflow-hidden hover:border-amber-500/40 transition">
-                  <div className="h-24 flex items-center justify-center text-sm font-bold px-3 text-center" style={{ background: th.bg, color: th.title, borderBottom: `4px solid ${th.accent}` }}>{r.title}</div>
+                  <div className="h-24 flex items-center justify-center text-sm font-bold px-3 text-center" style={{ background: hx(th.bg), color: hx(th.title), borderBottom: `4px solid ${hx(th.accent)}` }}>{r.title}</div>
                   <div className="p-3 bg-white/5 flex items-center justify-between">
                     <p className="text-[10px] text-gray-500">{new Date(r.updated_at).toLocaleDateString("pt-BR")}</p>
                     <span onClick={(e) => { e.stopPropagation(); remove(r.id); }} className="text-gray-500 hover:text-red-400 cursor-pointer"><Trash2 size={13} /></span>
@@ -121,20 +115,20 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${title.slice(0, 60) || "apresentacao"}.pptx`; a.click(); URL.revokeObjectURL(a.href);
     } finally { setExporting(false); }
   }
+  // PDF: cada slide vira uma página em paisagem, montada pelo MESMO renderizador
+  // da prévia — o que você vê editando é o que sai no arquivo.
   function exportPdf() {
-    const esc = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    const slidesHtml = deck.slides.map((s, i) => `<section class="slide"><div class="bar"></div>${i === 0
-      ? `<div class="cover"><h1>${esc(s.titulo)}</h1><p>${esc((s.topicos || []).join("  •  "))}</p></div>`
-      : `<h2>${esc(s.titulo)}</h2><ul>${(s.topicos || []).map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`}</section>`).join("");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
-      @page{size:landscape;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif}
-      .slide{width:100vw;height:100vh;background:${th.bg};color:${th.text};padding:6vh 7vw;page-break-after:always;position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
-      .bar{position:absolute;top:0;left:0;right:0;height:1.5vh;background:${th.accent}}
-      h1{color:${th.title};font-size:6vh;text-align:center;margin:0}h2{color:${th.title};font-size:4.5vh;margin:0 0 3vh}
-      .cover{text-align:center}.cover p{font-size:2.6vh;margin-top:2vh}
-      ul{font-size:3vh;line-height:1.8;margin:0;padding-left:5vw}</style></head>
-      <body>${slidesHtml}<script>window.onload=function(){window.print()}</script></body></html>`;
-    const w = window.open("", "_blank"); if (w) { w.document.write(html); w.document.close(); }
+    const slidesHtml = deck.slides
+      .map((sl, i) => `<section class="slide">${renderSlideHtml(sl, i, th, { unit: "vh" })}</section>`)
+      .join("");
+    const html = `<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><title>${(title || "Apresentação").replace(/[<>]/g, "")}</title><style>
+      @page{size:landscape;margin:0}*{box-sizing:border-box}body{margin:0}
+      .slide{width:100vw;height:100vh;page-break-after:always;break-after:page}
+      ul{margin:0}</style></head>
+      <body>${slidesHtml}<script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script></body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { alert("O navegador bloqueou a janela de impressão. Libere os pop-ups deste site."); return; }
+    w.document.write(html); w.document.close();
   }
 
   const s = deck.slides[cur] || deck.slides[0];
@@ -147,7 +141,15 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
         <span className="text-[10px] text-gray-500">{saving ? "salvando…" : savedAt ? `salvo ${savedAt}` : ""}</span>
         <div className="ml-auto flex items-center gap-1.5">
           <div className="flex items-center gap-1 mr-1" title="Tema"><Palette size={13} className="text-gray-400" />
-            {THEMES.map((t) => <button key={t.id} onClick={() => update((d) => { d.tema = t.id; return d; })} title={t.label} className={`w-5 h-5 rounded-full border ${deck.tema === t.id ? "border-white" : "border-white/20"}`} style={{ background: t.bg }} />)}
+            {DECK_THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => update((d) => { d.tema = t.id; return d; })}
+                title={t.label}
+                className={`w-5 h-5 rounded-full border-2 cursor-pointer ${deck.tema === t.id ? "border-white" : "border-white/20"}`}
+                style={{ background: hx(t.bg), boxShadow: `inset 0 -4px 0 ${hx(t.accent)}` }}
+              />
+            ))}
           </div>
           <button onClick={() => setShowNina((v) => !v)} className={`text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer ${showNina ? "bg-amber-600 text-white" : "bg-white/10 hover:bg-white/15"}`}><Wand2 size={13} /> Nina</button>
           <button onClick={exportPptx} disabled={exporting} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-50">{exporting ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />} .pptx</button>
@@ -161,9 +163,10 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
         <div className="w-24 sm:w-40 border-r border-white/10 overflow-y-auto custom-scroll p-2 space-y-2 bg-black/20 shrink-0">
           {deck.slides.map((sl, i) => (
             <div key={i} onClick={() => setCur(i)} className={`rounded-lg overflow-hidden cursor-pointer border ${i === cur ? "border-amber-500" : "border-white/10"}`}>
-              <div className="h-16 text-[8px] p-1.5 flex flex-col justify-center relative" style={{ background: th.bg, color: th.title, borderTop: `2px solid ${th.accent}` }}>
+              <div className="h-16 text-[8px] p-1.5 flex flex-col justify-center relative" style={{ background: hx(th.bg), color: hx(th.title), borderTop: `2px solid ${hx(th.accent)}` }}>
                 <span className="absolute top-0.5 left-1 text-[7px] text-white/40">{i + 1}</span>
                 <b className="line-clamp-2">{sl.titulo || "—"}</b>
+                <span className="absolute bottom-0.5 right-1 text-[6px] uppercase tracking-wider opacity-50">{layoutOf(sl, i)}</span>
               </div>
             </div>
           ))}
@@ -172,20 +175,54 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
 
         {/* Canvas central */}
         <div className="flex-1 overflow-auto custom-scroll p-6 flex flex-col items-center gap-4 bg-[#20242c]">
-          <div className="w-full max-w-2xl aspect-video rounded-lg shadow-2xl relative overflow-hidden flex flex-col justify-center p-8" style={{ background: th.bg, color: th.text }}>
-            <div className="absolute top-0 left-0 right-0 h-2" style={{ background: th.accent }} />
-            {cur === 0 ? (
-              <div className="text-center">
-                <input value={s.titulo} onChange={(e) => patchSlide(cur, { titulo: e.target.value })} className="w-full bg-transparent text-3xl font-bold text-center outline-none" style={{ color: th.title }} />
-                <input value={(s.topicos || []).join(" • ")} onChange={(e) => patchSlide(cur, { topicos: e.target.value.split("•").map((x) => x.trim()).filter(Boolean) })} className="w-full bg-transparent text-center outline-none mt-3" placeholder="subtítulo" />
-              </div>
-            ) : (
-              <>
-                <input value={s.titulo} onChange={(e) => patchSlide(cur, { titulo: e.target.value })} className="w-full bg-transparent text-2xl font-bold outline-none mb-3" style={{ color: th.title }} />
-                <textarea value={(s.topicos || []).join("\n")} onChange={(e) => patchSlide(cur, { topicos: e.target.value.split("\n").map((x) => x.replace(/^•\s*/, "")).filter((x) => x !== "") })} rows={7} className="w-full bg-transparent outline-none resize-none leading-relaxed" placeholder="Um tópico por linha…" style={{ color: th.text }} />
-              </>
-            )}
+          {/* Prévia fiel: exatamente o que sai no PDF e no PowerPoint. */}
+          <div
+            className="w-full max-w-2xl aspect-video rounded-lg shadow-2xl overflow-hidden"
+            style={{ containerType: "size" }}
+            dangerouslySetInnerHTML={{ __html: renderSlideHtml(s, cur, th, { unit: "cqh" }) }}
+          />
+
+          {/* Edição do slide atual */}
+          <div className="w-full max-w-2xl space-y-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Layout</span>
+              {SLIDE_LAYOUTS.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => patchSlide(cur, { layout: l.id })}
+                  title={l.desc}
+                  className={`text-[10px] px-2 py-1 rounded-full cursor-pointer ${layoutOf(s, cur) === l.id ? "bg-amber-600 text-white" : "bg-white/10 hover:bg-white/15 text-gray-300"}`}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={s.titulo}
+              onChange={(e) => patchSlide(cur, { titulo: e.target.value })}
+              placeholder={layoutOf(s, cur) === "citacao" ? "A frase da citação…" : "Título do slide"}
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:border-amber-500"
+            />
+            <textarea
+              value={(s.topicos || []).join("\n")}
+              onChange={(e) => patchSlide(cur, { topicos: e.target.value.split("\n").map((x) => x.replace(/^•\s*/, "")).filter((x) => x !== "") })}
+              rows={4}
+              placeholder={
+                layoutOf(s, cur) === "capa" ? "Subtítulo (uma linha)"
+                : layoutOf(s, cur) === "citacao" ? "Quem disse (uma linha)"
+                : layoutOf(s, cur) === "secao" ? "Não usa tópicos"
+                : "Um tópico por linha…"
+              }
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none resize-y leading-relaxed focus:border-amber-500"
+            />
+            <input
+              value={s.nota ?? ""}
+              onChange={(e) => patchSlide(cur, { nota: e.target.value })}
+              placeholder="Nota do apresentador (só você vê)"
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] outline-none"
+            />
           </div>
+
           <div className="flex items-center gap-2">
             <button onClick={() => moveSlide(cur, -1)} disabled={cur === 0} className="w-8 h-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-40"><ChevronUp size={15} /></button>
             <button onClick={() => moveSlide(cur, 1)} disabled={cur === deck.slides.length - 1} className="w-8 h-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-40"><ChevronDown size={15} /></button>

@@ -8,11 +8,13 @@
 import type { DocModel } from "./types";
 import { DEFAULT_PAGE } from "./types";
 import { RESUME_PAGE } from "./resume";
+import { BUSINESS_PAGE } from "./business";
 import { COVER_FIELDS, NORM_TEMPLATES } from "./norms";
 
 export * from "./types";
 export * from "./norms";
 export * from "./resume";
+export * from "./business";
 
 const ABNT = NORM_TEMPLATES[0].page;
 
@@ -63,9 +65,17 @@ export const DOC_MODELS: DocModel[] = [
     desc: "Contrato de prestação de serviço com partes, cláusulas e assinaturas.",
     group: "negocios",
     accent: "#0ea5e9",
-    page: DEFAULT_PAGE,
-    status: "em_breve",
-    fields: [],
+    page: BUSINESS_PAGE,
+    status: "pronto",
+    fields: [
+      { id: "objeto", label: "Objeto", question: "O que vai ser contratado? Descreva o serviço ou produto.", type: "textarea", required: true },
+      { id: "contratante", label: "Contratante", question: "Quem está contratando? Nome completo (ou razão social) e CPF/CNPJ.", required: true },
+      { id: "contratada", label: "Contratada", question: "Quem vai prestar o serviço? Nome completo (ou razão social) e CPF/CNPJ.", required: true },
+      { id: "valor", label: "Valor", question: "Qual é o valor combinado?", required: true },
+      { id: "pagamento", label: "Forma de pagamento", question: "Como o pagamento será feito? (à vista, parcelado, entrada…)" },
+      { id: "prazo", label: "Prazo", question: "Qual é o prazo de execução?" },
+      { id: "cidade", label: "Cidade / foro", question: "Em que cidade o contrato é assinado?" },
+    ],
   },
   {
     id: "orcamento",
@@ -73,9 +83,15 @@ export const DOC_MODELS: DocModel[] = [
     desc: "Proposta comercial com tabela de itens, quantidades e total automático.",
     group: "negocios",
     accent: "#10b981",
-    page: DEFAULT_PAGE,
-    status: "em_breve",
-    fields: [],
+    page: BUSINESS_PAGE,
+    status: "pronto",
+    fields: [
+      { id: "cliente", label: "Cliente", question: "Para quem é este orçamento? Nome e, se tiver, CPF/CNPJ.", required: true },
+      { id: "itens", label: "Itens", question: "Quais itens entram no orçamento? Para cada um: descrição, quantidade e valor unitário.", type: "textarea", required: true },
+      { id: "validade", label: "Validade", question: "Por quantos dias esta proposta vale?", default: "15 dias" },
+      { id: "pagamento", label: "Forma de pagamento", question: "Qual a condição de pagamento?" },
+      { id: "prazoEntrega", label: "Prazo de entrega", question: "Em quanto tempo você entrega?" },
+    ],
   },
   {
     id: "questionario",
@@ -83,9 +99,16 @@ export const DOC_MODELS: DocModel[] = [
     desc: "Prova ou formulário com questões numeradas e gabarito.",
     group: "estudo",
     accent: "#f59e0b",
-    page: DEFAULT_PAGE,
-    status: "em_breve",
-    fields: [],
+    page: BUSINESS_PAGE,
+    status: "pronto",
+    fields: [
+      { id: "titulo", label: "Título", question: "Qual é o título da prova ou questionário?", required: true },
+      { id: "disciplina", label: "Disciplina", question: "De qual disciplina é?" },
+      { id: "assunto", label: "Assunto", question: "Sobre qual assunto são as questões?", type: "textarea", required: true },
+      { id: "quantidade", label: "Quantidade", question: "Quantas questões você quer?", type: "number", default: "10" },
+      { id: "tipo", label: "Tipo", question: "As questões devem ser objetivas, dissertativas ou misturadas?", type: "select", options: ["objetivas", "dissertativas", "misturadas"] },
+      { id: "gabarito", label: "Gabarito", question: "Quer que eu inclua o gabarito no fim?", type: "select", options: ["sim", "não"] },
+    ],
   },
   {
     id: "resumo",
@@ -93,9 +116,13 @@ export const DOC_MODELS: DocModel[] = [
     desc: "Resumo de um conteúdo, organizado em tópicos.",
     group: "estudo",
     accent: "#ec4899",
-    page: DEFAULT_PAGE,
-    status: "em_breve",
-    fields: [],
+    page: BUSINESS_PAGE,
+    status: "pronto",
+    fields: [
+      { id: "titulo", label: "Título", question: "Qual é o assunto do resumo?", required: true },
+      { id: "materia", label: "Matéria", question: "De qual matéria é?" },
+      { id: "conteudo", label: "Conteúdo", question: "Cole o conteúdo que você quer resumir (ou me diga o tema que eu escrevo).", type: "textarea", required: true },
+    ],
   },
   {
     id: "resumao",
@@ -103,9 +130,14 @@ export const DOC_MODELS: DocModel[] = [
     desc: "Revisão completa da matéria, com destaques e o que mais cai na prova.",
     group: "estudo",
     accent: "#ef4444",
-    page: DEFAULT_PAGE,
-    status: "em_breve",
-    fields: [],
+    page: BUSINESS_PAGE,
+    status: "pronto",
+    fields: [
+      { id: "titulo", label: "Título", question: "Qual matéria você quer revisar?", required: true },
+      { id: "materia", label: "Matéria", question: "De qual disciplina é?" },
+      { id: "conteudo", label: "Conteúdo", question: "Cole a matéria toda (ou me diga os temas) que eu monto a revisão completa.", type: "textarea", required: true },
+      { id: "prova", label: "Foco da prova", question: "Tem algum tema que o professor avisou que vai cair? Me conte para eu destacar." },
+    ],
   },
   {
     id: "livre",

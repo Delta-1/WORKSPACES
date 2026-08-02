@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase-client";
 import SlidesTab from "@/components/tabs/SlidesTab";
 import ResumeEditor from "@/components/studio/ResumeEditor";
 import AcademicEditor from "@/components/studio/AcademicEditor";
+import BusinessEditor, { type BusinessModelId } from "@/components/studio/BusinessEditor";
 import { DOC_MODELS, GROUP_LABEL, isAcademicModel, modelById, type DocGroup } from "@/lib/doc-templates";
 import type { Profile } from "@/lib/types";
 
@@ -40,6 +41,9 @@ const MODEL_ICON: Record<string, typeof FileText> = {
 };
 
 const GROUP_ORDER: DocGroup[] = ["carreira", "academico", "negocios", "estudo"];
+
+// Modelos que usam o editor estruturado (formulário + prévia da folha).
+const BUSINESS_MODELS: BusinessModelId[] = ["contrato", "orcamento", "questionario", "resumo", "resumao"];
 
 export default function StudioTab({ profile }: { profile: Profile | null }) {
   // O Estúdio agora é um hub: escolhe-se Documentos ou Apresentações.
@@ -117,6 +121,9 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
     if (open.template === "curriculo") return <ResumeEditor row={open} authorName={authorName} onClose={close} />;
     if (isAcademicModel(open.template)) {
       return <AcademicEditor row={open} modelLabel={modelById(open.template)?.label ?? "Trabalho"} authorName={authorName} onClose={close} />;
+    }
+    if (BUSINESS_MODELS.includes(open.template as BusinessModelId)) {
+      return <BusinessEditor row={open} model={open.template as BusinessModelId} modelLabel={modelById(open.template)?.label ?? "Documento"} onClose={close} />;
     }
     return <Editor doc={open} onClose={close} />;
   }
