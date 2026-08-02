@@ -36,3 +36,21 @@ Fonte de verdade: constante `SYSTEM_RULES` em `whatsapp-service/src/server.js`.
 - Dá uma **previsão de tempo** ao começar a produzir um documento.
 - Pede um **arquivo de exemplo/modelo** quando a pessoa tiver, para se inspirar.
 - Entrega **.docx + PDF** (trabalhos) e **.pptx** (apresentações).
+
+## Documentos do Estúdio (Nina)
+
+A Nina produz **todos** os modelos do Estúdio → Documentos: currículo,
+monografia, trabalho acadêmico, contrato, orçamento, questionário, resumo e
+resumão. O roteiro é sempre o mesmo:
+
+1. `documento_modelos` — lê o catálogo do site (`/api/studio/models`). É a fonte
+   única: modelo novo criado no app aparece aqui sozinho, sem deploy do serviço.
+2. Pergunta os campos do modelo **um por vez**, em conversa natural.
+3. `documento_previa` — manda a **imagem** de como o documento vai ficar e
+   espera a aprovação. Modelos com variação (temas do currículo, normas da
+   monografia) têm uma prévia por variação.
+4. `documento_criar` — só depois do "pode fazer". A Nina escreve o conteúdo e o
+   site monta o `.docx` (`/api/studio/render`), com a mesma formatação da tela.
+
+Depende de `APP_URL` configurada no serviço. Sem ela, a Nina segue atendendo
+normalmente, apenas sem oferecer os modelos do Estúdio.

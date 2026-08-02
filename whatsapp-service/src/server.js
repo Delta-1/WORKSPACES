@@ -24,6 +24,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
 const SERVICE_SECRET = process.env.WHATSAPP_SERVICE_SECRET || "";
 const AUTH_ROOT = path.join(__dirname, "..", ".wa-session");
+// Endereço público do site (ex.: https://workspaces.vercel.app). A Nina usa
+// para (1) ler o catálogo de modelos do Estúdio, (2) mandar a imagem de prévia
+// e (3) pedir o documento montado. Sem isto, ela ainda atende normalmente — só
+// não oferece os modelos do Estúdio.
+const APP_URL = (process.env.APP_URL || "").replace(/\/+$/, "");
 
 // service_role bypasses RLS — this process has no logged-in app user, so it
 // needs full write access to the contacts/conversations/messages tables.
@@ -1411,6 +1416,32 @@ async function flowTimerSweep() {
 }
 
 // ---------------------------------------------------------------------------
+// Catálogo dos modelos do Estúdio → Documentos.
+//
+// Lido do próprio site (/api/studio/models) em vez de duplicado aqui: quando um
+// modelo novo é criado no registry do app, a Nina passa a saber oferecê-lo e
+// quais perguntas fazer, sem precisar de deploy deste serviço. Cache de 10 min
+// porque a lista muda raramente e cada mensagem poderia disparar uma consulta.
+// ---------------------------------------------------------------------------
+let docModelsCache = { at: 0, data: null };
+async function fetchDocModels() {
+  if (!APP_URL) return null;
+  if (docModelsCache.data && Date.now() - docModelsCache.at < 600000) return docModelsCache.data;
+  try {
+    const resp = await fetch(`${APP_URL}/api/studio/models`);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const json = await resp.json();
+    const modelos = Array.isArray(json?.modelos) ? json.modelos : null;
+    if (modelos) docModelsCache = { at: Date.now(), data: modelos };
+    return modelos;
+  } catch (e) {
+    console.error("catálogo de modelos indisponível:", e?.message || e);
+    // Mantém o cache velho se houver — melhor um pouco desatualizado do que mudo.
+    return docModelsCache.data;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // COPILOTO via WhatsApp (só para contatos liberados pelo gestor). Tem acesso
 // aos arquivos da empresa: procura pelo nome e ENTREGA o arquivo/imagem.
 // ---------------------------------------------------------------------------
@@ -1577,6 +1608,44 @@ const COPILOT_TOOLS = [
     description: "Cria uma APRESENTAÇÃO de slides sobre um tema e ENVIA o arquivo .pptx (PowerPoint) para a pessoa aqui no WhatsApp. Use quando pedirem slides/apresentação. Informe o tema e, se disserem, a quantidade de slides.",
     input_schema: { type: "object", properties: { tema: { type: "string" }, slides: { type: "number" } }, required: ["tema"] },
   },
+  // ---- Estúdio → Documentos (currículo, contrato, orçamento, questionário…) ----
+  {
+    name: "documento_modelos",
+    description:
+      "Lista os MODELOS de documento que você sabe produzir (currículo, monografia, trabalho acadêmico, contrato, orçamento, questionário, resumo, resumão), com a descrição de cada um, as PERGUNTAS que precisam ser respondidas e as variações de visual disponíveis. " +
+      "Chame SEMPRE isto no começo, antes de oferecer opções — é assim que você sabe o que existe hoje e o que perguntar. Não invente modelos que não estiverem nesta lista.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "documento_previa",
+    description:
+      "Envia uma IMAGEM de prévia do modelo para a pessoa VER como o documento vai ficar, e aprovar antes de você produzir. Use logo depois que ela escolher o modelo (e a variação, quando houver). " +
+      "Depois de enviar, PERGUNTE se ela aprova ou se quer ver outro visual. Só produza o documento depois do 'pode fazer'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        modelo: { type: "string", description: "id do modelo (ex.: curriculo, contrato, orcamento)" },
+        variacao: { type: "string", description: "id da variação, quando houver (ex.: executive no currículo, apa-upds na monografia)" },
+      },
+      required: ["modelo"],
+    },
+  },
+  {
+    name: "documento_criar",
+    description:
+      "Produz o documento no formato oficial do Estúdio e ENVIA o arquivo .docx (editável) para a pessoa aqui no WhatsApp. " +
+      "Chame só DEPOIS de: (1) coletar as respostas das perguntas do modelo, (2) mostrar a prévia com documento_previa e (3) receber a aprovação. " +
+      "Em 'dados' vá o conteúdo JÁ ESCRITO POR VOCÊ, no formato do modelo — você é quem redige o texto (cláusulas do contrato, questões da prova, tópicos do resumo, descrição do currículo). Não mande campos vazios esperando que o sistema preencha.",
+    input_schema: {
+      type: "object",
+      properties: {
+        modelo: { type: "string", description: "id do modelo" },
+        titulo: { type: "string", description: "nome do arquivo" },
+        dados: { type: "object", description: "conteúdo do documento no formato do modelo (veja 'formato' em documento_modelos)" },
+      },
+      required: ["modelo", "dados"],
+    },
+  },
   // ---- Logística Internacional (TransLog) ----
   {
     name: "logistica_status_carga",
@@ -1651,6 +1720,64 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       } catch (e) { console.error("pdf build failed:", e?.message || e); }
       if (!files.length) return { ok: false, message: "Gerei o texto mas falhei ao montar os arquivos." };
       return { ok: true, message: `Trabalho "${work.titulo}" pronto. Enviei o .docx (editável) e o .pdf. Diga o que quer ajustar que eu refaço.` };
+    }
+    // ---- Estúdio → Documentos ----
+    if (name === "documento_modelos") {
+      const modelos = await fetchDocModels();
+      if (!modelos) return { ok: false, message: "Não consegui consultar os modelos do Estúdio agora. Siga com o que você já sabe fazer (trabalho acadêmico e apresentação)." };
+      return { ok: true, modelos };
+    }
+    if (name === "documento_previa") {
+      if (!APP_URL) return { ok: false, message: "Prévia indisponível (o serviço não sabe o endereço do site)." };
+      const modelos = await fetchDocModels();
+      const m = (modelos ?? []).find((x) => x.id === input.modelo);
+      if (!m) return { ok: false, message: `Não conheço o modelo "${input.modelo}". Use documento_modelos para ver os disponíveis.` };
+      // Modelos com variação têm uma imagem por variação (curriculo-executive,
+      // monografia-abnt…); os demais têm uma só, com o id do modelo.
+      const temVariacoes = Array.isArray(m.variacoes) && m.variacoes.length > 0;
+      const variacao = temVariacoes ? (m.variacoes.find((v) => v.id === input.variacao)?.id || m.variacoes[0].id) : null;
+      const slug = variacao ? `${m.id}-${variacao}` : m.id;
+      const url = `${APP_URL}/modelos/${slug}.jpg`;
+      const legenda = variacao
+        ? `Prévia do modelo ${m.nome} — ${m.variacoes.find((v) => v.id === variacao)?.nome || variacao}`
+        : `Prévia do modelo ${m.nome}`;
+      // Entra em `files` para ser entregue como imagem na conversa.
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const buffer = Buffer.from(await resp.arrayBuffer());
+        files.push({ name: `${legenda}.jpg`, mime: "image/jpeg", buffer });
+      } catch (e) {
+        console.error("previa do modelo falhou:", e?.message || e);
+        return { ok: false, message: "Não consegui carregar a imagem de prévia agora." };
+      }
+      return {
+        ok: true,
+        message: `Enviei a prévia de "${m.nome}"${variacao ? ` (${variacao})` : ""}. PERGUNTE se está bom assim ou se prefere ver outro visual — só produza depois do OK.`,
+        variacoes_disponiveis: temVariacoes ? m.variacoes.map((v) => ({ id: v.id, nome: v.nome })) : [],
+      };
+    }
+    if (name === "documento_criar") {
+      if (!APP_URL || !SERVICE_SECRET) return { ok: false, message: "Não consigo montar documentos do Estúdio agora (serviço sem endereço do site ou sem segredo configurado)." };
+      if (!companyId) return { ok: false, message: "Sem empresa vinculada a esta conversa." };
+      try {
+        const resp = await fetch(`${APP_URL}/api/studio/render`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-service-secret": SERVICE_SECRET },
+          body: JSON.stringify({ model: input.modelo, data: input.dados || {}, titulo: input.titulo || null, company_id: companyId }),
+        });
+        const out = await resp.json();
+        if (!resp.ok || out.error) return { ok: false, message: out.error || "Não consegui montar o documento." };
+        files.push({
+          name: `${studioFileName(out.nome || input.titulo || "documento")}.docx`,
+          mime: out.mime || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          buffer: Buffer.from(out.docx_base64, "base64"),
+        });
+        return { ok: true, message: `Documento "${out.nome}" pronto — enviei o .docx (editável). Diga o que quer ajustar que eu refaço.` };
+      } catch (e) {
+        console.error("documento_criar falhou:", e?.message || e);
+        return { ok: false, message: "Tive um problema ao montar o documento. Tenta de novo?" };
+      }
     }
     if (name === "gerar_apresentacao") {
       if (!ctx.key) return { ok: false, message: "Sem chave de IA para gerar a apresentação." };
@@ -2076,8 +2203,14 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     const brain = await buildBotBrain(chatbot);
     system =
       `${persona}\nVocê atende pelo WhatsApp da empresa ${name}. ${chatbot?.instructions || "Responda de forma cordial e humana."}\n` +
-      `VOCÊ TEM FERRAMENTAS: pode gerar TRABALHOS ACADÊMICOS (gerar_documento) e APRESENTAÇÕES (gerar_apresentacao) e ENVIAR os arquivos (.docx, .pdf, .pptx) aqui mesmo na conversa. ` +
-      `Quando pedirem um trabalho ou slides, colete o que faltar (tema, instituição, curso, nível, autor, cidade, páginas) perguntando de forma natural, confirme, e só então chame a ferramenta. Depois de enviar, ofereça correções.\n` +
+      `VOCÊ TEM FERRAMENTAS: além de TRABALHOS ACADÊMICOS (gerar_documento) e APRESENTAÇÕES (gerar_apresentacao), você produz TODOS os documentos do Estúdio — currículo, monografia, trabalho, contrato, orçamento, questionário, resumo e resumão — e ENVIA os arquivos aqui na conversa.\n` +
+      `COMO ATENDER UM PEDIDO DE DOCUMENTO, nesta ordem:\n` +
+      `1) Chame documento_modelos para saber o que existe hoje e o que cada modelo pergunta. Ofereça as opções em lista, por TEXTO.\n` +
+      `2) Escolhido o modelo, faça as perguntas dele UMA POR VEZ, em conversa natural — nunca despeje um formulário inteiro de uma vez. Aproveite o que a pessoa já disse e não repita pergunta.\n` +
+      `3) Com os dados na mão, chame documento_previa para ela VER o visual e aprovar. Se houver variações (temas do currículo, normas da monografia), diga quais são e mostre a que ela escolher.\n` +
+      `4) SÓ depois do "pode fazer": ESCREVA VOCÊ o conteúdo (as cláusulas do contrato, as questões da prova, os tópicos do resumo, o texto do currículo) e chame documento_criar com esse conteúdo no formato indicado em documento_modelos. Nunca mande campos vazios.\n` +
+      `5) Entregue e ofereça ajustes. Se ela pedir mudança, refaça e reenvie.\n` +
+      `Dê uma previsão de tempo antes de começar a produzir. NÃO invente dados que a pessoa não deu (nomes, CPF/CNPJ, valores) — pergunte.\n` +
       `Mantenha o contexto: NÃO cumprimente de novo nem recomece a cada mensagem; continue de onde parou.` +
       (chatbot?.knowledge ? `\n\nBase: ${chatbot.knowledge}` : "") + brain +
       companyContextBlock(await getCompanyInfo(companyId));
@@ -2098,7 +2231,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     finance: ["finance_summary", "add_finance_entry"],
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
-    academico: ["gerar_documento", "gerar_apresentacao"],
+    academico: ["gerar_documento", "gerar_apresentacao", "documento_modelos", "documento_previa", "documento_criar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
@@ -2112,6 +2245,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "search_files", "send_file", "list_folder", "graph_overview",
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
+      "documento_modelos", "documento_previa", "documento_criar",
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
