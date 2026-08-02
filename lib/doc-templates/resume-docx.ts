@@ -14,14 +14,19 @@ import { cmToTwip } from "./types";
 const FONT = "Calibri";
 const hex = (c: string) => (/^#?([0-9a-f]{6})$/i.exec(String(c).trim())?.[1] ?? "4F46E5").toUpperCase();
 
+// Sem depender de atob: este builder também roda no servidor (rota que a Nina
+// usa para montar o currículo e entregar pelo WhatsApp).
 function dataUrlToBytes(url: string): Uint8Array | null {
   try {
     const b64 = String(url).split(",")[1];
     if (!b64) return null;
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
+    if (typeof atob === "function") {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    return new Uint8Array(Buffer.from(b64, "base64"));
   } catch {
     return null;
   }
