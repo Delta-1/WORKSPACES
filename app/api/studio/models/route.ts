@@ -19,8 +19,11 @@ export const runtime = "nodejs";
 // ela chutaria os nomes dos campos e o documento sairia vazio.
 const FORMATO: Record<string, string> = {
   curriculo: `{"name":"","title":"","phone":"","email":"","location":"","about":"","skills":[],"keywords":[],"experiences":[{"role":"","company":"","period":"","description":""}],"education":[{"degree":"","institution":"","period":""}],"theme":"executive","accent":"#4f46e5"}`,
-  monografia: `{"norma":"abnt","capa":{"universidade":"","faculdade":"","carreira":"","titulo":"","disciplina":"","professor":"","estudante":"","cidade":"","ano":""},"secoes":[{"id":"introducao","label":"Introdução","html":"<p>…</p>"}]}`,
-  trabalho: `{"norma":"abnt","capa":{"universidade":"","carreira":"","titulo":"","professor":"","estudante":"","cidade":"","ano":""},"secoes":[{"id":"introducao","label":"Introdução","html":"<p>…</p>"}]}`,
+  // `normaCustom` é opcional e vem de documento_norma_do_arquivo (a formatação
+  // lida do modelo da própria faculdade). `capa.logo_url` é preenchido sozinho
+  // quando documento_criar é chamado com usar_logo_enviada.
+  monografia: `{"norma":"abnt","normaCustom":null,"capa":{"universidade":"","faculdade":"","carreira":"","titulo":"","disciplina":"","professor":"","estudante":"","cidade":"","ano":"","logo_url":""},"secoes":[{"id":"introducao","label":"Introdução","html":"<p>…</p>"}]}`,
+  trabalho: `{"norma":"abnt","normaCustom":null,"capa":{"universidade":"","carreira":"","titulo":"","professor":"","estudante":"","cidade":"","ano":"","logo_url":""},"secoes":[{"id":"introducao","label":"Introdução","html":"<p>…</p>"}]}`,
   contrato: `{"numero":"","cidade":"","data":"","objeto":"","contratante":{"nome":"","doc":"","endereco":"","rep":""},"contratada":{"nome":"","doc":"","endereco":"","rep":""},"valor":"","pagamento":"","prazo":"","vigencia":"","clausulas":[{"titulo":"","texto":""}],"foro":"","testemunhas":[]}`,
   orcamento: `{"numero":"","data":"","validade":"","moeda":"R$","cliente":{"nome":"","doc":"","endereco":"","rep":""},"itens":[{"descricao":"","quant":"1","unidade":"un","valor":"0,00"}],"desconto":"","pagamento":"","prazoEntrega":"","observacoes":""}`,
   questionario: `{"titulo":"","disciplina":"","professor":"","turma":"","data":"","instrucoes":"","gabarito":false,"questoes":[{"enunciado":"","tipo":"objetiva","alternativas":["","","",""],"resposta":"a","valor":"1,0"}]}`,

@@ -120,6 +120,70 @@ export const NORM_TEMPLATES: NormTemplate[] = [
 
 export const normById = (id?: string | null) => NORM_TEMPLATES.find((n) => n.id === id) ?? NORM_TEMPLATES[0];
 
+// ── Norma sob medida (lida de um arquivo-modelo) ────────────────────────────
+//
+// Quando a pessoa manda o modelo da própria faculdade, a formatação é extraída
+// dele e chega aqui como um remendo por cima de uma norma conhecida. Fica só o
+// que foi RECONHECIDO no arquivo — o resto continua vindo da norma base, então
+// uma extração incompleta nunca produz um documento sem margem ou sem fonte.
+export type CustomNorm = {
+  nome?: string;
+  descricao?: string;
+  page?: Partial<Omit<PageSetup, "margins">> & { margins?: Partial<PageSetup["margins"]> };
+  citacao?: CitationStyle;
+  capaMoldura?: boolean;
+  capaAlinhamento?: "center" | "left";
+  capaLinhaExtra?: string;
+  capaDados?: NormTemplate["capaDados"];
+};
+
+const CITACOES: CitationStyle[] = ["APA", "Vancouver", "ABNT"];
+const num = (v: unknown, min: number, max: number): number | undefined => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= min && n <= max ? n : undefined;
+};
+
+/**
+ * Aceita o que veio da extração e devolve uma norma válida.
+ *
+ * Cada campo é conferido antes de entrar: margem fora de 0-8 cm, entrelinha
+ * absurda ou estilo de citação inventado são descartados em silêncio e o valor
+ * da norma base prevalece. É a fronteira entre o palpite da IA e a formatação
+ * do documento — nada não validado passa daqui.
+ */
+export function resolveNorm(id?: string | null, custom?: CustomNorm | null): NormTemplate {
+  const base = normById(id);
+  if (!custom || typeof custom !== "object") return base;
+
+  const m = custom.page?.margins ?? {};
+  const page: PageSetup = {
+    paper: custom.page?.paper === "carta" || custom.page?.paper === "a4" ? custom.page.paper : base.page.paper,
+    margins: {
+      mt: num(m.mt, 0.5, 8) ?? base.page.margins.mt,
+      mb: num(m.mb, 0.5, 8) ?? base.page.margins.mb,
+      ml: num(m.ml, 0.5, 8) ?? base.page.margins.ml,
+      mr: num(m.mr, 0.5, 8) ?? base.page.margins.mr,
+    },
+    font: typeof custom.page?.font === "string" && custom.page.font.trim() ? custom.page.font : base.page.font,
+    fontSize: /^\d{1,2}(\.\d)?pt$/.test(String(custom.page?.fontSize)) ? String(custom.page?.fontSize) : base.page.fontSize,
+    lineHeight: num(custom.page?.lineHeight, 1, 3) ?? base.page.lineHeight,
+    indent: num(custom.page?.indent, 0, 5) ?? base.page.indent,
+  };
+
+  return {
+    ...base,
+    id: `${base.id}+custom`,
+    nome: custom.nome?.trim() || `${base.nome} (do seu modelo)`,
+    descricao: custom.descricao?.trim() || base.descricao,
+    page,
+    citacao: CITACOES.includes(custom.citacao as CitationStyle) ? (custom.citacao as CitationStyle) : base.citacao,
+    capaMoldura: typeof custom.capaMoldura === "boolean" ? custom.capaMoldura : base.capaMoldura,
+    capaAlinhamento: custom.capaAlinhamento === "left" || custom.capaAlinhamento === "center" ? custom.capaAlinhamento : base.capaAlinhamento,
+    capaLinhaExtra: custom.capaLinhaExtra?.trim() || base.capaLinhaExtra,
+    capaDados: { ...(base.capaDados ?? {}), ...(custom.capaDados ?? {}) },
+  };
+}
+
 // Campos da capa. É exatamente esta lista que a Nina percorre no WhatsApp,
 // perguntando um por vez, e que a interface mostra no formulário da capa.
 export const COVER_FIELDS: DocField[] = [

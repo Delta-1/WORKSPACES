@@ -4,18 +4,23 @@
 // os três formatos: prévia na tela, PDF (impressão) e .docx — todos usando a
 // MESMA montagem, para o que a pessoa vê ser exatamente o que ela recebe.
 
-import type { NormTemplate } from "./norms";
-import { normById } from "./norms";
+import type { CustomNorm, NormTemplate } from "./norms";
+import { normById, resolveNorm } from "./norms";
 import { PAPER } from "./types";
 
 export type AcademicSection = { id: string; label: string; html: string };
 
 export type AcademicDoc = {
   norma: string;
+  /** Ajustes extraídos do arquivo-modelo da pessoa, por cima da norma escolhida. */
+  normaCustom?: CustomNorm | null;
   capa: Record<string, string>;
   notas: string;
   secoes: AcademicSection[];
 };
+
+/** A norma que vale para este documento — a escolhida, com os ajustes do modelo. */
+export const normOf = (doc: AcademicDoc) => resolveNorm(doc.norma, doc.normaCustom);
 
 export const EMPTY_ACADEMIC = (normaId: string, capa: Record<string, string> = {}): AcademicDoc => {
   const norma = normById(normaId);
@@ -36,7 +41,15 @@ export function renderCoverHtml(capa: Record<string, string>, norma: NormTemplat
   const line = (v?: string, style = "") => (v?.trim() ? `<p style="margin:0 0 4pt;text-indent:0;${style}">${esc(v)}</p>` : "");
   const alturaUtil = PAPER[norma.page.paper].h - norma.page.margins.mt - norma.page.margins.mb;
 
+  // Logo da instituição no topo da capa. Altura fixa em pontos (não em %) para
+  // sair do mesmo tamanho na tela, no PDF e no Word — os manuais costumam pedir
+  // o brasão com ~2,5 cm.
+  const logo = capa.logo_url?.trim()
+    ? `<p style="margin:0 0 8pt;text-indent:0"><img src="${esc(capa.logo_url)}" alt="" width="96" style="width:96px;height:auto;max-height:110px;object-fit:contain" /></p>`
+    : "";
+
   const topo = [
+    logo,
     line(capa.universidade, "font-weight:bold;text-transform:uppercase"),
     line(capa.faculdade, "text-transform:uppercase"),
     line(capa.carreira, "text-transform:uppercase"),
@@ -67,7 +80,7 @@ export function renderCoverHtml(capa: Record<string, string>, norma: NormTemplat
 
 /** Documento inteiro: capa + seções, pronto para prévia, impressão e .docx. */
 export function renderAcademicHtml(doc: AcademicDoc, opts: { comCapa?: boolean } = {}): string {
-  const norma = normById(doc.norma);
+  const norma = normOf(doc);
   const cover = opts.comCapa === false ? "" : renderCoverHtml(doc.capa, norma);
   const corpo = doc.secoes
     .filter((s) => s.html.trim())
