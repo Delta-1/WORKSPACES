@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageCircle, Plus, Power, QrCode, RefreshCcw, Shield, Trash2 } from "lucide-react";
+import { AtSign, MessageCircle, Plus, Power, QrCode, RefreshCcw, Shield, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
-import type { Chatbot, Profile, Sector, WhatsappNumber, WhatsappNumberAccess } from "@/lib/types";
+import type { Chatbot, Profile, Sector, WhatsappGroup, WhatsappNumber, WhatsappNumberAccess } from "@/lib/types";
 
 type LiveState = {
   status: "disconnected" | "connecting" | "qr_pending" | "connected";
@@ -26,6 +26,9 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [colleagues, setColleagues] = useState<Profile[]>([]);
   const [access, setAccess] = useState<WhatsappNumberAccess[]>([]);
+  const [groups, setGroups] = useState<WhatsappGroup[]>([]);
+  const [syncingGroups, setSyncingGroups] = useState(false);
+  const [groupsMsg, setGroupsMsg] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [live, setLive] = useState<LiveState | null>(null);
   const [newLabel, setNewLabel] = useState("");
@@ -36,19 +39,21 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
 
   const loadAll = useCallback(async () => {
     if (!supabase) return;
-    const [n, s, c, p, a, cs] = await Promise.all([
+    const [n, s, c, p, a, cs, g] = await Promise.all([
       supabase.from("whatsapp_numbers").select("*").order("created_at"),
       supabase.from("sectors").select("*").order("name"),
       supabase.from("chatbots").select("*").order("created_at"),
       supabase.from("profiles").select("*").order("full_name"),
       supabase.from("whatsapp_number_access").select("*"),
       supabase.from("company_settings").select("wa_number_limit").maybeSingle(),
+      supabase.from("whatsapp_groups").select("*").order("subject"),
     ]);
     if (n.data) setNumbers(n.data as WhatsappNumber[]);
     if (s.data) setSectors(s.data as Sector[]);
     if (c.data) setChatbots(c.data as Chatbot[]);
     if (p.data) setColleagues(p.data as Profile[]);
     if (a.data) setAccess(a.data as WhatsappNumberAccess[]);
+    if (g.data) setGroups(g.data as WhatsappGroup[]);
     if (cs.data?.wa_number_limit != null) setNumberLimit(cs.data.wa_number_limit as number);
   }, []);
 
@@ -150,7 +155,38 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
     loadAll();
   }
 
+  // Relê os grupos direto do WhatsApp. Só atualiza nome e participantes — o que
+  // o gestor já configurou (IA ligada, agente, só quando marcam) fica de pé.
+  async function syncGroups() {
+    if (!selectedId) return;
+    setSyncingGroups(true);
+    setGroupsMsg(null);
+    try {
+      const res = await fetch("/api/whatsapp/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ numberId: selectedId }),
+      });
+      const data = await res.json();
+      setGroupsMsg(res.ok ? `${data.total ?? 0} ${data.total === 1 ? "grupo encontrado" : "grupos encontrados"}.` : data.error || "Não consegui listar os grupos.");
+      await loadAll();
+    } catch {
+      setGroupsMsg("Não consegui falar com o serviço do WhatsApp.");
+    } finally {
+      setSyncingGroups(false);
+    }
+  }
+
+  async function updateGroup(id: string, update: Partial<WhatsappGroup>) {
+    if (!supabase) return;
+    // Otimista: o toggle responde na hora e a lista se corrige no loadAll.
+    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, ...update } : g)));
+    await supabase.from("whatsapp_groups").update(update).eq("id", id);
+    loadAll();
+  }
+
   const selectedAccess = access.filter((a) => a.number_id === selectedId);
+  const selectedGroups = groups.filter((g) => g.number_id === selectedId);
   const status = live?.status ?? (selected?.status as LiveState["status"]) ?? "disconnected";
   const badge = BADGE[status] ?? BADGE.disconnected;
 
@@ -360,6 +396,107 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
                     Auto-resposta da IA
                   </label>
                 </div>
+              </div>
+            )}
+
+            {/* Grupos — a IA é ligada grupo a grupo */}
+            {isGestor && (
+              <div className="border-t border-white/10 pt-4">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                    <Users size={13} /> Grupos deste número
+                  </p>
+                  <button
+                    onClick={syncGroups}
+                    disabled={syncingGroups || status !== "connected"}
+                    title={status !== "connected" ? "Conecte o número para ver os grupos" : ""}
+                    className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-40"
+                  >
+                    <RefreshCcw size={12} className={syncingGroups ? "animate-spin" : ""} />
+                    {syncingGroups ? "Buscando..." : "Atualizar lista"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-3">
+                  A IA fica <b>desligada</b> em todos os grupos. Ligue só nos que você quiser — nos demais o número
+                  continua sem responder nada, como sempre foi.
+                </p>
+                {groupsMsg && <p className="text-[11px] text-gray-400 mb-2">{groupsMsg}</p>}
+
+                {selectedGroups.length === 0 ? (
+                  <p className="text-[11px] text-gray-500 italic py-3">
+                    {status === "connected"
+                      ? "Nenhum grupo encontrado ainda. Toque em “Atualizar lista”."
+                      : "Conecte o número para ver os grupos de que ele participa."}
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto custom-scroll pr-1">
+                    {selectedGroups.map((g) => (
+                      <div
+                        key={g.id}
+                        className={`rounded-xl border p-3 ${g.ai_enabled ? "border-emerald-700/60 bg-emerald-950/20" : "border-white/10 bg-white/5"}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{g.subject ?? "Grupo sem nome"}</p>
+                            <p className="text-[11px] text-gray-500">
+                              {g.participants} {g.participants === 1 ? "participante" : "participantes"}
+                              {g.is_admin && " · você é admin"}
+                            </p>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs cursor-pointer shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={g.ai_enabled}
+                              onChange={(e) => updateGroup(g.id, { ai_enabled: e.target.checked })}
+                              className="accent-emerald-600"
+                            />
+                            IA ativa
+                          </label>
+                        </div>
+
+                        {g.ai_enabled && (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5 border-t border-white/10 pt-2.5">
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                Quem responde
+                              </label>
+                              <select
+                                value={g.chatbot_id ?? ""}
+                                onChange={(e) => updateGroup(g.id, { chatbot_id: e.target.value || null })}
+                                className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none"
+                              >
+                                <option value="">Mesmo agente do número</option>
+                                {chatbots.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex items-end">
+                              <label className="flex items-start gap-2 text-xs cursor-pointer pb-1">
+                                <input
+                                  type="checkbox"
+                                  checked={g.only_mention}
+                                  onChange={(e) => updateGroup(g.id, { only_mention: e.target.checked })}
+                                  className="accent-emerald-600 mt-0.5"
+                                />
+                                <span>
+                                  <span className="flex items-center gap-1">
+                                    <AtSign size={11} /> Só quando marcarem
+                                  </span>
+                                  <span className="block text-[10px] text-gray-500 leading-tight mt-0.5">
+                                    Desmarcado, ela responde a tudo no grupo.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

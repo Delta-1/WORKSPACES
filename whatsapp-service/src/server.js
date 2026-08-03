@@ -516,6 +516,103 @@ async function syncContacts(list, companyId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// GRUPOS
+//
+// A IA é ligada grupo a grupo. Um grupo que não está na tabela — ou está com
+// ai_enabled = false — é ignorado exatamente como sempre foi; ligar é uma
+// decisão explícita do gestor, não um efeito colateral de conectar o número.
+// ---------------------------------------------------------------------------
+
+/** Lê os grupos de que o número participa e guarda/atualiza no banco. */
+async function syncGroups(sock, numberId, companyId) {
+  if (!supabase || !sock) return [];
+  let mapa;
+  try {
+    mapa = await sock.groupFetchAllParticipating();
+  } catch (e) {
+    console.error("syncGroups: não consegui listar os grupos:", e?.message || e);
+    return [];
+  }
+  const meu = (sock.user?.id || "").split(":")[0];
+  const grupos = Object.values(mapa ?? {});
+  const linhas = grupos.map((g) => {
+    const eu = (g.participants ?? []).find((p) => String(p.id || "").split("@")[0] === meu);
+    return {
+      company_id: companyId ?? null,
+      number_id: numberId,
+      jid: g.id,
+      subject: g.subject || "Grupo sem nome",
+      participants: (g.participants ?? []).length,
+      is_admin: eu?.admin === "admin" || eu?.admin === "superadmin",
+      synced_at: new Date().toISOString(),
+    };
+  });
+  if (!linhas.length) return [];
+  // upsert por (number_id, jid): o nome e a contagem se atualizam sozinhos, e as
+  // escolhas do gestor (ai_enabled, chatbot_id, only_mention) não são tocadas.
+  const { error } = await supabase.from("whatsapp_groups").upsert(linhas, { onConflict: "number_id,jid" });
+  if (error) console.error("syncGroups: gravação falhou:", error.message || error);
+  return linhas;
+}
+
+// Configuração do grupo, com cache curto: chega mensagem de grupo o tempo todo e
+// não dá para consultar o banco a cada uma.
+const groupCache = new Map(); // jid -> { at, row }
+async function getGroupConfig(numberId, jid) {
+  const chave = `${numberId}:${jid}`;
+  const hit = groupCache.get(chave);
+  if (hit && Date.now() - hit.at < 30000) return hit.row;
+  if (!supabase) return null;
+  const { data } = await supabase
+    .from("whatsapp_groups")
+    .select("*")
+    .eq("number_id", numberId)
+    .eq("jid", jid)
+    .maybeSingle();
+  groupCache.set(chave, { at: Date.now(), row: data ?? null });
+  return data ?? null;
+}
+
+/** O grupo como "contato", para reaproveitar conversa, histórico e caixa de entrada. */
+async function upsertGroupContact(jid, subject, companyId) {
+  if (!supabase) return null;
+  const { data: existing } = await supabase
+    .from("contacts").select("*").eq("company_id", companyId).eq("jid", jid).maybeSingle();
+  if (existing) {
+    // O nome do grupo muda; o cadastro acompanha.
+    if (subject && existing.name !== subject) {
+      await supabase.from("contacts").update({ name: subject, is_group: true }).eq("id", existing.id);
+      existing.name = subject;
+    }
+    return existing;
+  }
+  const { data } = await supabase
+    .from("contacts")
+    .insert({ phone: jid.split("@")[0], name: subject || "Grupo", company_id: companyId, jid, is_group: true })
+    .select("*")
+    .single();
+  return data;
+}
+
+/**
+ * A mensagem chama o bot?
+ *
+ * Em grupo, responder tudo é spam — por isso o padrão é só quando marcam o
+ * número (@) ou respondem uma mensagem dele.
+ */
+function mencionaONumero(sock, inner, msg) {
+  const meu = (sock.user?.id || "").split(":")[0];
+  const lid = (sock.user?.lid || "").split(":")[0];
+  const ctx = inner.extendedTextMessage?.contextInfo || inner.imageMessage?.contextInfo || inner.documentMessage?.contextInfo || msg.message?.contextInfo || null;
+  const marcados = ctx?.mentionedJid ?? [];
+  if (marcados.some((j) => { const n = String(j).split("@")[0]; return n === meu || (lid && n === lid); })) return true;
+  // Respondeu uma mensagem NOSSA (o "participant" da citação é o nosso número).
+  const citado = ctx?.participant ? String(ctx.participant).split("@")[0] : null;
+  if (citado && (citado === meu || (lid && citado === lid))) return true;
+  return false;
+}
+
 async function findOrCreateOpenConversation(contactId, numberId, sectorId, companyId) {
   if (!supabase) return { conversation: null, created: false };
   // Estilo WhatsApp: UMA conversa por pessoa. Reaproveita a conversa mais
@@ -1059,14 +1156,14 @@ const SYSTEM_RULES =
   "6. Listas/opções vão em TEXTO organizado (a pessoa lê com calma), não em áudio.\n" +
   "7. Seja proativo: quando fizer sentido, ANTECIPE o que a pessoa precisa e ofereça 1–2 sugestões úteis do que você pode fazer.";
 
-async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null) {
+async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null) {
   const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
   const companyBlock = companyContextBlock(await getCompanyInfo(companyId));
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${SYSTEM_RULES}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${grupo ? grupoBlock(grupo) : ""}${SYSTEM_RULES}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
@@ -1514,23 +1611,50 @@ const MEMORIA_ROTULOS = {
   observacoes: "Observações",
 };
 
+// Instruções de convívio em GRUPO. Um bot que fala como se fosse um atendimento
+// 1:1 dentro de um grupo é insuportável — daí as regras serem explícitas.
+function grupoBlock(nomeDoGrupo) {
+  return (
+    `\n\nVOCÊ ESTÁ NUM GRUPO DE WHATSAPP${nomeDoGrupo ? ` chamado "${nomeDoGrupo}"` : ""}, com VÁRIAS pessoas.\n` +
+    `- Cada mensagem vem no formato "Nome: texto". Esse é o nome de QUEM FALOU — responda a essa pessoa, chamando-a pelo nome.\n` +
+    `- NÃO escreva "Nome:" antes da sua resposta; escreva só o que você quer dizer.\n` +
+    `- Seja curto. Grupo não é atendimento particular: uma ou duas frases resolvem.\n` +
+    `- Não cumprimente o grupo a cada mensagem nem se apresente de novo.\n` +
+    `- Você não está falando sozinho com ninguém: se o assunto for pessoal (dados, pagamento, documento), chame a pessoa no privado em vez de expor no grupo.\n` +
+    `- Se a conversa claramente não é com você (os outros conversando entre si), FIQUE QUIETO: responda exatamente [[NADA]] e nada mais. Isso não é enviado ao grupo — é o seu jeito de não interromper.`
+  );
+}
+
 // O que já foi aprendido sobre a pessoa entra no prompt de toda conversa. É o
 // que faz a Nina "lembrar": o histórico é cortado, o cadastro do contato não.
 async function contactMemoryBlock(conv) {
   if (!supabase || !conv?.contact_id) return "";
   try {
-    const { data } = await supabase.from("contacts").select("name,memory").eq("id", conv.contact_id).maybeSingle();
+    const { data } = await supabase.from("contacts").select("name,memory,is_group,billing_exempt").eq("id", conv.contact_id).maybeSingle();
+    // Grupo não tem "memória de pessoa" — tem regras de convivência.
+    if (data?.is_group) return grupoBlock(data.name);
+    // ADM: não paga nada. O bloqueio de verdade é no banco; isto aqui é para ela
+    // não ficar falando de preço com quem está só testando.
+    const admBlock = data?.billing_exempt
+      ? `\n\nESTA PESSOA É ADM — usa tudo de graça.\n` +
+        `- NÃO fale de preço, de pips, de saldo nem de pagamento com ela. Nem para avisar que "seria" tanto.\n` +
+        `- NÃO chame pips_cobrar, pips_comprar nem pips_saldo. Faça o serviço direto.\n` +
+        `- Se ela perguntar de valores, responda que o acesso dela é liberado e siga.`
+      : "";
     const mem = data?.memory && typeof data.memory === "object" ? data.memory : {};
     const linhas = Object.entries(MEMORIA_ROTULOS)
       .filter(([k]) => String(mem[k] ?? "").trim())
       .map(([k, rotulo]) => `- ${rotulo}: ${String(mem[k]).trim()}`);
     const nome = data?.name && !/^\+?\d[\d\s-]*$/.test(data.name) ? data.name : null;
-    if (!nome && !linhas.length) return "";
+    // Sem nome e sem memória não há o que lembrar — mas a isenção do ADM vale
+    // desde a primeira mensagem, então ela vai de qualquer jeito.
+    if (!nome && !linhas.length) return admBlock;
     return (
       `\n\nVOCÊ JÁ CONHECE ESTA PESSOA${nome ? ` — é ${nome}` : ""}. O que você guardou dela:\n` +
       (linhas.join("\n") || "- (só o nome)") +
       `\nUse isso: não pergunte de novo o que já está aqui — CONFIRME rapidinho quando for usar ("continua na mesma universidade?"). ` +
-      `Se ela corrigir ou contar algo novo, salve com memoria_salvar.`
+      `Se ela corrigir ou contar algo novo, salve com memoria_salvar.` +
+      admBlock
     );
   } catch (e) {
     console.error("contactMemoryBlock falhou:", e?.message || e);
@@ -2843,6 +2967,14 @@ async function startSession(numberId) {
         s.state.qrDataUrl = null;
         s.state.phoneNumber = sock?.user?.id?.split(":")[0] ?? null;
         await setNumberStatus(numberId, "connected", s.state.phoneNumber);
+        // Lista os grupos assim que conecta, para o gestor já encontrá-los na
+        // tela sem precisar mandar sincronizar. Nenhum vem com a IA ligada.
+        try {
+          const { number } = await getNumberConfig(numberId);
+          void syncGroups(sock, numberId, number?.company_id ?? null);
+        } catch (e) {
+          console.error("sync de grupos ao conectar falhou:", e?.message || e);
+        }
       }
       if (connection === "close") {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -2865,8 +2997,12 @@ async function startSession(numberId) {
       if (type !== "notify") return;
       for (const msg of messages) {
         const jid = msg.key.remoteJid;
-        // ignore groups / broadcasts — this is 1:1 customer support
-        if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+        // Status e newsletter nunca interessam.
+        if (!jid || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+        // GRUPO: só entra se o gestor tiver ligado a IA NESTE grupo. Sem isso,
+        // segue ignorado como sempre foi — o atendimento é 1:1 por padrão.
+        const grupo = jid.endsWith("@g.us") ? await getGroupConfig(numberId, jid) : null;
+        if (jid.endsWith("@g.us") && !grupo?.ai_enabled) continue;
         // Mensagem que VOCÊ enviou pelo app oficial do WhatsApp → espelha no site.
         if (msg.key.fromMe) {
           await logOutgoingEcho(sock, numberId, msg, jid);
@@ -2925,11 +3061,26 @@ async function startSession(numberId) {
         const altJid = msg.key.remoteJidAlt || null;
         const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
         const contactJid = jid; // responde pelo mesmo canal que recebeu
+        const ehGrupo = !!grupo;
+        // Em grupo quem fala é um participante, não o "dono" do chat. O nome vai
+        // junto do texto: sem isso a IA lê uma conversa de várias pessoas como se
+        // fosse uma só e responde à pessoa errada.
+        const autorNome = msg.pushName || (msg.key.participant || "").split("@")[0] || "alguém";
+        const textoRegistrado = ehGrupo && text ? `${autorNome}: ${text}` : text;
 
         try {
-          const { number, chatbot } = await getNumberConfig(numberId);
+          const { number, chatbot: chatbotDoNumero } = await getNumberConfig(numberId);
           const cid = number?.company_id ?? null;
-          const contact = await upsertContact(phone, msg.pushName || null, cid, contactJid);
+          // O grupo pode ter um agente próprio; sem isso, usa o do número.
+          let chatbot = chatbotDoNumero;
+          if (ehGrupo && grupo.chatbot_id) {
+            const { data: agenteDoGrupo } = await supabase.from("chatbots").select("*").eq("id", grupo.chatbot_id).maybeSingle();
+            if (agenteDoGrupo) chatbot = agenteDoGrupo;
+          }
+          const contact = ehGrupo
+            ? await upsertGroupContact(jid, grupo.subject, cid)
+            : await upsertContact(phone, msg.pushName || null, cid, contactJid);
+          if (!contact) continue;
           void fetchAvatar(sock, contactJid, contact); // foto de perfil (best-effort)
           const { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
@@ -2937,12 +3088,13 @@ async function startSession(numberId) {
             number?.sector_id ?? null,
             cid
           );
-          const inMsgId = await logMessage(conversation.id, "in", text, null, media, cid);
+          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid);
 
           // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
           // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos
           // o arquivo, tentamos ler a DATA, damos baixa (pago) e confirmamos.
-          if (media && (media.type === "image" || media.type === "document") && contact?.id) {
+          // Em GRUPO não: uma foto qualquer no grupo daria baixa numa cobrança.
+          if (!ehGrupo && media && (media.type === "image" || media.type === "document") && contact?.id) {
             try {
               markSeen(); // pode ser um comprovante — se for, o Cobrador confirma na hora
               const handled = await handleBillingProof({ sock, jid: contactJid, conversation, cid, contactId: contact.id, media, imageBuffer, mime: node?.mimetype || null });
@@ -2953,7 +3105,7 @@ async function startSession(numberId) {
           }
           // COBRADOR: o cliente RESPONDEU → para o follow-up (bot não enche mais o
           // saco). Marca responded_at nas cobranças em aberto já enviadas a ele.
-          if (contact?.id && cid) {
+          if (!ehGrupo && contact?.id && cid) {
             supabase.from("billing_targets").update({ responded_at: new Date().toISOString() })
               .eq("company_id", cid).eq("contact_id", contact.id).is("responded_at", null)
               .in("status", ["enviado", "lembrete", "atrasado"]).then(() => {}, () => {});
@@ -2962,7 +3114,8 @@ async function startSession(numberId) {
           // /configia — painel de configuração do número pelo WhatsApp. Intercepta
           // ANTES do bot: se há sessão ativa ou a pessoa mandou "/configia",
           // conduz o login + menu e NÃO deixa o bot de atendimento responder.
-          if (text && (configiaSessions.has(contactJid) || text.trim().toLowerCase() === "/configia")) {
+          // Nunca em grupo: o painel pede e-mail e senha.
+          if (!ehGrupo && text && (configiaSessions.has(contactJid) || text.trim().toLowerCase() === "/configia")) {
             try {
               const replies = await handleConfigia({ jid: contactJid, text, numberId, number, companyId: cid });
               if (replies && replies.length) {
@@ -2980,7 +3133,7 @@ async function startSession(numberId) {
           // LINHA DO COPILOTO: número marcado como is_copilot. Se o contato ainda
           // NÃO tem acesso, conduz o LOGIN (e-mail, senha, código da empresa) antes
           // de liberar — o bot de atendimento NÃO responde nessa linha.
-          if (number?.is_copilot === true && contact?.copilot_access !== true) {
+          if (!ehGrupo && number?.is_copilot === true && contact?.copilot_access !== true) {
             try {
               const replies = await handleCopilotAuth({ jid: contactJid, text, numberId, number, companyId: cid, contact });
               if (replies && replies.length) {
@@ -2995,7 +3148,7 @@ async function startSession(numberId) {
 
           // Contato liberado (pelo gestor no app OU por login na linha do copiloto)
           // → COPILOTO. O bot de atendimento comum NÃO é o copiloto.
-          const isCopilot = contact?.copilot_access === true;
+          const isCopilot = !ehGrupo && contact?.copilot_access === true;
           // Escopo por PERMISSÃO: se a pessoa entrou por login na linha do copiloto
           // (copilot_profile_id), o copiloto respeita o cargo/permissões dela.
           let actor = null;
@@ -3017,7 +3170,9 @@ async function startSession(numberId) {
           const agentForReply = copilotAgent || chatbot;
           // IA CONTÍNUA: responde sempre, NÃO fica anunciando "vou encerrar", e
           // lembra das conversas anteriores do contato. O copiloto é sempre contínuo.
-          const continuous = isCopilot || agentForReply?.continuous === true;
+          // Grupo também: ninguém "encerra atendimento" num grupo, e o bot não
+          // pode ficar se despedindo porque alguém escreveu "era só isso".
+          const continuous = isCopilot || ehGrupo || agentForReply?.continuous === true;
           // Agente do Labs com capacidades → usa ferramentas para TODOS deste número.
           const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
           const useTools = isCopilot || agentHasCaps;
@@ -3025,19 +3180,27 @@ async function startSession(numberId) {
           // O bot fica em SILÊNCIO quando um humano assumiu (assignee_id) ou quando
           // o atendimento já foi passado/encerrado por ele (bot_paused) — assim ele
           // não fica naquele loop chato de responder por cima do atendente.
-          const botOn =
-            number?.auto_reply &&
-            chatbot?.enabled &&
-            number?.bot_mode !== "label" &&
-            !conversation.bot_paused &&
-            !conversation.assignee_id;
+          // Em GRUPO quem manda é a configuração do grupo, não a do número: o
+          // gestor pode querer a IA num grupo sem ligá-la para os clientes 1:1.
+          // E, por padrão, ela só fala quando marcam o número (@) ou respondem
+          // uma mensagem dela — senão vira um bot falando por cima de todo mundo.
+          const chamaram = ehGrupo ? (!grupo.only_mention || mencionaONumero(sock, inner, msg)) : true;
+          const botOn = ehGrupo
+            ? chatbot?.enabled && chamaram && !conversation.bot_paused && !conversation.assignee_id
+            : number?.auto_reply &&
+              chatbot?.enabled &&
+              number?.bot_mode !== "label" &&
+              !conversation.bot_paused &&
+              !conversation.assignee_id;
           if (isCopilot || botOn) {
             markSeen(); // só agora, que o bot vai mesmo processar e responder
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
             const botElevenKey = agentForReply?.elevenlabs_key || elevenKey;
             const voiceReplyOn = agentForReply?.voice_reply !== false; // default ligado
-            let customerText = text;
+            // Em grupo a IA recebe "Fulano: mensagem" — é o que ela precisa para
+            // saber a quem está respondendo no meio de várias pessoas.
+            let customerText = textoRegistrado;
             if (!customerText && wasAudio && audioBuffer) {
               customerText = await transcribeAudio(audioBuffer, node?.mimetype, botElevenKey);
               // FALLBACK: sem ElevenLabs (ou se falhou), transcreve pela IA do bot
@@ -3091,8 +3254,10 @@ async function startSession(numberId) {
             }
             // Saudação apenas na abertura da conversa (só no bot de atendimento;
             // se houver fluxograma, é ELE que abre a conversa).
-            const hasFlow = !isCopilot && Array.isArray(chatbot?.flow?.nodes) && chatbot.flow.nodes.length > 0;
-            if (!isCopilot && created && chatbot?.greeting && !hasFlow) {
+            // Fluxograma e saudação são de atendimento 1:1 — num grupo o bot
+            // abriria um funil no meio da conversa dos outros.
+            const hasFlow = !isCopilot && !ehGrupo && Array.isArray(chatbot?.flow?.nodes) && chatbot.flow.nodes.length > 0;
+            if (!isCopilot && !ehGrupo && created && chatbot?.greeting && !hasFlow) {
               await sendBotMessage(sock, jid, conversation.id, cid, { text: chatbot.greeting });
             }
             // Puxa as últimas mensagens p/ dar contexto ao bot. IA CONTÍNUA lembra
@@ -3115,7 +3280,7 @@ async function startSession(numberId) {
                 .map((m) => ({ role: m.direction === "in" ? "user" : "assistant", text: m.text }));
               // Remove a última mensagem se for exatamente a que estamos processando
               // agora (evita duplicar e confundir o bot).
-              if (history.length && history[history.length - 1].role === "user" && history[history.length - 1].text === (text || "")) {
+              if (history.length && history[history.length - 1].role === "user" && history[history.length - 1].text === (textoRegistrado || "")) {
                 history.pop();
               }
             } catch {
@@ -3149,11 +3314,14 @@ async function startSession(numberId) {
             } else if (customerText || imageBuffer) {
               // Todos os bots "enxergam" a imagem recebida (visão), mesmo sem texto.
               const agentImage = imageBuffer ? { buffer: imageBuffer, mime: node?.mimetype || "image/jpeg" } : null;
-              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage);
+              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage, ehGrupo ? grupo.subject : null);
             }
             // Se o bot já falou antes nesta conversa (ou já mandamos a saudação de
             // abertura), tira uma saudação repetida no começo da resposta.
             if (reply) reply = stripRepeatedGreeting(reply, history, created && !!chatbot?.greeting);
+            // Em grupo a IA pode escolher não interromper: [[NADA]] é o silêncio
+            // dela. Some aqui — nunca vai para o grupo.
+            if (ehGrupo && reply && /^\s*\[\[\s*NADA\s*\]\]\s*$/i.test(reply)) reply = null;
             // Assessor pessoal (relay p/ outro contato) + entrega de arquivos que o
             // copiloto decidiu mandar — mesma lógica reaproveitada pelos nós
             // "IA"/"Ferramenta" do fluxograma (deliverCopilotOutputs).
@@ -3308,7 +3476,10 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
     const { number } = await getNumberConfig(numberId);
     const cid = number?.company_id ?? null;
-    const contact = await upsertContact(phone, null, cid, jid);
+    // Num grupo, o "contato" é o próprio grupo — nunca o telefone do participante.
+    const contact = jid.endsWith("@g.us")
+      ? await upsertGroupContact(jid, (await getGroupConfig(numberId, jid))?.subject || null, cid)
+      : await upsertContact(phone, null, cid, jid);
     if (!contact) return;
     // IMPORTANTE: só REGISTRA a mensagem na conversa existente — NÃO reabre uma
     // conversa fechada. Reabrir aqui causava um loop: o sweep fechava e mandava
@@ -3531,6 +3702,25 @@ app.post("/disconnect", async (req, res) => {
   res.json(stateOf(String(numberId)));
 });
 
+// Relê os grupos direto do WhatsApp e atualiza a lista. As escolhas do gestor
+// (IA ligada, agente, só quando marcam) não são tocadas — só nome e participantes.
+app.post("/groups/sync", async (req, res) => {
+  const numberId = req.body?.numberId;
+  if (!numberId) return res.status(400).json({ error: "numberId é obrigatório." });
+  const s = getSession(String(numberId));
+  if (!s?.sock || s.state.status !== "connected") {
+    return res.status(400).json({ error: "Este número não está conectado. Conecte antes de listar os grupos." });
+  }
+  try {
+    const { number } = await getNumberConfig(String(numberId));
+    const grupos = await syncGroups(s.sock, String(numberId), number?.company_id ?? null);
+    groupCache.clear(); // o gestor pode ter acabado de mexer nas configurações
+    res.json({ ok: true, total: grupos.length });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 app.post("/send", async (req, res) => {
   const { numberId, to, text, senderId, media, messageId } = req.body ?? {};
   if (!to || (!text && !media?.url)) {
@@ -3714,6 +3904,9 @@ async function generateContactReport(conversation) {
       .eq("conversation_id", conversation.id)
       .maybeSingle();
     if (existing) return;
+    // Grupo não gera "relatório de atendimento" — não há um cliente para relatar.
+    const { data: ct } = await supabase.from("contacts").select("is_group").eq("id", conversation.contact_id).maybeSingle();
+    if (ct?.is_group) return;
     const { data: msgs } = await supabase
       .from("whatsapp_messages")
       .select("direction,text,media_type,at")
@@ -3775,6 +3968,10 @@ async function attendanceSweep() {
     // cliente recebe "como não tivemos retorno" várias vezes (o loop que ele viu).
     const farewellDone = new Set();
     for (const conv of stale || []) {
+      // GRUPO nunca é "atendimento": não se encerra por inatividade e, acima de
+      // tudo, ninguém quer o bot anunciando despedida no grupo da empresa.
+      const { data: ct } = await supabase.from("contacts").select("is_group").eq("id", conv.contact_id).maybeSingle();
+      if (ct?.is_group) continue;
       const info = await getCompanyInfo(conv.company_id);
       const minutes = Number(info?.auto_close_minutes || 0);
       if (minutes <= 0) continue;

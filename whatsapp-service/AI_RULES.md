@@ -37,6 +37,33 @@ Fonte de verdade: constante `SYSTEM_RULES` em `whatsapp-service/src/server.js`.
 - Pede um **arquivo de exemplo/modelo** quando a pessoa tiver, para se inspirar.
 - Entrega **.docx + PDF** (trabalhos) e **.pptx** (apresentações).
 
+## Grupos de WhatsApp
+
+O número lista os grupos de que participa (`whatsapp_groups`, atualizada ao
+conectar e pelo botão "Atualizar lista"). A IA é ligada **grupo a grupo**:
+grupo que não está na tabela — ou está com `ai_enabled = false` — continua sendo
+ignorado exatamente como sempre foi. Ligar é decisão explícita do gestor.
+
+Cada grupo escolhe **qual agente** responde (ou usa o do número) e se ela fala
+**só quando marcam** o número (@) ou respondem uma mensagem dela — que é o
+padrão. Sem isso um bot respondendo tudo vira spam no grupo.
+
+Sincronizar **não apaga** o que o gestor configurou: o upsert manda só nome,
+participantes e `is_admin`; `ai_enabled`, `chatbot_id` e `only_mention` ficam de pé.
+
+O grupo entra como um contato com `is_group = true`, então conversa, histórico,
+pausa do bot e a caixa de entrada funcionam sem nada novo. Em compensação, tudo
+que é de atendimento 1:1 fica **desligado** em grupo: saudação, fluxograma,
+encerramento por inatividade, relatório de contato, `/configia`, login do
+copiloto e a baixa automática de comprovante do Cobrador — uma foto qualquer no
+grupo não pode dar cobrança por paga.
+
+A IA recebe cada mensagem como `"Nome: texto"` (senão lê a conversa de dez
+pessoas como se fosse uma só) e ganha as regras de convívio no prompt: resposta
+curta, sem cumprimentar toda hora, assunto pessoal no privado. Quando a conversa
+claramente não é com ela, responde `[[NADA]]` — filtrado antes do envio, para
+poder ficar quieta sem inventar uma resposta.
+
 ## Documentos do Estúdio (Nina)
 
 A Nina produz **todos** os modelos do Estúdio → Documentos: currículo,
@@ -128,3 +155,16 @@ dele, o `MERCADOPAGO_ACCESS_TOKEN` da plataforma — que é o caso hoje.
 
 Na primeira conversa a Nina se apresenta, **pergunta o nome** e o guarda no
 contato (`salvar_nome_contato`), sem sobrescrever um nome já cadastrado.
+
+### Contato ADM — usa sem pagar
+
+`contacts.billing_exempt` marca quem usa os serviços de graça (quem testa a
+plataforma). O interruptor fica no perfil do contato, em Mensagens.
+
+A isenção é aplicada em `/api/pips`, o **único** ponto por onde o saldo se move:
+`debitar` devolve ok sem chamar `credits_debit`, `saldo` não consulta nada e
+`comprar` não gera pagamento. Não depende da IA lembrar — mesmo que ela chame a
+cobrança, nada é debitado e nada entra no extrato.
+
+No prompt ela ainda recebe a instrução de **não falar de preço, pips nem saldo**
+com esse contato, para não ficar anunciando valor a quem não vai pagar.

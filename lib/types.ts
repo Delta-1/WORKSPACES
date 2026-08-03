@@ -202,6 +202,10 @@ export type Contact = {
   avatar_url: string | null;
   copilot_access: boolean | null;
   remote_agent_id: string | null;
+  /** true = é um GRUPO de WhatsApp, não uma pessoa. */
+  is_group?: boolean | null;
+  /** ADM: usa os serviços da IA sem pagar — nenhum pip é debitado. */
+  billing_exempt?: boolean | null;
   created_at: string;
 };
 
@@ -305,6 +309,24 @@ export type WhatsappNumber = {
   status: string;
   created_at: string;
   updated_at: string;
+};
+
+/** Grupo de WhatsApp de que o número participa. A IA é ligada grupo a grupo. */
+export type WhatsappGroup = {
+  id: string;
+  company_id: string | null;
+  number_id: string;
+  jid: string;
+  subject: string | null;
+  participants: number;
+  is_admin: boolean;
+  ai_enabled: boolean;
+  /** Agente que responde neste grupo. Nulo = o chatbot do número. */
+  chatbot_id: string | null;
+  /** Só responde quando marcam o número (@) ou respondem uma mensagem dele. */
+  only_mention: boolean;
+  synced_at: string;
+  created_at: string;
 };
 
 export type WhatsappNumberAccess = {
