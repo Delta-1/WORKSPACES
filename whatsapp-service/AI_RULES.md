@@ -155,3 +155,16 @@ dele, o `MERCADOPAGO_ACCESS_TOKEN` da plataforma — que é o caso hoje.
 
 Na primeira conversa a Nina se apresenta, **pergunta o nome** e o guarda no
 contato (`salvar_nome_contato`), sem sobrescrever um nome já cadastrado.
+
+### Contato ADM — usa sem pagar
+
+`contacts.billing_exempt` marca quem usa os serviços de graça (quem testa a
+plataforma). O interruptor fica no perfil do contato, em Mensagens.
+
+A isenção é aplicada em `/api/pips`, o **único** ponto por onde o saldo se move:
+`debitar` devolve ok sem chamar `credits_debit`, `saldo` não consulta nada e
+`comprar` não gera pagamento. Não depende da IA lembrar — mesmo que ela chame a
+cobrança, nada é debitado e nada entra no extrato.
+
+No prompt ela ainda recebe a instrução de **não falar de preço, pips nem saldo**
+com esse contato, para não ficar anunciando valor a quem não vai pagar.

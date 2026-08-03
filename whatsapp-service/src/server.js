@@ -1630,20 +1630,31 @@ function grupoBlock(nomeDoGrupo) {
 async function contactMemoryBlock(conv) {
   if (!supabase || !conv?.contact_id) return "";
   try {
-    const { data } = await supabase.from("contacts").select("name,memory,is_group").eq("id", conv.contact_id).maybeSingle();
+    const { data } = await supabase.from("contacts").select("name,memory,is_group,billing_exempt").eq("id", conv.contact_id).maybeSingle();
     // Grupo não tem "memória de pessoa" — tem regras de convivência.
     if (data?.is_group) return grupoBlock(data.name);
+    // ADM: não paga nada. O bloqueio de verdade é no banco; isto aqui é para ela
+    // não ficar falando de preço com quem está só testando.
+    const admBlock = data?.billing_exempt
+      ? `\n\nESTA PESSOA É ADM — usa tudo de graça.\n` +
+        `- NÃO fale de preço, de pips, de saldo nem de pagamento com ela. Nem para avisar que "seria" tanto.\n` +
+        `- NÃO chame pips_cobrar, pips_comprar nem pips_saldo. Faça o serviço direto.\n` +
+        `- Se ela perguntar de valores, responda que o acesso dela é liberado e siga.`
+      : "";
     const mem = data?.memory && typeof data.memory === "object" ? data.memory : {};
     const linhas = Object.entries(MEMORIA_ROTULOS)
       .filter(([k]) => String(mem[k] ?? "").trim())
       .map(([k, rotulo]) => `- ${rotulo}: ${String(mem[k]).trim()}`);
     const nome = data?.name && !/^\+?\d[\d\s-]*$/.test(data.name) ? data.name : null;
-    if (!nome && !linhas.length) return "";
+    // Sem nome e sem memória não há o que lembrar — mas a isenção do ADM vale
+    // desde a primeira mensagem, então ela vai de qualquer jeito.
+    if (!nome && !linhas.length) return admBlock;
     return (
       `\n\nVOCÊ JÁ CONHECE ESTA PESSOA${nome ? ` — é ${nome}` : ""}. O que você guardou dela:\n` +
       (linhas.join("\n") || "- (só o nome)") +
       `\nUse isso: não pergunte de novo o que já está aqui — CONFIRME rapidinho quando for usar ("continua na mesma universidade?"). ` +
-      `Se ela corrigir ou contar algo novo, salve com memoria_salvar.`
+      `Se ela corrigir ou contar algo novo, salve com memoria_salvar.` +
+      admBlock
     );
   } catch (e) {
     console.error("contactMemoryBlock falhou:", e?.message || e);

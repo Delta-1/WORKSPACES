@@ -204,6 +204,8 @@ export type Contact = {
   remote_agent_id: string | null;
   /** true = é um GRUPO de WhatsApp, não uma pessoa. */
   is_group?: boolean | null;
+  /** ADM: usa os serviços da IA sem pagar — nenhum pip é debitado. */
+  billing_exempt?: boolean | null;
   created_at: string;
 };
 

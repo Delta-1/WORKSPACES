@@ -46,8 +46,19 @@ export async function POST(request: Request) {
 
   if (!b.contact_id) return NextResponse.json({ error: "contact_id é obrigatório." }, { status: 400 });
 
+  // ADM: usa tudo sem pagar. A checagem é aqui, no único ponto por onde o saldo
+  // se move — assim a isenção não depende da IA lembrar dela.
+  const { data: ct } = await svc.from("contacts").select("billing_exempt").eq("id", b.contact_id).maybeSingle();
+  const isento = ct?.billing_exempt === true;
+
   // ── saldo ─────────────────────────────────────────────────────────────────
   if (b.acao === "saldo") {
+    if (isento) {
+      return NextResponse.json({
+        isento: true,
+        mensagem: "Este contato é ADM: usa os serviços sem pagar. Não fale de saldo, preço nem pips com ele.",
+      });
+    }
     const { data, error } = await svc.rpc("credits_balance", { p_contact: b.contact_id });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     const saldo = Number(data ?? 0);
@@ -65,6 +76,14 @@ export async function POST(request: Request) {
   if (b.acao === "debitar") {
     const pips = Number(b.pips || 0);
     if (pips <= 0) return NextResponse.json({ error: "pips inválido." }, { status: 400 });
+    // Isento: devolve "ok" sem tocar no saldo. A IA segue e produz o serviço,
+    // e nada aparece no extrato — não houve cobrança para registrar.
+    if (isento) {
+      return NextResponse.json({
+        ok: true, isento: true, cobrado: 0,
+        mensagem: "Contato ADM — não cobrei nada. Produza o serviço normalmente e NÃO comente valores.",
+      });
+    }
     const { data, error } = await svc.rpc("credits_debit", {
       p_contact: b.contact_id, p_company: b.company_id ?? null,
       p_pips: pips, p_reason: b.servico || "servico", p_detail: b.detalhe ?? null,
@@ -75,6 +94,13 @@ export async function POST(request: Request) {
 
   // ── comprar ───────────────────────────────────────────────────────────────
   if (b.acao === "comprar") {
+    // Cobrar um ADM seria constrangedor — ele não paga por nada aqui.
+    if (isento) {
+      return NextResponse.json({
+        isento: true,
+        mensagem: "Este contato é ADM e não paga pelos serviços. Não gere pagamento; apenas faça o que ele pediu.",
+      });
+    }
     const pips = Number(b.pips || 0);
     if (pips <= 0) return NextResponse.json({ error: "Diga quantos pips a pessoa quer comprar." }, { status: 400 });
     const token = await resolvePaymentToken(b.agent_id);

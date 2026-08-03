@@ -24,7 +24,7 @@ type ContactReport = {
 };
 type ConvRow = Conversation & {
   group_id: string | null;
-  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group"> | null;
+  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt"> | null;
 };
 
 /** Avatar da conversa. Grupo ganha ícone próprio — não a inicial do nome. */
@@ -228,7 +228,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     }
     const { data } = await supabase
       .from("conversations")
-      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id, is_group)")
+      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id, is_group, billing_exempt)")
       .eq("company_id", profile.company_id)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
@@ -1825,7 +1825,7 @@ function ContactProfileModal({
   onSaved,
   onAccessMachine,
 }: {
-  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group">;
+  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt">;
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -1835,6 +1835,7 @@ function ContactProfileModal({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copilot, setCopilot] = useState(Boolean(contact.copilot_access));
+  const [exempt, setExempt] = useState(Boolean(contact.billing_exempt));
   const [machines, setMachines] = useState<{ id: string; name: string }[]>([]);
   const [linkedId, setLinkedId] = useState<string>(contact.remote_agent_id ?? "");
   const phoneDigits = (contact.phone || "").replace(/\D/g, "");
@@ -1855,6 +1856,16 @@ function ContactProfileModal({
     setSaving(true);
     await supabase.from("contacts").update({ name: name.trim() || null }).eq("id", contact.id);
     setSaving(false);
+    onSaved();
+  }
+
+  // ADM: usa os serviços da IA sem pagar. Quem barra a cobrança de verdade é a
+  // rota de créditos (nada é debitado); aqui é só o interruptor.
+  async function toggleExempt() {
+    if (!supabase) return;
+    const next = !exempt;
+    setExempt(next);
+    await supabase.from("contacts").update({ billing_exempt: next }).eq("id", contact.id);
     onSaved();
   }
 
@@ -1953,6 +1964,26 @@ function ContactProfileModal({
                 <Bot size={14} className={copilot ? "text-indigo-300" : "text-gray-400"} /> Copiloto IA no WhatsApp
               </span>
               <span className={`text-[11px] font-semibold ${copilot ? "text-indigo-300" : "text-gray-500"}`}>{copilot ? "LIGADO" : "desligado"}</span>
+            </button>
+          )}
+          {/* ADM: usa os serviços da IA sem pagar. Para quem está testando. */}
+          {canManage && !contact.is_group && (
+            <button
+              onClick={toggleExempt}
+              className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 border cursor-pointer transition-colors ${
+                exempt ? "border-amber-500 bg-amber-950/25" : "border-white/10 bg-white/5 hover:bg-white/10"
+              }`}
+              title="Este contato usa os serviços da IA sem pagar: nenhum pip é debitado e ela não fala de preço com ele"
+            >
+              <span className="flex flex-col items-start gap-0.5 text-left">
+                <span className="flex items-center gap-2 text-sm">
+                  <Star size={14} className={exempt ? "text-amber-300" : "text-gray-400"} /> ADM — usa sem pagar
+                </span>
+                <span className="text-[10px] text-gray-500 leading-tight">
+                  Não gasta pips e a IA nem comenta preço. Para quem testa.
+                </span>
+              </span>
+              <span className={`text-[11px] font-semibold shrink-0 ${exempt ? "text-amber-300" : "text-gray-500"}`}>{exempt ? "LIGADO" : "desligado"}</span>
             </button>
           )}
           {/* Vínculo com uma máquina (acesso remoto): este contato é dono de um
