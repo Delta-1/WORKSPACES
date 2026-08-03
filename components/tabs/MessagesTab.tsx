@@ -24,8 +24,28 @@ type ContactReport = {
 };
 type ConvRow = Conversation & {
   group_id: string | null;
-  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id"> | null;
+  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group"> | null;
 };
+
+/** Avatar da conversa. Grupo ganha ícone próprio — não a inicial do nome. */
+function ConvAvatar({ c }: { c: ConvRow["contacts"] }) {
+  if (c?.avatar_url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />;
+  }
+  if (c?.is_group) {
+    return (
+      <div className="w-8 h-8 rounded-full bg-sky-900/60 text-sky-300 flex items-center justify-center shrink-0">
+        <Users size={14} />
+      </div>
+    );
+  }
+  return (
+    <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">
+      {contactLabel(c).charAt(0).toUpperCase()}
+    </div>
+  );
+}
 
 function contactLabel(c?: { name?: string | null; phone?: string | null } | null): string {
   if (!c) return "Contato";
@@ -208,7 +228,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     }
     const { data } = await supabase
       .from("conversations")
-      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id)")
+      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id, is_group)")
       .eq("company_id", profile.company_id)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
@@ -885,12 +905,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   function convCard(c: ConvRow, compact = false) {
     return (
       <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-2 py-1.5 px-2 text-left rounded-lg cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
-        {c.contacts?.avatar_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={c.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
-        ) : (
-          <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">{contactLabel(c.contacts).charAt(0).toUpperCase()}</div>
-        )}
+        <ConvAvatar c={c.contacts} />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
           {!compact && (c.status === "espera" || c.status === "atendendo" ? <div className="mt-0.5"><StatusTag status={c.status} small /></div> : <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>)}
@@ -1074,14 +1089,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             visibleConvs.map((c) => (
               <div key={c.id} className={`group flex items-center gap-2 px-2 mx-1 rounded-lg hover:bg-white/5 ${selConvId === c.id ? "bg-emerald-950/30" : ""}`}>
                 <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-1.5 text-left cursor-pointer">
-                  {c.contacts?.avatar_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={c.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-[11px] font-bold shrink-0">
-                      {contactLabel(c.contacts).charAt(0).toUpperCase()}
-                    </div>
-                  )}
+                  <ConvAvatar c={c.contacts} />
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
                     {c.status === "espera" || c.status === "atendendo" ? (
@@ -1157,14 +1165,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 className={`flex items-center gap-2.5 min-w-0 flex-1 text-left ${selConv ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
               >
                 {selConv ? (
-                  selConv.contacts?.avatar_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={selConv.contacts.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-emerald-900/60 flex items-center justify-center text-xs font-bold shrink-0">
-                      {contactLabel(selConv.contacts).charAt(0).toUpperCase()}
-                    </div>
-                  )
+                  <ConvAvatar c={selConv.contacts} />
                 ) : (
                   <Users size={16} className="text-emerald-400 shrink-0" />
                 )}
@@ -1824,7 +1825,7 @@ function ContactProfileModal({
   onSaved,
   onAccessMachine,
 }: {
-  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id">;
+  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group">;
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -1888,7 +1889,7 @@ function ContactProfileModal({
     <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <h3 className="text-sm font-bold">Perfil do contato</h3>
+          <h3 className="text-sm font-bold">{contact.is_group ? "Grupo de WhatsApp" : "Perfil do contato"}</h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">
             <X size={16} />
           </button>
@@ -1897,6 +1898,10 @@ function ContactProfileModal({
           {contact.avatar_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={contact.avatar_url} alt="" className="w-20 h-20 rounded-full object-cover" />
+          ) : contact.is_group ? (
+            <div className="w-20 h-20 rounded-full bg-sky-900/60 text-sky-300 flex items-center justify-center">
+              <Users size={30} />
+            </div>
           ) : (
             <div className="w-20 h-20 rounded-full bg-emerald-900/60 flex items-center justify-center text-2xl font-bold">
               {contactLabel(contact).charAt(0).toUpperCase()}
@@ -1922,11 +1927,21 @@ function ContactProfileModal({
           )}
         </div>
         <div className="px-5 pb-5 space-y-2">
-          <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2.5">
-            <Phone size={14} className="text-emerald-400 shrink-0" />
-            <span className="text-sm">{phonePretty}</span>
-          </div>
-          {canManage && (
+          {contact.is_group ? (
+            <div className="flex items-start gap-2 bg-white/5 rounded-lg px-3 py-2.5">
+              <Users size={14} className="text-sky-400 shrink-0 mt-0.5" />
+              <span className="text-[12px] text-gray-400 leading-snug">
+                Este é um grupo de WhatsApp. Para ligar ou desligar a IA nele, vá em <b>WhatsApp</b> → o número → <b>Grupos deste número</b>.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2.5">
+              <Phone size={14} className="text-emerald-400 shrink-0" />
+              <span className="text-sm">{phonePretty}</span>
+            </div>
+          )}
+          {/* Copiloto e máquina são de PESSOA — não fazem sentido num grupo. */}
+          {canManage && !contact.is_group && (
             <button
               onClick={toggleCopilot}
               className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 border cursor-pointer transition-colors ${
@@ -1942,7 +1957,7 @@ function ContactProfileModal({
           )}
           {/* Vínculo com uma máquina (acesso remoto): este contato é dono de um
               computador → dá pra acessar a máquina dele direto daqui. */}
-          {canManage && (
+          {canManage && !contact.is_group && (
             <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <MonitorIcon size={14} className="text-sky-400 shrink-0" /> Computador do contato
