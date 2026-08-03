@@ -1259,7 +1259,7 @@ async function walkFlow({ sock, jid, conversation, chatbot, customerText, cid, h
       if (cap && customerText) {
         try {
           const scoped = { ...chatbot, capabilities: [cap], instructions: [chatbot?.instructions, n.data?.extra].filter(Boolean).join("\n") };
-          const out = await runCopilotReply(conversation.company_id, scoped, customerText, history, false, null);
+          const out = await runCopilotReply(conversation.company_id, scoped, customerText, history, false, null, conversation);
           await deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, out);
           if (out.reply) { await send(out.reply); sentAnything = true; }
         } catch (e) {
@@ -1297,7 +1297,7 @@ async function walkFlow({ sock, jid, conversation, chatbot, customerText, cid, h
       const agentHasCaps = Array.isArray(chatbot?.capabilities) && chatbot.capabilities.length > 0;
       let reply = null;
       if (agentHasCaps) {
-        const out = await runCopilotReply(conversation.company_id, chatbot, customerText, history, false, null);
+        const out = await runCopilotReply(conversation.company_id, chatbot, customerText, history, false, null, conversation);
         reply = out.reply;
         await deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, out);
       } else {
@@ -1423,6 +1423,53 @@ async function flowTimerSweep() {
 // quais perguntas fazer, sem precisar de deploy deste serviço. Cache de 10 min
 // porque a lista muda raramente e cada mensagem poderia disparar uma consulta.
 // ---------------------------------------------------------------------------
+// Pega a última mídia que a PESSOA mandou nesta conversa e devolve como dataURL.
+// É assim que a foto do currículo (e o arquivo-modelo da monografia) chegam até
+// o gerador: a pessoa manda a imagem no WhatsApp e a Nina a referencia.
+async function lastIncomingMedia(conv, kinds = ["image"]) {
+  if (!supabase || !conv?.id) return null;
+  const { data } = await supabase
+    .from("whatsapp_messages")
+    .select("media_url,media_type,media_mime,media_name")
+    .eq("conversation_id", conv.id)
+    .eq("direction", "in")
+    .in("media_type", kinds)
+    .not("media_url", "is", null)
+    .order("at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data?.media_url) return null;
+  try {
+    const resp = await fetch(data.media_url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const mime = data.media_mime || (data.media_type === "image" ? "image/jpeg" : "application/octet-stream");
+    return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, buffer: buf, mime, name: data.media_name, type: data.media_type };
+  } catch (e) {
+    console.error("lastIncomingMedia falhou:", e?.message || e);
+    return null;
+  }
+}
+
+// Fala com /api/pips no site. Todo movimento de saldo passa por lá (e de lá
+// para as funções do banco) — nunca por conta feita aqui ou pela IA.
+async function pipsApi(payload) {
+  if (!APP_URL || !SERVICE_SECRET) return { error: "Pagamentos indisponíveis (serviço sem endereço do site ou sem segredo)." };
+  try {
+    const resp = await fetch(`${APP_URL}/api/pips`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-service-secret": SERVICE_SECRET },
+      body: JSON.stringify(payload),
+    });
+    const out = await resp.json();
+    if (!resp.ok && !out?.error) return { error: `Falha na chamada (HTTP ${resp.status}).` };
+    return out;
+  } catch (e) {
+    console.error("pipsApi falhou:", e?.message || e);
+    return { error: "Não consegui falar com o sistema de créditos agora." };
+  }
+}
+
 let docModelsCache = { at: 0, data: null };
 async function fetchDocModels() {
   if (!APP_URL) return null;
@@ -1619,13 +1666,15 @@ const COPILOT_TOOLS = [
   {
     name: "documento_previa",
     description:
-      "Envia uma IMAGEM de prévia do modelo para a pessoa VER como o documento vai ficar, e aprovar antes de você produzir. Use logo depois que ela escolher o modelo (e a variação, quando houver). " +
-      "Depois de enviar, PERGUNTE se ela aprova ou se quer ver outro visual. Só produza o documento depois do 'pode fazer'.",
+      "Envia IMAGEM(NS) de prévia do modelo para a pessoa VER como o documento vai ficar e aprovar antes de você produzir. Use logo depois que ela escolher o modelo. " +
+      "Se o modelo tiver variações (4 temas de currículo, 4 normas de monografia), SEMPRE ofereça mostrar todas — passe todas=true e ela compara de uma vez. " +
+      "Depois de enviar, PERGUNTE qual ela prefere. Só produza o documento depois do 'pode fazer'.",
     input_schema: {
       type: "object",
       properties: {
         modelo: { type: "string", description: "id do modelo (ex.: curriculo, contrato, orcamento)" },
         variacao: { type: "string", description: "id da variação, quando houver (ex.: executive no currículo, apa-upds na monografia)" },
+        todas: { type: "boolean", description: "true = manda TODAS as variações de uma vez, para a pessoa comparar e escolher. Use quando ela pedir para ver todos os modelos, ou quando ainda não souber qual quer." },
       },
       required: ["modelo"],
     },
@@ -1642,8 +1691,64 @@ const COPILOT_TOOLS = [
         modelo: { type: "string", description: "id do modelo" },
         titulo: { type: "string", description: "nome do arquivo" },
         dados: { type: "object", description: "conteúdo do documento no formato do modelo (veja 'formato' em documento_modelos)" },
+        usar_foto_enviada: { type: "boolean", description: "só no currículo: true usa a ÚLTIMA foto que a pessoa mandou nesta conversa. Antes de gerar um currículo, PERGUNTE se ela quer foto; se sim, peça que mande a imagem e então passe true aqui." },
       },
       required: ["modelo", "dados"],
+    },
+  },
+  {
+    name: "salvar_nome_contato",
+    description:
+      "Guarda o NOME da pessoa no cadastro do contato, para você chamá-la pelo nome sempre e achar o saldo dela depois. " +
+      "Use assim que ela disser o nome, na primeira conversa. Se o cadastro já tiver um nome de verdade, não sobrescreva sem ela pedir.",
+    input_schema: { type: "object", properties: { nome: { type: "string" } }, required: ["nome"] },
+  },
+  // ---- PIPS (créditos dos serviços da Nina) ----
+  {
+    name: "pips_tabela",
+    description:
+      "Mostra quanto custa cada serviço em pips e em reais, e os pacotes de compra. Use ao se apresentar, quando perguntarem preço, ou ANTES de começar um serviço pago. Nunca invente valores — consulte aqui.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "pips_saldo",
+    description:
+      "Consulta o SALDO de pips da pessoa com quem você está falando. Use quando ela perguntar o saldo, mandar /saldo, ou antes de cobrar um serviço. NUNCA calcule saldo de cabeça — sempre consulte aqui, mesmo que ache que sabe o valor.",
+    input_schema: { type: "object", properties: { extrato: { type: "boolean", description: "true também traz as últimas movimentações" } } },
+  },
+  {
+    name: "pips_comprar",
+    description:
+      "Gera o pagamento para a pessoa comprar pips. metodo 'pix' devolve o código copia-e-cola e manda o QR Code como imagem; metodo 'cartao' devolve um link do Mercado Pago. " +
+      "Depois de gerar, avise que assim que o pagamento cair os pips entram sozinhos, e que ela pode pedir para você conferir.",
+    input_schema: {
+      type: "object",
+      properties: {
+        pips: { type: "number", description: "quantos pips ela quer comprar" },
+        metodo: { type: "string", description: "pix (padrão) ou cartao" },
+      },
+      required: ["pips"],
+    },
+  },
+  {
+    name: "pips_conferir",
+    description:
+      "Confere se um pagamento já caiu e credita os pips. Use quando a pessoa disser 'já paguei'. Passe o payment_id que veio do pips_comprar. Se ainda não caiu, avise com calma e ofereça conferir de novo em instantes.",
+    input_schema: { type: "object", properties: { payment_id: { type: "string" }, pips: { type: "number" } }, required: ["payment_id"] },
+  },
+  {
+    name: "pips_cobrar",
+    description:
+      "Debita os pips de um serviço DEPOIS que a pessoa confirmou. Fluxo obrigatório: (1) diga o preço em pips e em reais, (2) consulte pips_saldo, (3) PEÇA CONFIRMAÇÃO dizendo 'vou usar X pips do seu saldo de Y pips, posso?', (4) só com o 'pode' chame isto, (5) só então produza o documento. " +
+      "Se não houver saldo, a ferramenta recusa e informa quanto falta — aí ofereça a compra com pips_comprar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        servico: { type: "string", description: "id do serviço na tabela (monografia, trabalho, apresentacao)" },
+        pips: { type: "number", description: "quantos pips debitar (use o valor da tabela)" },
+        detalhe: { type: "string", description: "do que se trata, para o extrato (ex.: tema da monografia)" },
+      },
+      required: ["servico", "pips"],
     },
   },
   // ---- Logística Internacional (TransLog) ----
@@ -1721,6 +1826,76 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       if (!files.length) return { ok: false, message: "Gerei o texto mas falhei ao montar os arquivos." };
       return { ok: true, message: `Trabalho "${work.titulo}" pronto. Enviei o .docx (editável) e o .pdf. Diga o que quer ajustar que eu refaço.` };
     }
+    if (name === "salvar_nome_contato") {
+      const contato = ctx.conv?.contact_id;
+      const nome = String(input.nome || "").trim();
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      if (!nome) return { ok: false, message: "Nome vazio." };
+      const { data: atual } = await supabase.from("contacts").select("name,phone").eq("id", contato).maybeSingle();
+      // Só sobrescreve quando o que está lá é o telefone/placeholder — o nome
+      // que a pessoa deu antes vale mais que um novo palpite.
+      const semNome = !atual?.name || atual.name === atual.phone || /^\+?\d[\d\s-]*$/.test(atual.name);
+      if (!semNome) return { ok: true, message: `Já está salvo como "${atual.name}". Só troque se a pessoa pedir.`, nome: atual.name };
+      await supabase.from("contacts").update({ name: nome }).eq("id", contato);
+      return { ok: true, message: `Salvei o contato como "${nome}".`, nome };
+    }
+
+    // ---- PIPS ----
+    if (name === "pips_tabela") return pipsApi({ acao: "tabela" });
+    if (name === "pips_saldo") {
+      const contato = ctx.conv?.contact_id;
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      const saldo = await pipsApi({ acao: "saldo", contact_id: contato });
+      if (saldo?.error) return { ok: false, message: saldo.error };
+      if (!input.extrato) return saldo;
+      const ext = await pipsApi({ acao: "extrato", contact_id: contato });
+      return { ...saldo, extrato: ext?.extrato ?? [] };
+    }
+    if (name === "pips_comprar") {
+      const contato = ctx.conv?.contact_id;
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      const out = await pipsApi({
+        acao: "comprar", contact_id: contato, company_id: companyId,
+        agent_id: ctx.agentId ?? null, pips: Number(input.pips || 0), metodo: input.metodo === "cartao" ? "cartao" : "pix",
+      });
+      if (out?.error) return { ok: false, message: out.error };
+      // O QR vai como IMAGEM na conversa — é bem mais prático que só o código.
+      if (out.pix_qr_base64) {
+        try {
+          files.push({ name: `Pix ${out.pips} pips.png`, mime: "image/png", buffer: Buffer.from(out.pix_qr_base64, "base64") });
+        } catch { /* sem QR, o copia-e-cola resolve */ }
+      }
+      return {
+        ok: true,
+        ...out,
+        instrucao: out.metodo === "pix"
+          ? "Mandei o QR Code. Passe TAMBÉM o código copia-e-cola (pix_copia_e_cola) numa mensagem separada, sozinho, para a pessoa conseguir copiar. Avise que os pips entram sozinhos quando o pagamento cair, e que ela pode pedir para você conferir."
+          : "Passe o link para a pessoa pagar com cartão. Avise que os pips entram sozinhos assim que o pagamento for aprovado.",
+      };
+    }
+    if (name === "pips_conferir") {
+      const contato = ctx.conv?.contact_id;
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      const out = await pipsApi({
+        acao: "conferir", contact_id: contato, company_id: companyId,
+        agent_id: ctx.agentId ?? null, payment_id: String(input.payment_id || ""), pips: Number(input.pips || 0) || undefined,
+      });
+      if (out?.error) return { ok: false, message: out.error };
+      return out;
+    }
+    if (name === "pips_cobrar") {
+      const contato = ctx.conv?.contact_id;
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      const out = await pipsApi({
+        acao: "debitar", contact_id: contato, company_id: companyId,
+        pips: Number(input.pips || 0), servico: String(input.servico || "servico"), detalhe: input.detalhe || null,
+      });
+      if (out?.error) return { ok: false, message: out.error };
+      // A função do banco recusa sozinha quando falta saldo — a Nina nunca decide isso.
+      if (out.ok === false) return { ...out, instrucao: "Sem saldo suficiente. Diga quanto falta e ofereça comprar pips com pips_comprar. NÃO produza o serviço." };
+      return { ...out, instrucao: "Debitado. Agora sim pode produzir o serviço." };
+    }
+
     // ---- Estúdio → Documentos ----
     if (name === "documento_modelos") {
       const modelos = await fetchDocModels();
@@ -1735,25 +1910,36 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       // Modelos com variação têm uma imagem por variação (curriculo-executive,
       // monografia-abnt…); os demais têm uma só, com o id do modelo.
       const temVariacoes = Array.isArray(m.variacoes) && m.variacoes.length > 0;
-      const variacao = temVariacoes ? (m.variacoes.find((v) => v.id === input.variacao)?.id || m.variacoes[0].id) : null;
-      const slug = variacao ? `${m.id}-${variacao}` : m.id;
-      const url = `${APP_URL}/modelos/${slug}.jpg`;
-      const legenda = variacao
-        ? `Prévia do modelo ${m.nome} — ${m.variacoes.find((v) => v.id === variacao)?.nome || variacao}`
-        : `Prévia do modelo ${m.nome}`;
-      // Entra em `files` para ser entregue como imagem na conversa.
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const buffer = Buffer.from(await resp.arrayBuffer());
-        files.push({ name: `${legenda}.jpg`, mime: "image/jpeg", buffer });
-      } catch (e) {
-        console.error("previa do modelo falhou:", e?.message || e);
-        return { ok: false, message: "Não consegui carregar a imagem de prévia agora." };
+      // `todas` manda o conjunto inteiro para a pessoa comparar lado a lado —
+      // é o "quero ver todos os modelos".
+      const escolhidas = !temVariacoes
+        ? [null]
+        : input.todas
+          ? m.variacoes.map((v) => v.id)
+          : [m.variacoes.find((v) => v.id === input.variacao)?.id || m.variacoes[0].id];
+
+      const enviadas = [];
+      for (const variacao of escolhidas) {
+        const slug = variacao ? `${m.id}-${variacao}` : m.id;
+        const nomeVar = variacao ? (m.variacoes.find((v) => v.id === variacao)?.nome || variacao) : null;
+        const legenda = nomeVar ? `${m.nome} — ${nomeVar}` : `Prévia do modelo ${m.nome}`;
+        try {
+          const resp = await fetch(`${APP_URL}/modelos/${slug}.jpg`);
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          files.push({ name: `${legenda}.jpg`, mime: "image/jpeg", buffer: Buffer.from(await resp.arrayBuffer()) });
+          enviadas.push({ id: variacao, nome: nomeVar || m.nome });
+        } catch (e) {
+          console.error(`previa ${slug} falhou:`, e?.message || e);
+        }
       }
+      if (!enviadas.length) return { ok: false, message: "Não consegui carregar as imagens de prévia agora." };
+
       return {
         ok: true,
-        message: `Enviei a prévia de "${m.nome}"${variacao ? ` (${variacao})` : ""}. PERGUNTE se está bom assim ou se prefere ver outro visual — só produza depois do OK.`,
+        message: enviadas.length > 1
+          ? `Enviei ${enviadas.length} modelos de ${m.nome}, na ordem: ${enviadas.map((e) => e.nome).join(", ")}. PERGUNTE qual ela prefere (pode responder pelo nome ou pelo número). Só produza depois da escolha.`
+          : `Enviei a prévia de "${m.nome}"${enviadas[0].id ? ` (${enviadas[0].nome})` : ""}. PERGUNTE se está bom assim ou se quer ver os outros modelos — só produza depois do OK.`,
+        enviadas,
         variacoes_disponiveis: temVariacoes ? m.variacoes.map((v) => ({ id: v.id, nome: v.nome })) : [],
       };
     }
@@ -1761,10 +1947,18 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       if (!APP_URL || !SERVICE_SECRET) return { ok: false, message: "Não consigo montar documentos do Estúdio agora (serviço sem endereço do site ou sem segredo configurado)." };
       if (!companyId) return { ok: false, message: "Sem empresa vinculada a esta conversa." };
       try {
+        const dados = { ...(input.dados || {}) };
+        // Foto do currículo: a pessoa manda a imagem no WhatsApp e a Nina só
+        // sinaliza usar_foto_enviada — aqui a gente busca e embute.
+        if (input.usar_foto_enviada) {
+          const foto = await lastIncomingMedia(ctx.conv, ["image"]);
+          if (!foto) return { ok: false, message: "Não achei nenhuma foto nesta conversa. Peça para a pessoa mandar a foto e tente de novo." };
+          dados.photo = foto.dataUrl;
+        }
         const resp = await fetch(`${APP_URL}/api/studio/render`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-service-secret": SERVICE_SECRET },
-          body: JSON.stringify({ model: input.modelo, data: input.dados || {}, titulo: input.titulo || null, company_id: companyId }),
+          body: JSON.stringify({ model: input.modelo, data: dados, titulo: input.titulo || null, company_id: companyId }),
         });
         const out = await resp.json();
         if (!resp.ok || out.error) return { ok: false, message: out.error || "Não consegui montar o documento." };
@@ -2160,7 +2354,7 @@ async function copilotLoadFile(companyId, id) {
 
 // Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
 // (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
-async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null) {
+async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null, conv = null) {
   // Provedor: o do agente (se tiver chave própria); senão o do agente mesmo, e a
   // chave cai no fallback (env ou de outro chatbot da empresa com o mesmo provedor).
   const provider = chatbot?.provider || "anthropic";
@@ -2207,9 +2401,18 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       `COMO ATENDER UM PEDIDO DE DOCUMENTO, nesta ordem:\n` +
       `1) Chame documento_modelos para saber o que existe hoje e o que cada modelo pergunta. Ofereça as opções em lista, por TEXTO.\n` +
       `2) Escolhido o modelo, faça as perguntas dele UMA POR VEZ, em conversa natural — nunca despeje um formulário inteiro de uma vez. Aproveite o que a pessoa já disse e não repita pergunta.\n` +
-      `3) Com os dados na mão, chame documento_previa para ela VER o visual e aprovar. Se houver variações (temas do currículo, normas da monografia), diga quais são e mostre a que ela escolher.\n` +
+      `3) Com os dados na mão, chame documento_previa para ela VER o visual e aprovar. Se o modelo tiver variações (4 temas de currículo, 4 normas de monografia), OFEREÇA mostrar todas de uma vez (documento_previa com todas=true) — é bem melhor ela comparar do que escolher no escuro. Se ela pedir "quero ver todos os modelos", mande todas.\n` +
+      `3.1) CURRÍCULO: antes de gerar, PERGUNTE se ela quer foto no currículo. Se sim, peça que mande a foto aqui na conversa e depois chame documento_criar com usar_foto_enviada=true. Se não quiser, siga sem foto.\n` +
       `4) SÓ depois do "pode fazer": ESCREVA VOCÊ o conteúdo (as cláusulas do contrato, as questões da prova, os tópicos do resumo, o texto do currículo) e chame documento_criar com esse conteúdo no formato indicado em documento_modelos. Nunca mande campos vazios.\n` +
       `5) Entregue e ofereça ajustes. Se ela pedir mudança, refaça e reenvie.\n` +
+      `\n` +
+      `QUEM É VOCÊ E COMO COBRA\n` +
+      `Na PRIMEIRA mensagem de alguém que você ainda não conhece: apresente-se em poucas linhas (quem você é e o que faz), PERGUNTE O NOME da pessoa e, assim que ela disser, salve com salvar_nome_contato. Use o nome dela dali em diante.\n` +
+      `Explique, sem enrolar, que os serviços são pagos em PIPS: 1 pip = R$ 0,50, e que dá para comprar por Pix ou cartão aqui mesmo no chat. Consulte pips_tabela para os valores — NUNCA invente preço.\n` +
+      `Se ela mandar /saldo ou perguntar quanto tem, chame pips_saldo. NUNCA responda saldo de memória nem faça a conta você: o número vem sempre da ferramenta.\n` +
+      `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em pips E em reais -> consulte pips_saldo -> peça confirmação (\"vou usar X pips do seu saldo de Y pips, posso?\") -> só com o sim chame pips_cobrar -> só então produza. Sem saldo, ofereça comprar com pips_comprar.\n` +
+      `Só cobre quando o serviço estiver DEFINIDO (tema, norma e dados combinados). Nada de cobrar para começar a conversar.\n` +
+      `Seja honesta sobre o que entrega: a monografia sai completa e formatada na norma, pronta para a pessoa desenvolver e ajustar — você entrega a base construída, não a revisão final nem a defesa. Diga isso ANTES de cobrar, não depois.\n` +
       `Dê uma previsão de tempo antes de começar a produzir. NÃO invente dados que a pessoa não deu (nomes, CPF/CNPJ, valores) — pergunte.\n` +
       `Mantenha o contexto: NÃO cumprimente de novo nem recomece a cada mensagem; continue de onde parou.` +
       (chatbot?.knowledge ? `\n\nBase: ${chatbot.knowledge}` : "") + brain +
@@ -2232,6 +2435,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
     academico: ["gerar_documento", "gerar_apresentacao", "documento_modelos", "documento_previa", "documento_criar"],
+    pips: ["pips_tabela", "pips_saldo", "pips_comprar", "pips_conferir", "pips_cobrar", "salvar_nome_contato"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
@@ -2246,6 +2450,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
       "documento_modelos", "documento_previa", "documento_criar",
+      "pips_tabela", "pips_saldo", "salvar_nome_contato",
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
@@ -2279,7 +2484,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
         contents.push({ role: "model", parts });
         const responseParts = [];
         for (const c of calls) {
-          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files, sends, { provider, key });
+          const out = await copilotDispatch(companyId, c.functionCall.name, c.functionCall.args || {}, files, sends, { provider, key, conv, agentId: chatbot?.id ?? null });
           responseParts.push({ functionResponse: { name: c.functionCall.name, response: { result: out } } });
         }
         contents.push({ role: "user", parts: responseParts });
@@ -2302,7 +2507,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       messages.push({ role: "assistant", content: res.content });
       const results = [];
       for (const tu of toolUses) {
-        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files, sends, { provider, key });
+        const out = await copilotDispatch(companyId, tu.name, tu.input || {}, files, sends, { provider, key, conv, agentId: chatbot?.id ?? null });
         results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
       }
       messages.push({ role: "user", content: results });
@@ -2762,7 +2967,7 @@ async function startSession(numberId) {
             let copilotSends = [];
             let reply = null;
             if (customerText && useTools) {
-              const out = await runCopilotReply(cid, agentForReply, customerText, history, copilotFullAccess, actor);
+              const out = await runCopilotReply(cid, agentForReply, customerText, history, copilotFullAccess, actor, conversation);
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];

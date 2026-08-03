@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, FileDown, Loader2, Plus, Printer, Save, Trash2, Wand2 } from "lucide-react";
+import { ArrowLeft, Building2, FileDown, Loader2, Plus, Printer, Save, Trash2, Wand2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import {
-  BUSINESS_PAGE, EMPTY_CONTRATO, EMPTY_ORCAMENTO, EMPTY_QUESTIONARIO, EMPTY_RESUMO,
+  BUSINESS_PAGE, EMITENTE_FIELDS, EMPTY_CONTRATO, EMPTY_ORCAMENTO, EMPTY_QUESTIONARIO, EMPTY_RESUMO,
   fmtMoney, orcamentoTotais,
   renderContratoHtml, renderOrcamentoHtml, renderQuestionarioHtml, renderResumoHtml,
   type Contrato, type DocCompany, type Orcamento, type Questionario, type Resumo,
@@ -87,11 +87,11 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
     (async () => {
       if (!supabase) return;
       const { data } = await supabase.from("company_settings")
-        .select("name, logo_url, address, phone, email, logistics_razao_social, logistics_cnpj, logistics_ie")
+        .select("name, logo_url, address, phone, email, logistics_cnpj, logistics_ie")
         .maybeSingle();
       if (!alive || !data) return;
       setCompany({
-        nome: data.name, razao_social: data.logistics_razao_social || data.name,
+        nome: data.name, razao_social: data.name,
         cnpj: data.logistics_cnpj, ie: data.logistics_ie,
         endereco: data.address, phone: data.phone, email: data.email, logo_url: data.logo_url,
       });
@@ -205,6 +205,13 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
             <p className="text-[10px] text-gray-500">Ela completa o que estiver vazio e mantém o que você já escreveu. Tudo continua editável abaixo.</p>
           </div>
 
+          <EmitenteForm
+            emitente={{ ...company, ...((doc as { emitente?: DocCompany }).emitente ?? {}) }}
+            onChange={(v) => patch({ emitente: v } as Partial<AnyDoc>)}
+            onReset={() => patch({ emitente: undefined } as Partial<AnyDoc>)}
+            personalizado={!!(doc as { emitente?: DocCompany }).emitente}
+          />
+
           {model === "contrato" && <ContratoForm doc={doc as Contrato} patch={patch} />}
           {model === "orcamento" && <OrcamentoForm doc={doc as Orcamento} patch={patch} />}
           {model === "questionario" && <QuestionarioForm doc={doc as Questionario} patch={patch} />}
@@ -224,6 +231,70 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
         <span className="text-[11px] text-gray-400 w-10 text-center">{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom((z) => Math.min(1.4, +(z + 0.08).toFixed(2)))} className="w-6 h-6 grid place-items-center rounded hover:bg-white/10 text-xs cursor-pointer">+</button>
       </div>
+    </div>
+  );
+}
+
+// ── emitente (cabeçalho do documento) ───────────────────────────────────────
+
+// Fica em todos os modelos de negócio: é quem assina o documento. Começa com os
+// dados da empresa, mas o que for editado aqui vale só PARA ESTE documento —
+// dá para emitir por outra marca sem mexer nas configurações da empresa.
+function EmitenteForm({ emitente, onChange, onReset, personalizado }: {
+  emitente: DocCompany;
+  onChange: (v: DocCompany) => void;
+  onReset: () => void;
+  personalizado: boolean;
+}) {
+  const [aberto, setAberto] = useState(false);
+  function logoUpload(file: File) {
+    const r = new FileReader();
+    r.onload = () => onChange({ ...emitente, logo_url: String(r.result || "") });
+    r.readAsDataURL(file);
+  }
+  const nome = emitente.razao_social || emitente.nome || "";
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+      <button onClick={() => setAberto((v) => !v)} className="w-full flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-white/5 text-left">
+        <span className="w-8 h-8 rounded-lg bg-black/40 border border-white/10 grid place-items-center overflow-hidden shrink-0">
+          {emitente.logo_url
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={emitente.logo_url} alt="" className="w-full h-full object-contain" />
+            : <Building2 size={14} className="text-gray-600" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold text-gray-500 uppercase">Emitente (topo do documento)</span>
+          <span className="block text-xs truncate">{nome || "sem nome"}</span>
+        </span>
+        <span className="text-[10px] text-gray-500 shrink-0">{aberto ? "fechar" : "editar"}</span>
+      </button>
+      {aberto && (
+        <div className="p-2.5 pt-0 space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
+              {emitente.logo_url ? "Trocar logo" : "Enviar logo"}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && logoUpload(e.target.files[0])} />
+            </label>
+            {emitente.logo_url && (
+              <button onClick={() => onChange({ ...emitente, logo_url: "" })} className="text-[10px] text-red-400 hover:text-red-300 cursor-pointer">remover</button>
+            )}
+          </div>
+          {EMITENTE_FIELDS.map((f) => (
+            <Field
+              key={String(f.id)}
+              label={f.label}
+              placeholder={f.placeholder}
+              value={(emitente[f.id] as string) ?? ""}
+              onChange={(v) => onChange({ ...emitente, [f.id]: v })}
+            />
+          ))}
+          {personalizado && (
+            <button onClick={onReset} className="w-full text-[11px] py-1.5 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer text-gray-400">
+              voltar aos dados da empresa
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
