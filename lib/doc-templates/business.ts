@@ -11,6 +11,11 @@
 
 import type { PageSetup } from "./types";
 
+// Quem ASSINA o documento (o cabeçalho com logo e dados).
+//
+// Começa preenchido com os dados da empresa, mas fica guardado NO DOCUMENTO e é
+// totalmente editável — a mesma conta pode emitir um orçamento por uma marca e
+// um contrato por outra, sem mexer nas configurações da empresa.
 export type DocCompany = {
   nome?: string | null;
   razao_social?: string | null;
@@ -19,8 +24,19 @@ export type DocCompany = {
   endereco?: string | null;
   phone?: string | null;
   email?: string | null;
+  /** URL pública ou dataURL da logo. Vazio = usa as iniciais do nome. */
   logo_url?: string | null;
 };
+
+/** Campos do emitente que o editor mostra, na ordem. */
+export const EMITENTE_FIELDS: { id: keyof DocCompany; label: string; placeholder?: string }[] = [
+  { id: "razao_social", label: "Nome / razão social", placeholder: "Como deve aparecer no topo" },
+  { id: "cnpj", label: "CNPJ / CPF" },
+  { id: "ie", label: "Inscrição estadual" },
+  { id: "endereco", label: "Endereço" },
+  { id: "phone", label: "Telefone" },
+  { id: "email", label: "E-mail" },
+];
 
 export const BUSINESS_PAGE: PageSetup = {
   paper: "a4",
@@ -37,6 +53,8 @@ export type Parte = { nome: string; doc: string; endereco: string; rep: string }
 export type Clausula = { titulo: string; texto: string };
 
 export type Contrato = {
+  /** Cabeçalho do documento — editável, guardado aqui e não nas configurações. */
+  emitente?: DocCompany;
   numero: string; cidade: string; data: string;
   objeto: string;
   contratante: Parte; contratada: Parte;
@@ -48,6 +66,8 @@ export type Contrato = {
 
 export type OrcamentoItem = { descricao: string; quant: string; unidade: string; valor: string };
 export type Orcamento = {
+  /** Cabeçalho do documento — editável, guardado aqui e não nas configurações. */
+  emitente?: DocCompany;
   numero: string; data: string; validade: string; moeda: string;
   cliente: Parte;
   itens: OrcamentoItem[];
@@ -57,6 +77,8 @@ export type Orcamento = {
 
 export type Questao = { enunciado: string; tipo: "objetiva" | "dissertativa"; alternativas: string[]; resposta: string; valor: string };
 export type Questionario = {
+  /** Cabeçalho do documento — editável, guardado aqui e não nas configurações. */
+  emitente?: DocCompany;
   titulo: string; disciplina: string; professor: string; turma: string; data: string;
   instrucoes: string;
   questoes: Questao[];
@@ -65,6 +87,8 @@ export type Questionario = {
 
 export type ResumoTopico = { titulo: string; conteudo: string; destaque: string };
 export type Resumo = {
+  /** Cabeçalho do documento — editável, guardado aqui e não nas configurações. */
+  emitente?: DocCompany;
   titulo: string; materia: string; autor: string; data: string;
   topicos: ResumoTopico[];
   /** Só no Resumão: glossário e o que mais cai na prova. */
@@ -206,7 +230,10 @@ const rodape = `<div class="note">Documento gerado no Estúdio (Workspace). Conf
 
 // ── renderizadores ──────────────────────────────────────────────────────────
 
-export function renderContratoHtml(d: Contrato, c: DocCompany): string {
+export function renderContratoHtml(d: Contrato, base: DocCompany): string {
+  // O emitente guardado no documento vence o da empresa — é o que permite
+  // emitir com outro nome/logo sem mexer nas configurações.
+  const c = { ...base, ...(d.emitente ?? {}) };
   const right = `<div class="drow">${d.numero ? `Nº ${esc(d.numero)}` : ""}</div><div class="drow">${esc(d.data)}</div>`;
   const partes = `<div class="grid2">
     ${kvPanel("Contratante", [["Nome / razão social", d.contratante.nome], ["CPF / CNPJ", d.contratante.doc], ["Endereço", d.contratante.endereco], ["Representante", d.contratante.rep]])}
@@ -230,7 +257,10 @@ export function renderContratoHtml(d: Contrato, c: DocCompany): string {
     ${assinaturas}${rodape}`);
 }
 
-export function renderOrcamentoHtml(d: Orcamento, c: DocCompany): string {
+export function renderOrcamentoHtml(d: Orcamento, base: DocCompany): string {
+  // O emitente guardado no documento vence o da empresa — é o que permite
+  // emitir com outro nome/logo sem mexer nas configurações.
+  const c = { ...base, ...(d.emitente ?? {}) };
   const { subtotal, desconto, total } = orcamentoTotais(d);
   const right = `<div class="drow">${d.numero ? `Nº ${esc(d.numero)}` : ""}</div><div class="drow">${esc(d.data)}</div>${d.validade ? `<div class="drow">Validade: ${esc(d.validade)}</div>` : ""}`;
   const linhas = d.itens.map((i, k) => {
@@ -263,7 +293,10 @@ export function renderOrcamentoHtml(d: Orcamento, c: DocCompany): string {
     ${rodape}`);
 }
 
-export function renderQuestionarioHtml(d: Questionario, c: DocCompany): string {
+export function renderQuestionarioHtml(d: Questionario, base: DocCompany): string {
+  // O emitente guardado no documento vence o da empresa — é o que permite
+  // emitir com outro nome/logo sem mexer nas configurações.
+  const c = { ...base, ...(d.emitente ?? {}) };
   const right = `<div class="drow">${esc(d.data)}</div>${d.turma ? `<div class="drow">Turma: ${esc(d.turma)}</div>` : ""}`;
   const letra = (i: number) => String.fromCharCode(97 + i);
   const questoes = d.questoes.map((q, i) => `<div class="q">
@@ -289,7 +322,10 @@ export function renderQuestionarioHtml(d: Questionario, c: DocCompany): string {
     ${gabarito}${rodape}`);
 }
 
-export function renderResumoHtml(d: Resumo, c: DocCompany, resumao: boolean): string {
+export function renderResumoHtml(d: Resumo, base: DocCompany, resumao: boolean): string {
+  // O emitente guardado no documento vence o da empresa — é o que permite
+  // emitir com outro nome/logo sem mexer nas configurações.
+  const c = { ...base, ...(d.emitente ?? {}) };
   const right = `<div class="drow">${esc(d.data)}</div>${d.materia ? `<div class="drow">${esc(d.materia)}</div>` : ""}`;
   const topicos = d.topicos.map((t, i) => `<div class="cl">
     <div class="cl-t">${i + 1}. ${esc(t.titulo)}</div>

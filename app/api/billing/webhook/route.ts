@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseService } from "@/lib/supabase-server";
+import { parsePipRef } from "@/lib/mercadopago";
 
 export const runtime = "nodejs";
 
@@ -97,6 +98,27 @@ export async function POST(request: Request) {
     if (type.includes("payment")) {
       const pay = await mpGet(`/v1/payments/${id}`, token);
       if (!pay) return NextResponse.json({ ok: true });
+
+      // COMPRA DE PIPS — external_reference no formato "pip:<contato>:<pips>".
+      // É o que credita os pips sozinho assim que o Pix cai, sem a pessoa
+      // precisar avisar. credits_add é idempotente pelo `ref`, então o reenvio
+      // do webhook (o MP insiste até receber 200) não credita em dobro.
+      const pip = parsePipRef(pay.external_reference);
+      if (pip) {
+        if (String(pay.status || "") === "approved") {
+          const { data: ct } = await svc.from("contacts").select("company_id").eq("id", pip.contactId).maybeSingle();
+          await svc.rpc("credits_add", {
+            p_contact: pip.contactId,
+            p_company: ct?.company_id ?? null,
+            p_pips: pip.pips,
+            p_reason: "compra",
+            p_detail: `Mercado Pago ${pay.id}`,
+            p_ref: `mp:${pay.id}`,
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       const companyId = await findCompanyId(svc, { externalRef: pay.external_reference });
       if (!companyId) return NextResponse.json({ ok: true });
       const status = String(pay.status || "");

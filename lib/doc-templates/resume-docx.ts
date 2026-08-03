@@ -45,37 +45,81 @@ const body = (text: string, opts: { size?: number; color?: string; bold?: boolea
     children: [new TextRun({ text, size: opts.size ?? 21, color: opts.color ?? "334155", bold: opts.bold, font: FONT })],
   });
 
+// Cabeçalho de cada tema. O Word não reproduz o HTML pixel a pixel, mas cada
+// tema tem uma assinatura visual que dá para respeitar aqui — senão o arquivo
+// entregue sai igual para os 4 temas e não bate com a prévia que a pessoa
+// aprovou.
+function headerFor(r: Resume, accent: string, photo: Uint8Array | null): Paragraph[] {
+  const out: Paragraph[] = [];
+  const contacts = [r.phone, r.email, r.location].filter(Boolean).join("  •  ");
+  const foto = (align: (typeof AlignmentType)[keyof typeof AlignmentType], size = 90) =>
+    photo ? [new Paragraph({
+      alignment: align, spacing: { after: 40 },
+      children: [new ImageRun({ data: photo, transformation: { width: size, height: size }, type: "png" })],
+    })] : [];
+
+  if (r.theme === "creative") {
+    // Faixa colorida com nome centralizado.
+    out.push(...foto(AlignmentType.CENTER, 96));
+    out.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      shading: { fill: accent },
+      spacing: { before: 0, after: 0 },
+      children: [new TextRun({ text: r.name, bold: true, size: 40, color: "FFFFFF", font: FONT })],
+    }));
+    if (r.title) out.push(new Paragraph({
+      alignment: AlignmentType.CENTER, shading: { fill: accent }, spacing: { after: 120 },
+      children: [new TextRun({ text: r.title.toUpperCase(), bold: true, size: 18, color: "FFFFFF", font: FONT, characterSpacing: 20 })],
+    }));
+    if (contacts) out.push(new Paragraph({
+      alignment: AlignmentType.CENTER, spacing: { after: 140 },
+      children: [new TextRun({ text: contacts, size: 18, color: "64748B", font: FONT })],
+    }));
+    return out;
+  }
+
+  if (r.theme === "minimalist") {
+    // Nome grande e leve, em caixa alta, com régua na cor de destaque.
+    out.push(new Paragraph({
+      spacing: { after: 20 },
+      children: [new TextRun({ text: r.name.toUpperCase(), size: 48, color: "0F172A", font: FONT, characterSpacing: 30 })],
+    }));
+    if (r.title) out.push(new Paragraph({
+      spacing: { after: 60 },
+      children: [new TextRun({ text: r.title.toUpperCase(), bold: true, size: 17, color: accent, font: FONT, characterSpacing: 40 })],
+    }));
+    if (contacts) out.push(new Paragraph({
+      spacing: { after: 140 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: accent, space: 6 } },
+      children: [new TextRun({ text: contacts, size: 18, color: "64748B", font: FONT })],
+    }));
+    return out;
+  }
+
+  // executive e modern: nome à esquerda, foto à direita, régua fina.
+  out.push(...foto(AlignmentType.RIGHT));
+  out.push(new Paragraph({
+    spacing: { after: 20 },
+    children: [new TextRun({ text: r.name, bold: true, size: 42, color: "0F172A", font: FONT })],
+  }));
+  if (r.title) out.push(new Paragraph({
+    spacing: { after: 60 },
+    children: [new TextRun({ text: r.title.toUpperCase(), bold: true, size: 19, color: accent, font: FONT, characterSpacing: 20 })],
+  }));
+  if (contacts) out.push(new Paragraph({
+    spacing: { after: 120 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "D9DEE5", space: 6 } },
+    children: [new TextRun({ text: contacts, size: 18, color: "64748B", font: FONT })],
+  }));
+  return out;
+}
+
 export async function buildResumeDocxBlob(r: Resume): Promise<Blob> {
   const accent = hex(r.accent);
   const children: Paragraph[] = [];
 
-  // Cabeçalho: foto (se houver) + nome + cargo + contatos.
   const photo = r.photo ? dataUrlToBytes(r.photo) : null;
-  if (photo) {
-    children.push(new Paragraph({
-      alignment: AlignmentType.RIGHT,
-      spacing: { after: 0 },
-      children: [new ImageRun({ data: photo, transformation: { width: 90, height: 90 }, type: "png" })],
-    }));
-  }
-  children.push(new Paragraph({
-    spacing: { after: 20 },
-    children: [new TextRun({ text: r.name, bold: true, size: 42, color: "0F172A", font: FONT })],
-  }));
-  if (r.title) {
-    children.push(new Paragraph({
-      spacing: { after: 60 },
-      children: [new TextRun({ text: r.title.toUpperCase(), bold: true, size: 19, color: accent, font: FONT, characterSpacing: 20 })],
-    }));
-  }
-  const contacts = [r.phone, r.email, r.location].filter(Boolean).join("  •  ");
-  if (contacts) {
-    children.push(new Paragraph({
-      spacing: { after: 120 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "D9DEE5", space: 6 } },
-      children: [new TextRun({ text: contacts, size: 18, color: "64748B", font: FONT })],
-    }));
-  }
+  children.push(...headerFor(r, accent, photo));
 
   if (r.about.trim()) {
     children.push(heading("Resumo", accent));

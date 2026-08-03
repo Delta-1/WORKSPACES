@@ -54,3 +54,35 @@ resumão. O roteiro é sempre o mesmo:
 
 Depende de `APP_URL` configurada no serviço. Sem ela, a Nina segue atendendo
 normalmente, apenas sem oferecer os modelos do Estúdio.
+
+## Pips — os créditos dos serviços da Nina
+
+1 pip = **R$ 0,50**. Monografia/trabalho custam **100 pips (R$ 50)**; apresentação,
+**20 pips (R$ 10)**. Os valores vivem em `lib/pips.ts` e a Nina os consulta com
+`pips_tabela` — ela nunca inventa preço.
+
+**A Nina nunca calcula saldo.** Todo movimento passa pelas funções do banco
+(`credits_add` / `credits_debit`), que são atômicas: não existe saldo negativo, e
+um débito sem saldo é recusado pelo Postgres, não pela IA. O saldo vem sempre de
+`pips_saldo`, mesmo quando a Nina "acha" que sabe o valor.
+
+Fluxo obrigatório antes de qualquer serviço pago:
+
+1. dizer o preço em pips **e** em reais;
+2. consultar `pips_saldo`;
+3. pedir confirmação — *"vou usar X pips do seu saldo de Y pips, posso?"*;
+4. só com o sim, `pips_cobrar`;
+5. só então produzir.
+
+Compra pelo chat com `pips_comprar`: **Pix criado pela API** (a Nina manda o QR
+como imagem e o copia-e-cola em mensagem separada) ou **link de cartão**. O
+crédito entra sozinho pelo webhook do Mercado Pago quando o pagamento é aprovado;
+`pips_conferir` é a rede de segurança para quando a pessoa diz "já paguei" antes
+de o webhook chegar. Creditar duas vezes é impossível: `credits_add` é idempotente
+pelo id do pagamento.
+
+Quem recebe: o token do próprio agente (`chatbots.mercadopago_token`) e, na falta
+dele, o `MERCADOPAGO_ACCESS_TOKEN` da plataforma — que é o caso hoje.
+
+Na primeira conversa a Nina se apresenta, **pergunta o nome** e o guarda no
+contato (`salvar_nome_contato`), sem sobrescrever um nome já cadastrado.

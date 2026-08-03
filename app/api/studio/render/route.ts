@@ -30,7 +30,10 @@ export const maxDuration = 120;
 function docCompanyFrom(row: Record<string, unknown> | null): DocCompany {
   if (!row) return {};
   return {
-    nome: row.name as string, razao_social: (row.logistics_razao_social as string) || (row.name as string),
+    // O nome da EMPRESA vem primeiro. Antes isto preferia logistics_razao_social
+    // (campo do TransLog) e vazava o nome da transportadora para contratos e
+    // orçamentos de quem já tinha usado a Logística.
+    nome: row.name as string, razao_social: row.name as string,
     cnpj: row.logistics_cnpj as string, ie: row.logistics_ie as string,
     endereco: row.address as string, phone: row.phone as string, email: row.email as string,
     logo_url: row.logo_url as string,
