@@ -19,7 +19,7 @@ type Target = { id: string; charge_id: string | null; contact_id: string | null;
 type Contact = { id: string; name: string | null; phone: string | null; jid: string | null };
 type Agent = { id: string; name: string };
 type WNumber = { id: string; label: string | null; phone_number: string | null };
-type Settings = { pix_key: string; pix_name: string; mp_token: string; agent_name: string; template: string };
+type Settings = { pix_key: string; pix_name: string; agent_name: string; template: string };
 
 const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -31,15 +31,27 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   cancelado: { label: "Cancelado", cls: "bg-zinc-800 text-zinc-500" },
 };
 
-export default function BillingTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
+type Secao = "cobrancas" | "situacao" | "config";
+
+// Vive dentro da CARTEIRA. `secao` vem de lá (a barra de abas é única), e
+// `topoConfig` deixa a Carteira colocar a conexão com o Mercado Pago acima das
+// configurações de cobrança — as duas coisas ficam na mesma tela.
+export default function BillingTab({ profile, onOpenMessages, embutido, secao, topoConfig }: {
+  profile: Profile | null;
+  onOpenMessages?: (phone: string, name: string) => void;
+  embutido?: boolean;
+  secao?: Secao;
+  topoConfig?: React.ReactNode;
+}) {
   const cid = profile?.company_id ?? null;
-  const [section, setSection] = useState<"cobrancas" | "situacao" | "config">("cobrancas");
+  const [secaoInterna, setSecaoInterna] = useState<Secao>("cobrancas");
+  const section = secao ?? secaoInterna;
   const [charges, setCharges] = useState<Charge[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [numbers, setNumbers] = useState<WNumber[]>([]);
-  const [settings, setSettings] = useState<Settings>({ pix_key: "", pix_name: "", mp_token: "", agent_name: "Cobrador", template: BILLING_DEFAULT_TEMPLATE });
+  const [settings, setSettings] = useState<Settings>({ pix_key: "", pix_name: "", agent_name: "Cobrador", template: BILLING_DEFAULT_TEMPLATE });
   const [showNew, setShowNew] = useState(false);
   const [editCharge, setEditCharge] = useState<Charge | null>(null);
   const [comprovante, setComprovante] = useState<Target | null>(null);
@@ -54,7 +66,7 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
       supabase.from("contacts").select("id,name,phone,jid").eq("company_id", cid).order("name"),
       supabase.from("chatbots").select("id,name").eq("company_id", cid).neq("slot", "internal"),
       supabase.from("whatsapp_numbers").select("id,label,phone_number").eq("company_id", cid),
-      supabase.from("company_settings").select("billing_pix_key,billing_pix_name,billing_mercadopago_token,billing_agent_name,billing_default_template").eq("company_id", cid).maybeSingle(),
+      supabase.from("company_settings").select("billing_pix_key,billing_pix_name,billing_agent_name,billing_default_template").eq("company_id", cid).maybeSingle(),
     ]);
     setCharges((c.data as Charge[]) ?? []);
     setTargets((t.data as Target[]) ?? []);
@@ -63,7 +75,7 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
     setNumbers((nu.data as WNumber[]) ?? []);
     const d = cs.data as Record<string, string> | null;
     setSettings({
-      pix_key: d?.billing_pix_key || "", pix_name: d?.billing_pix_name || "", mp_token: d?.billing_mercadopago_token || "",
+      pix_key: d?.billing_pix_key || "", pix_name: d?.billing_pix_name || "",
       agent_name: d?.billing_agent_name || "Cobrador", template: d?.billing_default_template || BILLING_DEFAULT_TEMPLATE,
     });
   }, [cid]);
@@ -90,8 +102,20 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
     if (!supabase || !to) { flash("Cliente sem telefone."); return; }
     const charge = charges.find((c) => c.id === t.charge_id);
     const itens = (t.itens && t.itens.length ? t.itens : charge?.itens) || [];
+    // Com o Pix automático ligado na Carteira, esta cobrança tem um Pix PRÓPRIO.
+    // Usa a mesma rota do agendador, então o cliente recebe o mesmo código aqui
+    // e no envio automático — e a baixa continua sendo automática.
+    let pix = settings.pix_key || "";
+    try {
+      const r = await fetch("/api/carteira/pix", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_id: t.id }),
+      });
+      const j = await r.json();
+      if (r.ok && j.pix_code) pix = j.pix_code;
+    } catch { /* sem Carteira, segue com a chave fixa */ }
     const text = fillTemplate(charge?.template || settings.template, {
-      nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix: settings.pix_key || "", empresa: settings.pix_name || "",
+      nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix, empresa: settings.pix_name || "",
       extrato: renderExtrato(itens, t.motivo || charge?.motivo), motivo: t.motivo || charge?.motivo || "",
     });
     await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
@@ -112,22 +136,29 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
 
   return (
     <div className="h-full flex flex-col bg-[#0b0f16] text-gray-100 overflow-hidden">
-      <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold flex items-center gap-2"><DollarSign size={20} className="text-emerald-400" /> Cobrador</h2>
-            <p className="text-xs text-gray-400">Cobranças automáticas por WhatsApp — Pix, Mercado Pago, lembretes e comprovantes.</p>
+      {!embutido && (
+        <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold flex items-center gap-2"><DollarSign size={20} className="text-emerald-400" /> Cobrador</h2>
+              <p className="text-xs text-gray-400">Cobranças automáticas por WhatsApp — Pix, Mercado Pago, lembretes e comprovantes.</p>
+            </div>
+            <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"><Plus size={15} /> Criar cobrança</button>
           </div>
-          <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"><Plus size={15} /> Criar cobrança</button>
+          <div className="flex gap-1 mt-3">
+            {([["cobrancas", "Cobranças"], ["situacao", "Situação dos clientes"], ["config", "Configurações"]] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setSecaoInterna(id)} className={`text-xs px-3 py-1.5 rounded-lg ${section === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}>{label}</button>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-1 mt-3">
-          {([["cobrancas", "Cobranças"], ["situacao", "Situação dos clientes"], ["config", "Configurações"]] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setSection(id)} className={`text-xs px-3 py-1.5 rounded-lg ${section === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}>{label}</button>
-          ))}
-        </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {embutido && section === "cobrancas" && (
+          <div className="flex justify-end mb-3">
+            <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"><Plus size={15} /> Criar cobrança</button>
+          </div>
+        )}
         {/* KPIs */}
         <div className="grid grid-cols-3 gap-3 mb-4">
           <Kpi label="A receber" value={money(totalPend)} sub={`${pending.length} cobranças`} tone="amber" />
@@ -189,7 +220,12 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
           </div>
         )}
 
-        {section === "config" && <ConfigSection cid={cid} settings={settings} setSettings={setSettings} numbers={numbers} flash={flash} />}
+        {section === "config" && (
+          <div className="space-y-4">
+            {topoConfig}
+            <ConfigSection cid={cid} settings={settings} setSettings={setSettings} numbers={numbers} flash={flash} />
+          </div>
+        )}
       </div>
 
       {showNew && <NewChargeModal cid={cid} contacts={contacts} agents={agents} numbers={numbers} settings={settings} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); flash("Cobrança criada."); }} onContactsChanged={load} />}
@@ -216,7 +252,7 @@ function ConfigSection({ cid, settings, setSettings, numbers, flash }: { cid: st
   async function save() {
     if (!supabase || !cid) return; setBusy(true);
     await supabase.from("company_settings").update({
-      billing_pix_key: s.pix_key || null, billing_pix_name: s.pix_name || null, billing_mercadopago_token: s.mp_token || null,
+      billing_pix_key: s.pix_key || null, billing_pix_name: s.pix_name || null,
       billing_agent_name: s.agent_name || "Cobrador", billing_default_template: s.template || null,
     }).eq("company_id", cid);
     setSettings(s); setBusy(false); flash("Configurações salvas.");
@@ -229,10 +265,16 @@ function ConfigSection({ cid, settings, setSettings, numbers, flash }: { cid: st
         <label className="block"><span className="lbl">Chave Pix</span><input className="in" value={s.pix_key} onChange={(e) => setS({ ...s, pix_key: e.target.value })} placeholder="CNPJ, e-mail, telefone ou aleatória" /></label>
         <label className="block"><span className="lbl">Nome do recebedor (opcional)</span><input className="in" value={s.pix_name} onChange={(e) => setS({ ...s, pix_name: e.target.value })} /></label>
       </div>
-      <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-        <div className="text-sm font-semibold flex items-center gap-2"><DollarSign size={15} className="text-sky-400" /> Mercado Pago (cobrança por API)</div>
-        <p className="text-[11px] text-gray-400">Cole seu Access Token do Mercado Pago. Nas cobranças do tipo “Mercado Pago”, o dinheiro entra por lá e a conciliação é automática. (Boleto de banco: em breve.)</p>
-        <label className="block"><span className="lbl">Access Token</span><input className="in" type="password" value={s.mp_token} onChange={(e) => setS({ ...s, mp_token: e.target.value })} placeholder="APP_USR-..." /></label>
+      {/* O token do Mercado Pago mudou de lugar: agora é a Carteira que cuida da
+          conta da empresa, valida o token e mostra o que caiu. Aqui fica só o
+          atalho, para ninguém procurar por ele nas duas telas. */}
+      <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+        <div className="text-sm font-semibold flex items-center gap-2"><DollarSign size={15} className="text-sky-400" /> Mercado Pago</div>
+        <p className="text-[11px] text-gray-400">
+          O token da conta agora fica na <b>Carteira</b>, junto com o que entrou. Lá também se liga o
+          <b> Pix automático</b>: cada cobrança sai com um Pix próprio e a baixa acontece sozinha, sem
+          depender de alguém ler o comprovante que o cliente mandou.
+        </p>
       </div>
       <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
         <div className="text-sm font-semibold flex items-center gap-2"><Users size={15} /> Agente & mensagem padrão</div>

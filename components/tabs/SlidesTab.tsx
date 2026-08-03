@@ -55,7 +55,7 @@ export default function SlidesTab({ profile }: { profile: Profile | null }) {
         <h3 className="text-lg font-bold flex items-center gap-2"><Presentation className="text-amber-400" size={20} /> Apresentações</h3>
         <button onClick={create} className="flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"><Plus size={14} /> Nova apresentação</button>
       </div>
-      <p className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">Crie slides com a Nina, edite e exporte em <b>.pptx</b> (PowerPoint) e <b>PDF</b>. Sem API externa.</p>
+      <p className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">Crie slides com a Yumi, edite e exporte em <b>.pptx</b> (PowerPoint) e <b>PDF</b>. Sem API externa.</p>
       <div className="flex-1 overflow-y-auto custom-scroll">
         {loading ? <p className="text-sm text-gray-500 p-2">Carregando…</p> : rows.length === 0 ? (
           <p className="text-sm text-gray-500 p-2">Nenhuma apresentação ainda.</p>
@@ -88,7 +88,7 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [showNina, setShowNina] = useState(true);
+  const [showYumi, setShowYumi] = useState(true);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const th = themeOf(deck.tema);
 
@@ -151,7 +151,7 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
               />
             ))}
           </div>
-          <button onClick={() => setShowNina((v) => !v)} className={`text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer ${showNina ? "bg-amber-600 text-white" : "bg-white/10 hover:bg-white/15"}`}><Wand2 size={13} /> Nina</button>
+          <button onClick={() => setShowYumi((v) => !v)} className={`text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer ${showYumi ? "bg-amber-600 text-white" : "bg-white/10 hover:bg-white/15"}`}><Wand2 size={13} /> Yumi</button>
           <button onClick={exportPptx} disabled={exporting} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-50">{exporting ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />} .pptx</button>
           <button onClick={exportPdf} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer"><Printer size={13} /> PDF</button>
           <button onClick={() => doSave(deck, title)} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"><Save size={13} /></button>
@@ -231,15 +231,15 @@ function SlideEditor({ row, onClose }: { row: Row; onClose: () => void }) {
           </div>
         </div>
 
-        {showNina && (
-          <NinaSlides onDeck={(d) => { const next = { ...deck, titulo: d.titulo || deck.titulo, slides: d.slides }; setDeck(next); setTitle(d.titulo || title); setCur(0); doSave(next, d.titulo || title); }} />
+        {showYumi && (
+          <YumiSlides onDeck={(d) => { const next = { ...deck, titulo: d.titulo || deck.titulo, slides: d.slides }; setDeck(next); setTitle(d.titulo || title); setCur(0); doSave(next, d.titulo || title); }} />
         )}
       </div>
     </div>
   );
 }
 
-function NinaSlides({ onDeck }: { onDeck: (d: Deck) => void }) {
+function YumiSlides({ onDeck }: { onDeck: (d: Deck) => void }) {
   const [prompt, setPrompt] = useState("");
   const [n, setN] = useState(8);
   const [busy, setBusy] = useState(false);
@@ -258,8 +258,8 @@ function NinaSlides({ onDeck }: { onDeck: (d: Deck) => void }) {
 
   return (
     <div className="fixed sm:static inset-x-0 bottom-0 z-40 max-h-[70vh] sm:max-h-none w-full sm:w-72 border-t sm:border-t-0 sm:border-l border-white/10 flex flex-col bg-[#0b0f16] p-3 gap-2 rounded-t-2xl sm:rounded-none shadow-2xl sm:shadow-none overflow-y-auto">
-      <div className="text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-amber-400" /> Nina — criar slides</div>
-      <p className="text-[11px] text-gray-400">Descreva o tema e a Nina monta a apresentação inteira.</p>
+      <div className="text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-amber-400" /> Yumi — criar slides</div>
+      <p className="text-[11px] text-gray-400">Descreva o tema e a Yumi monta a apresentação inteira.</p>
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Ex.: Energia solar no Brasil, para uma aula do ensino médio" className="bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none resize-none" />
       <label className="text-[11px] text-gray-400 flex items-center gap-2">Slides: <input type="number" min={3} max={20} value={n} onChange={(e) => setN(Number(e.target.value))} className="w-16 bg-black/30 border border-white/10 rounded px-2 py-1 text-xs outline-none" /></label>
       {err && <p className="text-[11px] text-red-400">{err}</p>}

@@ -1,6 +1,6 @@
 // Gera as imagens de prévia dos modelos do Estúdio → Documentos.
 //
-// A Nina manda essas imagens no WhatsApp para o cliente aprovar o visual ANTES
+// A Yumi manda essas imagens no WhatsApp para o cliente aprovar o visual ANTES
 // de ela produzir o documento. Elas são geradas aqui, no build, e versionadas em
 // public/modelos/ — assim o serviço do WhatsApp (que não tem navegador) só
 // precisa mandar a URL, sem renderizar nada em tempo de execução.

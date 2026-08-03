@@ -14,7 +14,7 @@ import { cmToTwip } from "./types";
 const FONT = "Calibri";
 const hex = (c: string) => (/^#?([0-9a-f]{6})$/i.exec(String(c).trim())?.[1] ?? "4F46E5").toUpperCase();
 
-// Sem depender de atob: este builder também roda no servidor (rota que a Nina
+// Sem depender de atob: este builder também roda no servidor (rota que a Yumi
 // usa para montar o currículo e entregar pelo WhatsApp).
 function dataUrlToBytes(url: string): Uint8Array | null {
   try {

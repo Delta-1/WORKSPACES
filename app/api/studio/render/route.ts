@@ -18,7 +18,7 @@ export const maxDuration = 120;
 
 // Monta o .docx de qualquer modelo do Estúdio, no SERVIDOR.
 //
-// Existe para a Nina: o serviço do WhatsApp roda em Node puro, sem navegador,
+// Existe para a Yumi: o serviço do WhatsApp roda em Node puro, sem navegador,
 // e portanto não consegue usar os construtores de documento (que dependem de
 // DOM). Em vez de reescrever tudo lá — e ter duas versões para divergir —, ele
 // chama esta rota e recebe o arquivo pronto.
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 
   // Dois caminhos de entrada:
   // • navegador — token do usuário, RLS aplicada normalmente;
-  // • serviço do WhatsApp (Nina) — segredo compartilhado + company_id explícito,
+  // • serviço do WhatsApp (Yumi) — segredo compartilhado + company_id explícito,
   //   porque lá não existe usuário logado. Sem o company_id o cabeçalho sairia
   //   com os dados de uma empresa qualquer, já que a service role vê todas.
   const secret = request.headers.get("x-service-secret");

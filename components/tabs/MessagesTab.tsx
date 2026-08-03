@@ -1980,7 +1980,7 @@ function ContactProfileModal({
                   <Star size={14} className={exempt ? "text-amber-300" : "text-gray-400"} /> ADM — usa sem pagar
                 </span>
                 <span className="text-[10px] text-gray-500 leading-tight">
-                  Não gasta pips e a IA nem comenta preço. Para quem testa.
+                  Não desconta do saldo e a IA nem comenta preço. Para quem testa.
                 </span>
               </span>
               <span className={`text-[11px] font-semibold shrink-0 ${exempt ? "text-amber-300" : "text-gray-500"}`}>{exempt ? "LIGADO" : "desligado"}</span>

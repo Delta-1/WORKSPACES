@@ -5,7 +5,7 @@ import { supabaseForRequest } from "@/lib/supabase-server";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-// A IA (Nina) do Estúdio: recebe o pedido do usuário e devolve HTML pronto para
+// A IA (Yumi) do Estúdio: recebe o pedido do usuário e devolve HTML pronto para
 // entrar na página do editor (títulos, parágrafos, listas). Usa a IA configurada
 // no Workspace — sem API externa.
 export async function POST(request: Request) {
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   const metaTxt = body.meta ? Object.entries(body.meta).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("; ") : "";
 
   const system =
-    `Você é a Nina, redatora do Estúdio (editor de documentos do Workspace). Você produz o conteúdo de um documento seguindo ${norma}.\n` +
+    `Você é a Yumi, redatora do Estúdio (editor de documentos do Workspace). Você produz o conteúdo de um documento seguindo ${norma}.\n` +
     `Devolva SOMENTE HTML de corpo de documento — use apenas as tags <h1> <h2> <h3> <p> <ul> <li> <ol> <b> <i> <u>. Sem <html>, <head>, <style>, sem markdown, sem comentários.\n` +
     `Títulos de seção em <h1>/<h2>. Parágrafos reais e desenvolvidos em <p> (nada de tópicos vazios).\n` +
     (metaTxt ? `Dados do trabalho: ${metaTxt}.\n` : "") +

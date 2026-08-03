@@ -1,4 +1,4 @@
-// Geração de trabalhos acadêmicos e apresentações para a Nina entregar pelo
+// Geração de trabalhos acadêmicos e apresentações para a Yumi entregar pelo
 // WhatsApp: usa a MESMA IA do bot (sem API externa) e monta .docx / .pdf / .pptx
 // como Buffer, prontos para enviar.
 import Anthropic from "@anthropic-ai/sdk";
@@ -10,7 +10,7 @@ import pptxgen from "pptxgenjs";
 
 // ---- chamada de IA (mesmo provedor/chave do bot) que devolve texto ----
 // `imagem` ({ b64, mime }) é opcional: quando vem, o modelo OLHA a imagem — é
-// assim que a Nina lê a capa de um modelo fotografado ou printado.
+// assim que a Yumi lê a capa de um modelo fotografado ou printado.
 async function askModel(provider, key, system, userMsg, imagem = null) {
   if (provider === "gemini") {
     const parts = [{ text: userMsg }];
@@ -74,7 +74,7 @@ export async function generateWork(provider, key, input) {
 // ---- ARQUIVO-MODELO → NORMA SOB MEDIDA ----
 //
 // A pessoa manda o modelo da própria faculdade (o PDF do manual, um trabalho
-// antigo, a foto da capa) e a formatação sai DELE, em vez de a Nina chutar uma
+// antigo, a foto da capa) e a formatação sai DELE, em vez de a Yumi chutar uma
 // norma parecida. O que o modelo devolve é só uma proposta: quem valida campo a
 // campo é `resolveNorm` no app — margem, fonte e citação inventadas são
 // descartadas lá, então uma leitura ruim nunca vira um documento fora de norma.

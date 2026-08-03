@@ -393,7 +393,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
         </div>
 
         <div className="flex items-center gap-2">
-          <input value={f.name ?? ""} onChange={(e) => set({ name: e.target.value })} placeholder="Nome do agente (ex.: Nina)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+          <input value={f.name ?? ""} onChange={(e) => set({ name: e.target.value })} placeholder="Nome do agente (ex.: Yumi)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
           <div className="flex gap-1">
             {ACCENTS.map((c) => (
               <button key={c} onClick={() => set({ accent: c })} className="w-5 h-5 rounded-full border-2 cursor-pointer" style={{ background: c, borderColor: f.accent === c ? "#fff" : "transparent" }} />

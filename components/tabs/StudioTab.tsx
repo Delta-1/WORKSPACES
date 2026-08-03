@@ -153,7 +153,7 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
             <div className="w-11 h-11 rounded-xl bg-amber-500/20 text-amber-300 grid place-items-center mb-3 group-hover:scale-105 transition"><Presentation size={22} /></div>
             <p className="text-base font-bold">Apresentações</p>
             <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
-              Slides criados com a Nina, editáveis um a um, com temas prontos e exportação em PowerPoint e PDF.
+              Slides criados com a Yumi, editáveis um a um, com temas prontos e exportação em PowerPoint e PDF.
             </p>
           </button>
         </div>
@@ -265,7 +265,7 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [showNina, setShowNina] = useState(true);
+  const [showYumi, setShowYumi] = useState(true);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { if (ref.current) ref.current.innerHTML = doc.content || "<p><br></p>"; document.execCommand("styleWithCSS", false, "true"); /* eslint-disable-next-line */ }, []);
@@ -326,7 +326,7 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
         <input value={title} onChange={(e) => { setTitle(e.target.value); scheduleSave(); }} className="bg-transparent text-sm font-semibold outline-none border-b border-transparent focus:border-white/20 px-1 min-w-[120px]" />
         <span className="text-[10px] text-gray-500">{saving ? "salvando…" : savedAt ? `salvo ${savedAt}` : ""}</span>
         <div className="ml-auto flex items-center gap-1.5">
-          <button onClick={() => setShowNina((v) => !v)} className={`text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer ${showNina ? "bg-blue-600 text-white" : "bg-white/10 hover:bg-white/15"}`}><Wand2 size={13} /> Nina</button>
+          <button onClick={() => setShowYumi((v) => !v)} className={`text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg cursor-pointer ${showYumi ? "bg-blue-600 text-white" : "bg-white/10 hover:bg-white/15"}`}><Wand2 size={13} /> Yumi</button>
           <button onClick={exportDocx} disabled={exporting} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-50">{exporting ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />} .docx</button>
           <button onClick={exportPdf} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer"><Printer size={13} /> PDF</button>
           <button onClick={doSave} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"><Save size={13} /></button>
@@ -363,7 +363,7 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
         <button onClick={() => setZoom((z) => Math.min(1.8, z + 0.1))} className="w-7 h-7 grid place-items-center rounded hover:bg-white/10 text-xs cursor-pointer">+</button>
       </div>
 
-      {/* Canvas + Nina */}
+      {/* Canvas + Yumi */}
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-auto custom-scroll bg-[#20242c] p-6 flex justify-center">
           <div
@@ -376,7 +376,7 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
             style={{ width: "21cm", minHeight: "29.7cm", padding: "3cm 2cm 2cm 3cm", boxShadow: "0 10px 40px rgba(0,0,0,.5)", transform: `scale(${zoom})`, transformOrigin: "top center", fontFamily: font, fontSize: `${size}pt`, lineHeight: 1.5 }}
           />
         </div>
-        {showNina && <NinaPanel doc={doc} editorRef={ref} onApplied={scheduleSave} />}
+        {showYumi && <YumiPanel doc={doc} editorRef={ref} onApplied={scheduleSave} />}
       </div>
 
       <style>{`
@@ -392,10 +392,10 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
   );
 }
 
-// Painel lateral da Nina: conversa e aplica o conteúdo no documento.
-function NinaPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.RefObject<HTMLDivElement | null>; onApplied: () => void }) {
+// Painel lateral da Yumi: conversa e aplica o conteúdo no documento.
+function YumiPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.RefObject<HTMLDivElement | null>; onApplied: () => void }) {
   const [msgs, setMsgs] = useState<{ role: "user" | "nina"; text: string; html?: string }[]>([
-    { role: "nina", text: "Oi! Sou a Nina 💙 Me diga o que criar ou ajustar neste documento (ex.: “faça uma introdução sobre energia solar”). Eu escrevo e você aplica na página." },
+    { role: "nina", text: "Oi! Sou a Yumi 💙 Me diga o que criar ou ajustar neste documento (ex.: “faça uma introdução sobre energia solar”). Eu escrevo e você aplica na página." },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -427,7 +427,7 @@ function NinaPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
 
   return (
     <div className="fixed sm:static inset-x-0 bottom-0 z-40 h-[58vh] sm:h-auto w-full sm:w-80 border-t sm:border-t-0 sm:border-l border-white/10 flex flex-col bg-[#0b0f16] rounded-t-2xl sm:rounded-none shadow-2xl sm:shadow-none">
-      <div className="px-3 py-2 border-b border-white/10 text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-blue-400" /> Nina — criação com IA</div>
+      <div className="px-3 py-2 border-b border-white/10 text-sm font-bold flex items-center gap-2"><Sparkles size={14} className="text-blue-400" /> Yumi — criação com IA</div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-2 space-y-2">
         {msgs.map((m, i) => (
           <div key={i} className={m.role === "user" ? "text-right" : ""}>
@@ -440,10 +440,10 @@ function NinaPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
             )}
           </div>
         ))}
-        {busy && <p className="text-[11px] text-gray-500 italic px-1">Nina está escrevendo…</p>}
+        {busy && <p className="text-[11px] text-gray-500 italic px-1">Yumi está escrevendo…</p>}
       </div>
       <div className="p-2 border-t border-white/10 space-y-1.5">
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send("append"); } }} rows={2} placeholder="Peça algo à Nina…" className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none resize-none" />
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send("append"); } }} rows={2} placeholder="Peça algo à Yumi…" className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none resize-none" />
         <div className="flex gap-1.5">
           <button onClick={() => send("replace")} disabled={busy || !input.trim()} className="flex-1 text-[11px] py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white cursor-pointer disabled:opacity-50">Criar documento</button>
           <button onClick={() => send("append")} disabled={busy || !input.trim()} className="flex-1 text-[11px] py-1.5 rounded bg-white/10 hover:bg-white/15 cursor-pointer disabled:opacity-50">Complementar</button>

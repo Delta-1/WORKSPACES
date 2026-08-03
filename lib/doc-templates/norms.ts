@@ -184,7 +184,7 @@ export function resolveNorm(id?: string | null, custom?: CustomNorm | null): Nor
   };
 }
 
-// Campos da capa. É exatamente esta lista que a Nina percorre no WhatsApp,
+// Campos da capa. É exatamente esta lista que a Yumi percorre no WhatsApp,
 // perguntando um por vez, e que a interface mostra no formulário da capa.
 export const COVER_FIELDS: DocField[] = [
   { id: "universidade", label: "Universidade", question: "Qual é o nome da sua universidade ou instituição?", required: true },

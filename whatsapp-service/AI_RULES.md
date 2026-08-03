@@ -1,7 +1,7 @@
 # Regras das IAs de mensagem (Workspace)
 
 Estas regras são **injetadas automaticamente** no prompt de **todas** as IAs de
-mensagem (bots de atendimento, copiloto e agentes como a Nina), para **todos os
+mensagem (bots de atendimento, copiloto e agentes como a Yumi), para **todos os
 usuários — atuais e novos**. Não é preciso configurar nada: já vêm ligadas.
 
 Fonte de verdade: constante `SYSTEM_RULES` em `whatsapp-service/src/server.js`.
@@ -24,11 +24,11 @@ Fonte de verdade: constante `SYSTEM_RULES` em `whatsapp-service/src/server.js`.
 ## Recursos de resposta disponíveis para as IAs
 
 - **`[[TEXTO]]` (ou `[[LISTA]]`)** no meio da resposta: a parte **de cima** é
-  falada por **áudio** e a parte **de baixo** é enviada por **texto** (ex.: a Nina
+  falada por **áudio** e a parte **de baixo** é enviada por **texto** (ex.: a Yumi
   se apresenta por voz e manda a listinha de funções em texto).
 - Respostas que são uma **listagem** já são enviadas por **texto** automaticamente.
 
-## Nina (assistente acadêmica) — comportamento
+## Yumi (assistente acadêmica) — comportamento
 
 - Memória **contínua por contato** (lembra dos dados e do tipo de arquivo que a
   pessoa costuma pedir e se adapta).
@@ -64,9 +64,9 @@ curta, sem cumprimentar toda hora, assunto pessoal no privado. Quando a conversa
 claramente não é com ela, responde `[[NADA]]` — filtrado antes do envio, para
 poder ficar quieta sem inventar uma resposta.
 
-## Documentos do Estúdio (Nina)
+## Documentos do Estúdio (Yumi)
 
-A Nina produz **todos** os modelos do Estúdio → Documentos: currículo,
+A Yumi produz **todos** os modelos do Estúdio → Documentos: currículo,
 monografia, trabalho acadêmico, contrato, orçamento, questionário, resumo e
 resumão. O roteiro é sempre o mesmo:
 
@@ -76,21 +76,21 @@ resumão. O roteiro é sempre o mesmo:
 3. `documento_previa` — manda a **imagem** de como o documento vai ficar e
    espera a aprovação. Modelos com variação (temas do currículo, normas da
    monografia) têm uma prévia por variação.
-4. `documento_criar` — só depois do "pode fazer". A Nina escreve o conteúdo e o
+4. `documento_criar` — só depois do "pode fazer". A Yumi escreve o conteúdo e o
    site monta o `.docx` (`/api/studio/render`), com a mesma formatação da tela.
 
-Depende de `APP_URL` configurada no serviço. Sem ela, a Nina segue atendendo
+Depende de `APP_URL` configurada no serviço. Sem ela, a Yumi segue atendendo
 normalmente, apenas sem oferecer os modelos do Estúdio.
 
 ### Monografia — quando o modelo é o da faculdade
 
-Antes de escrever, a Nina pergunta quatro coisas: **universidade e curso**,
+Antes de escrever, a Yumi pergunta quatro coisas: **universidade e curso**,
 **ABNT ou APA**, se quer a **logo** da instituição na capa e se ela **tem o
 modelo/manual** da faculdade.
 
 Se tiver, `documento_norma_do_arquivo` lê o arquivo (PDF, Word ou foto da capa)
 e extrai margens, fonte, entrelinha, recuo, papel, estilo de citação e se a capa
-tem moldura. A formatação sai do documento dela, em vez de a Nina escolher uma
+tem moldura. A formatação sai do documento dela, em vez de a Yumi escolher uma
 norma parecida.
 
 O que o modelo devolve é uma **proposta**: quem decide é `resolveNorm`
@@ -104,17 +104,17 @@ PDF e no `.docx`, e a proporção real da imagem é lida do próprio arquivo
 (`lib/studio-docx.ts`), então nada é entregue esticado.
 
 `ler_arquivo_enviado` é a versão geral: devolve o texto de qualquer PDF/Word que
-a pessoa mandou, para a Nina aproveitar os dados (nome, universidade, o enunciado
+a pessoa mandou, para a Yumi aproveitar os dados (nome, universidade, o enunciado
 do professor). PDF escaneado volta sem texto — aí ela pede uma foto.
 
-Quando a pessoa **não tem tema**, a Nina não escolhe por ela: pergunta curso,
+Quando a pessoa **não tem tema**, a Yumi não escolhe por ela: pergunta curso,
 matéria e interesse e sugere três temas viáveis, com uma linha dizendo por quê.
 
-## A Nina lembra das pessoas
+## A Yumi lembra das pessoas
 
 `contacts.memory` (jsonb) guarda o que ela aprendeu: nome completo, universidade,
 faculdade, curso, cidade, orientador(a), norma preferida. Entra no prompt de toda
-conversa daquele contato — é o que faz a Nina "lembrar" mesmo depois de o
+conversa daquele contato — é o que faz a Yumi "lembrar" mesmo depois de o
 histórico ser cortado.
 
 Escrita só por `memoria_salvar` → `contact_memory_set`, que **mescla** com o que
@@ -124,36 +124,82 @@ vazio remove a chave.
 Na segunda monografia ela chega sabendo e **confirma** ("continua na UPDS,
 medicina?") em vez de perguntar tudo de novo.
 
-## Pips — os créditos dos serviços da Nina
+## Carteira — cobranças e recebimentos no mesmo lugar
 
-1 pip = **R$ 0,50**. Monografia/trabalho custam **100 pips (R$ 50)**; apresentação,
-**20 pips (R$ 10)**. Os valores vivem em `lib/pips.ts` e a Nina os consulta com
-`pips_tabela` — ela nunca inventa preço.
+O **Cobrador deixou de ser um app separado** e virou uma aba da Carteira: cobrar
+e receber é a mesma história, e ter dois ícones obrigava a pular de tela para
+saber se a cobrança virou dinheiro. As abas são *Resumo · Cobranças · Situação
+dos clientes · Configurações*.
 
-**A Nina nunca calcula saldo.** Todo movimento passa pelas funções do banco
+O token do Mercado Pago da empresa é registrado ali (dentro de Configurações) e
+validado no `/users/me` antes de ser salvo. De lá saem duas coisas: o que já
+entrou na conta e o **Pix automático** do Cobrador.
+
+**Pix automático (`carteira_pix_auto`).** Ligado, cada cobrança ganha um Pix
+próprio criado pela API, carimbado com `external_reference = cob:<alvo>`. Quando
+cai, o webhook sabe exatamente qual cobrança quitar, de quanto e por qual meio —
+**ninguém precisa ler o comprovante que o cliente mandou**. Desligado, o Cobrador
+segue mandando a chave Pix estática, como sempre.
+
+Dois detalhes que não são opcionais:
+
+- O `notification_url` leva `?cid=<empresa>`. O pagamento foi criado com o token
+  DA EMPRESA e **só pode ser lido com ele** — sem o `cid`, o webhook consultaria
+  com o token da plataforma, tomaria 404 e a cobrança nunca seria quitada.
+- A criação do Pix mora em `/api/carteira/pix`, usada tanto pelo agendador quanto
+  pelo botão "enviar agora" do painel. Se cada um gerasse o seu, o cliente
+  receberia dois códigos para a mesma dívida.
+
+Quando a cobrança tem Pix próprio, o comprovante enviado no WhatsApp **não** dá
+baixa: o bot agradece e espera o webhook, que chega em segundos. Um print pode
+ser de outro valor, de outro dia ou de outra pessoa — e aqui não precisamos
+confiar nele.
+
+Saldo da conta: o Mercado Pago **não** tem endpoint público de saldo em tempo
+real (o oficial é um relatório assíncrono). A Carteira tenta o endpoint não
+documentado e, se ele não responder, esconde o cartão em vez de mostrar R$ 0,00.
+O que a empresa realmente precisa ver — o que entrou — vem de
+`/v1/payments/search`, que é documentado e estável.
+
+## Saldo em reais
+
+Tudo em **reais**, sem moeda interna: monografia/trabalho **R$ 50,00**,
+apresentação **R$ 10,00**. Os valores vivem em `lib/precos.ts` e a Yumi os
+consulta com `tabela_precos` — ela nunca inventa preço.
+
+Por dentro é **centavos** (inteiro). Dinheiro em ponto flutuante arredonda errado
+— `0.1 + 0.2` não dá `0.3` — e um centavo furado numa cobrança é problema de
+verdade. Reais só aparecem no texto que a Yumi lê.
+
+**A Yumi nunca calcula saldo.** Todo movimento passa pelas funções do banco
 (`credits_add` / `credits_debit`), que são atômicas: não existe saldo negativo, e
-um débito sem saldo é recusado pelo Postgres, não pela IA. O saldo vem sempre de
-`pips_saldo`, mesmo quando a Nina "acha" que sabe o valor.
+uma cobrança sem saldo é recusada pelo Postgres, não pela IA. O saldo vem sempre
+de `saldo_consultar`, mesmo quando a Yumi "acha" que sabe o valor.
 
 Fluxo obrigatório antes de qualquer serviço pago:
 
-1. dizer o preço em pips **e** em reais;
-2. consultar `pips_saldo`;
-3. pedir confirmação — *"vou usar X pips do seu saldo de Y pips, posso?"*;
-4. só com o sim, `pips_cobrar`;
+1. dizer o preço em reais;
+2. consultar `saldo_consultar`;
+3. pedir confirmação — *"vou descontar R$ 50,00 do seu saldo de R$ 80,00, posso?"*;
+4. só com o sim, `cobrar_servico`;
 5. só então produzir.
 
-Compra pelo chat com `pips_comprar`: **Pix criado pela API** (a Nina manda o QR
-como imagem e o copia-e-cola em mensagem separada) ou **link de cartão**. O
-crédito entra sozinho pelo webhook do Mercado Pago quando o pagamento é aprovado;
-`pips_conferir` é a rede de segurança para quando a pessoa diz "já paguei" antes
-de o webhook chegar. Creditar duas vezes é impossível: `credits_add` é idempotente
-pelo id do pagamento.
+Recarga pelo chat com `saldo_recarregar`: **Pix criado pela API** (a Yumi manda o
+QR como imagem e o copia-e-cola em mensagem separada) ou **link de cartão**. O
+saldo entra sozinho pelo webhook do Mercado Pago quando o pagamento é aprovado;
+`pagamento_conferir` é a rede de segurança para quando a pessoa diz "já paguei"
+antes de o webhook chegar. Creditar duas vezes é impossível: `credits_add` é
+idempotente pelo id do pagamento. O valor creditado é o que o Mercado Pago
+realmente recebeu — não o que a IA achou que era.
+
+As ferramentas de cobrança só existem para o agente que tem a capacidade
+**"Saldo e cobrança"** (`creditos`) marcada no Labs. Sem ela, a Yumi atende
+normalmente e não cobra nada.
 
 Quem recebe: o token do próprio agente (`chatbots.mercadopago_token`) e, na falta
 dele, o `MERCADOPAGO_ACCESS_TOKEN` da plataforma — que é o caso hoje.
 
-Na primeira conversa a Nina se apresenta, **pergunta o nome** e o guarda no
+Na primeira conversa a Yumi se apresenta, **pergunta o nome** e o guarda no
 contato (`salvar_nome_contato`), sem sobrescrever um nome já cadastrado.
 
 ### Contato ADM — usa sem pagar
@@ -161,10 +207,10 @@ contato (`salvar_nome_contato`), sem sobrescrever um nome já cadastrado.
 `contacts.billing_exempt` marca quem usa os serviços de graça (quem testa a
 plataforma). O interruptor fica no perfil do contato, em Mensagens.
 
-A isenção é aplicada em `/api/pips`, o **único** ponto por onde o saldo se move:
-`debitar` devolve ok sem chamar `credits_debit`, `saldo` não consulta nada e
-`comprar` não gera pagamento. Não depende da IA lembrar — mesmo que ela chame a
-cobrança, nada é debitado e nada entra no extrato.
+A isenção é aplicada em `/api/creditos`, o **único** ponto por onde o saldo se
+move: `cobrar` devolve ok sem chamar `credits_debit`, `saldo` não consulta nada e
+`recarregar` não gera pagamento. Não depende da IA lembrar — mesmo que ela chame
+a cobrança, nada é descontado e nada entra no extrato.
 
-No prompt ela ainda recebe a instrução de **não falar de preço, pips nem saldo**
+No prompt ela ainda recebe a instrução de **não falar de preço, valor nem saldo**
 com esse contato, para não ficar anunciando valor a quem não vai pagar.

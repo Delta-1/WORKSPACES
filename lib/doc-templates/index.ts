@@ -1,8 +1,8 @@
 // Registry dos modelos do Estúdio → Documentos.
 //
 // FONTE ÚNICA DE VERDADE: a galeria "Selecione o modelo" no site lê daqui, e a
-// Nina (WhatsApp) também — ela consome via /api/studio/models. Assim, quando um
-// modelo novo entra aqui, a Nina passa a saber oferecê-lo e quais perguntas
+// Yumi (WhatsApp) também — ela consome via /api/studio/models. Assim, quando um
+// modelo novo entra aqui, a Yumi passa a saber oferecê-lo e quais perguntas
 // fazer, sem precisar mexer no código dela.
 
 import type { DocModel } from "./types";
