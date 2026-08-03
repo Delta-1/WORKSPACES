@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
+import BillingTab from "./BillingTab";
 
 type Movimento = {
   id: string;
@@ -48,8 +49,19 @@ async function authHeaders(): Promise<Record<string, string>> {
   return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
 
-export default function CarteiraTab({ profile }: { profile: Profile | null }) {
+type Secao = "resumo" | "cobrancas" | "situacao" | "config";
+
+// CARTEIRA — o dinheiro da empresa num lugar só.
+//
+// O Cobrador mora aqui dentro: cobrar e receber é a mesma história, e separar em
+// dois ícones fazia a pessoa pular de tela para entender se a cobrança que ela
+// mandou virou dinheiro. A barra de abas é uma só; o Cobrador entra "embutido".
+export default function CarteiraTab({ profile, onOpenMessages }: {
+  profile: Profile | null;
+  onOpenMessages?: (phone: string, name: string) => void;
+}) {
   const isGestor = profile?.role === "gestor";
+  const [secao, setSecao] = useState<Secao>("resumo");
   const [data, setData] = useState<Carteira | null>(null);
   const [loading, setLoading] = useState(true);
   const [dias, setDias] = useState(30);
@@ -112,49 +124,10 @@ export default function CarteiraTab({ profile }: { profile: Profile | null }) {
 
   const r = data?.resumo;
 
-  return (
-    <div className="h-full overflow-y-auto custom-scroll">
-      <div className="max-w-5xl mx-auto p-4 space-y-4">
-        {/* Cabeçalho */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-900/60 grid place-items-center shrink-0">
-            <Wallet size={19} className="text-emerald-300" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold leading-tight">Carteira</h2>
-            <p className="text-[11px] text-gray-400">
-              {data?.conectada && data.conta
-                ? <>Conta Mercado Pago <b>{data.conta.apelido || data.conta.email || data.conta.id}</b></>
-                : "Sua conta Mercado Pago dentro da plataforma"}
-            </p>
-          </div>
-          <button
-            onClick={() => void recarregar()}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCcw size={12} className={loading ? "animate-spin" : ""} /> Atualizar
-          </button>
-          {isGestor && (
-            <button
-              onClick={() => setConfig((v) => !v)}
-              className="text-[11px] px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer"
-            >
-              {config ? "Fechar" : "Configurações"}
-            </button>
-          )}
-        </div>
-
-        {erro && (
-          <div className="flex items-start gap-2 rounded-xl border border-red-800/50 bg-red-950/30 px-3 py-2.5">
-            <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
-            <p className="text-[12px] text-red-200">{erro}</p>
-          </div>
-        )}
-
-        {/* Configurações */}
-        {config && isGestor && (
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
+  // Conexão com o Mercado Pago. Vai para dentro das Configurações do Cobrador
+  // (via `topoConfig`), para token e cobrança ficarem na mesma tela.
+  const conexao = !isGestor ? null : (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
             <div>
               <h3 className="text-sm font-bold">Conexão com o Mercado Pago</h3>
               <p className="text-[11px] text-gray-400 mt-0.5">
@@ -218,6 +191,63 @@ export default function CarteiraTab({ profile }: { profile: Profile | null }) {
                 </span>
               </label>
             </div>
+    </div>
+  );
+
+  const abas: [Secao, string][] = [
+    ["resumo", "Resumo"],
+    ["cobrancas", "Cobranças"],
+    ["situacao", "Situação dos clientes"],
+    ["config", "Configurações"],
+  ];
+
+  return (
+    <div className="h-full flex flex-col bg-[#0b0f16] text-gray-100 overflow-hidden">
+      <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-900/60 grid place-items-center shrink-0">
+            <Wallet size={19} className="text-emerald-300" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-bold leading-tight">Carteira</h2>
+            <p className="text-[11px] text-gray-400">
+              {data?.conectada && data.conta
+                ? <>Conta Mercado Pago <b>{data.conta.apelido || data.conta.email || data.conta.id}</b> · cobranças e recebimentos</>
+                : "Cobranças, recebimentos e sua conta Mercado Pago"}
+            </p>
+          </div>
+          {secao === "resumo" && (
+            <button
+              onClick={() => void recarregar()}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCcw size={12} className={loading ? "animate-spin" : ""} /> Atualizar
+            </button>
+          )}
+        </div>
+        <div className="flex gap-1 mt-3 overflow-x-auto">
+          {abas.map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setSecao(id)}
+              className={`text-xs px-3 py-1.5 rounded-lg whitespace-nowrap cursor-pointer ${secao === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {secao !== "resumo" ? (
+        <BillingTab profile={profile} onOpenMessages={onOpenMessages} embutido secao={secao} topoConfig={conexao} />
+      ) : (
+      <div className="flex-1 overflow-y-auto custom-scroll">
+        <div className="max-w-5xl mx-auto p-4 space-y-4">
+        {erro && (
+          <div className="flex items-start gap-2 rounded-xl border border-red-800/50 bg-red-950/30 px-3 py-2.5">
+            <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
+            <p className="text-[12px] text-red-200">{erro}</p>
           </div>
         )}
 
@@ -354,7 +384,9 @@ export default function CarteiraTab({ profile }: { profile: Profile | null }) {
             )}
           </>
         )}
+        </div>
       </div>
+      )}
     </div>
   );
 }

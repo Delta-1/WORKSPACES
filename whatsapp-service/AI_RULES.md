@@ -124,11 +124,16 @@ vazio remove a chave.
 Na segunda monografia ela chega sabendo e **confirma** ("continua na UPDS,
 medicina?") em vez de perguntar tudo de novo.
 
-## Carteira — a conta Mercado Pago da empresa
+## Carteira — cobranças e recebimentos no mesmo lugar
 
-O token do Mercado Pago da empresa é registrado na **Carteira** (não mais no
-Cobrador) e validado no `/users/me` antes de ser salvo. De lá saem duas coisas:
-o que já entrou na conta e o **Pix automático** do Cobrador.
+O **Cobrador deixou de ser um app separado** e virou uma aba da Carteira: cobrar
+e receber é a mesma história, e ter dois ícones obrigava a pular de tela para
+saber se a cobrança virou dinheiro. As abas são *Resumo · Cobranças · Situação
+dos clientes · Configurações*.
+
+O token do Mercado Pago da empresa é registrado ali (dentro de Configurações) e
+validado no `/users/me` antes de ser salvo. De lá saem duas coisas: o que já
+entrou na conta e o **Pix automático** do Cobrador.
 
 **Pix automático (`carteira_pix_auto`).** Ligado, cada cobrança ganha um Pix
 próprio criado pela API, carimbado com `external_reference = cob:<alvo>`. Quando

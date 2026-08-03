@@ -31,9 +31,21 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   cancelado: { label: "Cancelado", cls: "bg-zinc-800 text-zinc-500" },
 };
 
-export default function BillingTab({ profile, onOpenMessages }: { profile: Profile | null; onOpenMessages?: (phone: string, name: string) => void }) {
+type Secao = "cobrancas" | "situacao" | "config";
+
+// Vive dentro da CARTEIRA. `secao` vem de lá (a barra de abas é única), e
+// `topoConfig` deixa a Carteira colocar a conexão com o Mercado Pago acima das
+// configurações de cobrança — as duas coisas ficam na mesma tela.
+export default function BillingTab({ profile, onOpenMessages, embutido, secao, topoConfig }: {
+  profile: Profile | null;
+  onOpenMessages?: (phone: string, name: string) => void;
+  embutido?: boolean;
+  secao?: Secao;
+  topoConfig?: React.ReactNode;
+}) {
   const cid = profile?.company_id ?? null;
-  const [section, setSection] = useState<"cobrancas" | "situacao" | "config">("cobrancas");
+  const [secaoInterna, setSecaoInterna] = useState<Secao>("cobrancas");
+  const section = secao ?? secaoInterna;
   const [charges, setCharges] = useState<Charge[]>([]);
   const [targets, setTargets] = useState<Target[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -124,22 +136,29 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
 
   return (
     <div className="h-full flex flex-col bg-[#0b0f16] text-gray-100 overflow-hidden">
-      <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold flex items-center gap-2"><DollarSign size={20} className="text-emerald-400" /> Cobrador</h2>
-            <p className="text-xs text-gray-400">Cobranças automáticas por WhatsApp — Pix, Mercado Pago, lembretes e comprovantes.</p>
+      {!embutido && (
+        <div className="px-4 md:px-6 pt-4 pb-2 border-b border-white/10">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold flex items-center gap-2"><DollarSign size={20} className="text-emerald-400" /> Cobrador</h2>
+              <p className="text-xs text-gray-400">Cobranças automáticas por WhatsApp — Pix, Mercado Pago, lembretes e comprovantes.</p>
+            </div>
+            <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"><Plus size={15} /> Criar cobrança</button>
           </div>
-          <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"><Plus size={15} /> Criar cobrança</button>
+          <div className="flex gap-1 mt-3">
+            {([["cobrancas", "Cobranças"], ["situacao", "Situação dos clientes"], ["config", "Configurações"]] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setSecaoInterna(id)} className={`text-xs px-3 py-1.5 rounded-lg ${section === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}>{label}</button>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-1 mt-3">
-          {([["cobrancas", "Cobranças"], ["situacao", "Situação dos clientes"], ["config", "Configurações"]] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setSection(id)} className={`text-xs px-3 py-1.5 rounded-lg ${section === id ? "bg-white/10 text-white" : "text-gray-400 hover:text-gray-200"}`}>{label}</button>
-          ))}
-        </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {embutido && section === "cobrancas" && (
+          <div className="flex justify-end mb-3">
+            <button onClick={() => setShowNew(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"><Plus size={15} /> Criar cobrança</button>
+          </div>
+        )}
         {/* KPIs */}
         <div className="grid grid-cols-3 gap-3 mb-4">
           <Kpi label="A receber" value={money(totalPend)} sub={`${pending.length} cobranças`} tone="amber" />
@@ -201,7 +220,12 @@ export default function BillingTab({ profile, onOpenMessages }: { profile: Profi
           </div>
         )}
 
-        {section === "config" && <ConfigSection cid={cid} settings={settings} setSettings={setSettings} numbers={numbers} flash={flash} />}
+        {section === "config" && (
+          <div className="space-y-4">
+            {topoConfig}
+            <ConfigSection cid={cid} settings={settings} setSettings={setSettings} numbers={numbers} flash={flash} />
+          </div>
+        )}
       </div>
 
       {showNew && <NewChargeModal cid={cid} contacts={contacts} agents={agents} numbers={numbers} settings={settings} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); load(); flash("Cobrança criada."); }} onContactsChanged={load} />}
