@@ -4057,8 +4057,49 @@ function fillBillingTemplate(tpl, v) {
   return out.replace(/\n{3,}/g, "\n\n");
 }
 async function getBillingSettings(companyId) {
-  const { data } = await supabase.from("company_settings").select("billing_pix_key,billing_default_template,name").eq("company_id", companyId).maybeSingle();
+  const { data } = await supabase
+    .from("company_settings")
+    .select("company_id,billing_pix_key,billing_default_template,name,billing_mercadopago_token,carteira_pix_auto")
+    .eq("company_id", companyId)
+    .maybeSingle();
   return data || {};
+}
+
+// ---------------------------------------------------------------------------
+// PIX DA COBRANÇA, criado pela API do Mercado Pago.
+//
+// É o que tira a IA do caminho da conciliação. Com a chave Pix estática, o
+// dinheiro cai sem nome e alguém (ou a IA, lendo o comprovante que o cliente
+// mandou) precisa adivinhar de quem foi. Aqui cada cobrança ganha um Pix
+// próprio, carimbado com o id dela — quando cai, o webhook sabe exatamente qual
+// quitar, de quanto e por qual meio.
+//
+// Reaproveita o Pix já criado: chamar duas vezes para a mesma cobrança (lembrete
+// + cobrança no vencimento) não gera dois pagamentos.
+// ---------------------------------------------------------------------------
+async function pixDaCobranca(alvo, bs) {
+  if (alvo.pix_code) return alvo.pix_code; // já tem — reaproveita
+  if (!bs.carteira_pix_auto || !bs.billing_mercadopago_token) return null;
+  if (!APP_URL || !SERVICE_SECRET) return null;
+  try {
+    // Quem cria é o site (/api/carteira/pix). O botão "enviar agora" do painel
+    // usa a MESMA rota, então o cliente nunca recebe dois códigos diferentes
+    // para a mesma dívida.
+    const resp = await fetch(`${APP_URL}/api/carteira/pix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-service-secret": SERVICE_SECRET },
+      body: JSON.stringify({ target_id: alvo.id, company_id: alvo.company_id }),
+    });
+    const out = await resp.json();
+    if (!resp.ok) {
+      console.error("pixDaCobranca:", out?.error || `HTTP ${resp.status}`);
+      return null;
+    }
+    return out?.pix_code || null;
+  } catch (e) {
+    console.error("pixDaCobranca falhou:", e?.message || e);
+    return null;
+  }
 }
 // Envia a cobrança por TEXTO (ou IMAGEM com legenda) e, se houver AGENTE com voz,
 // também por ÁUDIO. Pedido do cliente: imagem em vez do/junto ao texto + áudio.
@@ -4107,13 +4148,30 @@ async function handleBillingProof({ sock, jid, conversation, cid, contactId, med
   if (!supabase || !cid) return false;
   const { data: tgts } = await supabase
     .from("billing_targets")
-    .select("id,valor,due_date,status,name")
+    .select("id,valor,due_date,status,name,pix_code")
     .eq("company_id", cid).eq("contact_id", contactId)
     .in("status", ["pendente", "lembrete", "enviado", "atrasado"])
     .order("due_date", { ascending: true })
     .limit(1);
   const t = tgts && tgts[0];
   if (!t) return false; // sem cobrança aberta → não é comprovante, segue o fluxo normal
+
+  // Cobrança com Pix criado pela API: quem dá a baixa é o Mercado Pago, não a
+  // leitura do comprovante. Um print pode ser de outro valor, de outro dia ou de
+  // outra pessoa — e aqui não precisamos confiar nele. Agradecemos e esperamos o
+  // webhook, que chega em segundos.
+  if (t.pix_code) {
+    const primeiro = (t.name || "").split(" ")[0];
+    await sendBotMessage(sock, jid, conversation.id, cid, {
+      text: `Recebi${primeiro ? ", " + primeiro : ""}! 🙏 Estou confirmando o pagamento direto no banco — assim que cair eu te aviso aqui, normalmente em alguns segundos.`,
+    });
+    // Guarda o comprovante e para de cobrar, mas NÃO marca como pago.
+    await supabase.from("billing_targets").update({
+      comprovante_url: media.url || null, responded_at: new Date().toISOString(),
+    }).eq("id", t.id);
+    return true;
+  }
+
   // Tenta identificar a data do comprovante (só imagem).
   let dataComp = null;
   if (imageBuffer) {
@@ -4163,7 +4221,10 @@ async function billingSweep() {
       const due = new Date(t.due_date + "T00:00:00");
       const daysUntil = Math.round((due - startOfToday) / 86400000);
       const bs = await getBillingSettings(t.company_id);
-      const pix = bs.billing_pix_key || "";
+      // Pix próprio desta cobrança (criado pela API) quando a Carteira está
+      // ligada; senão, a chave estática de sempre. O template não muda: {pix}
+      // recebe um ou outro.
+      const pix = (await pixDaCobranca(t, bs)) || bs.billing_pix_key || "";
       const empresa = bs.name || "";
       const tpl = ch.template || bs.billing_default_template || DEFAULT_BILLING_TEMPLATE;
       const agent = ch.agent_id ? agentsById[ch.agent_id] : null;

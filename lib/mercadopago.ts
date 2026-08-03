@@ -4,7 +4,7 @@
 // pagamento único: Pix criado pela API (devolve o copia-e-cola e o QR) ou um
 // link de Checkout para cartão.
 
-import { supabaseService } from "./supabase-server";
+import { supabaseService } from "@/lib/supabase-server";
 
 const MP = "https://api.mercadopago.com";
 
@@ -49,6 +49,14 @@ export type PixCharge = {
 
 export async function criarPix(opts: {
   token: string; valor: number; descricao: string; ref: string; origin: string; email?: string | null;
+  /**
+   * Query extra no notification_url (ex.: `cid=<empresa>`). Necessária quando o
+   * Pix é criado com o token DE UMA EMPRESA: o webhook precisa saber com qual
+   * token consultar o pagamento, senão toma 404 e a baixa nunca acontece.
+   */
+  notifyQuery?: string;
+  /** Chave de idempotência fixa — para o mesmo pedido nunca virar dois Pix. */
+  idempotencyKey?: string;
 }): Promise<{ ok: true; charge: PixCharge } | { ok: false; error: string }> {
   try {
     const res = await fetch(`${MP}/v1/payments`, {
@@ -57,14 +65,14 @@ export async function criarPix(opts: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${opts.token}`,
         // Evita cobrar duas vezes se a chamada for repetida por instabilidade.
-        "X-Idempotency-Key": `${opts.ref}-${Math.floor(Date.now() / 60000)}`,
+        "X-Idempotency-Key": opts.idempotencyKey || `${opts.ref}-${Math.floor(Date.now() / 60000)}`,
       },
       body: JSON.stringify({
         transaction_amount: opts.valor,
         description: opts.descricao,
         payment_method_id: "pix",
         external_reference: opts.ref,
-        notification_url: `${opts.origin}/api/billing/webhook`,
+        notification_url: `${opts.origin}/api/billing/webhook${opts.notifyQuery ? `?${opts.notifyQuery}` : ""}`,
         payer: { email: opts.email || "comprador@workspace.app" },
       }),
     });
@@ -110,6 +118,139 @@ export async function criarLinkCartao(opts: {
     return { ok: true, url, preferenceId: String(data.id ?? "") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Erro ao falar com o Mercado Pago." };
+  }
+}
+
+/**
+ * `external_reference` de uma COBRANÇA do Cobrador.
+ *
+ * É o que faz o pagamento voltar identificado: quando o Pix cai, o webhook sabe
+ * exatamente qual cobrança quitar — sem depender da IA ler o comprovante que o
+ * cliente mandou (que pode ser de outro valor, de outro dia, ou de ninguém).
+ */
+export const cobrancaRef = (targetId: string) => `cob:${targetId}`;
+export function parseCobrancaRef(ref?: string | null): string | null {
+  const m = /^cob:([0-9a-f-]{36})$/i.exec(String(ref ?? ""));
+  return m ? m[1] : null;
+}
+
+/** Token do Mercado Pago DA EMPRESA (configurado na Carteira). */
+export async function companyPaymentToken(companyId?: string | null): Promise<string | null> {
+  if (!companyId) return null;
+  const svc = supabaseService();
+  if (!svc) return null;
+  const { data } = await svc
+    .from("company_settings")
+    .select("billing_mercadopago_token")
+    .eq("company_id", companyId)
+    .maybeSingle();
+  return (data?.billing_mercadopago_token as string) || null;
+}
+
+export type MpConta = { id: number; nickname: string | null; email: string | null };
+
+/** Dona do token — serve para confirmar na tela QUAL conta está conectada. */
+export async function mpConta(token: string): Promise<MpConta | null> {
+  try {
+    const res = await fetch(`${MP}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return { id: Number(d.id), nickname: d.nickname ?? null, email: d.email ?? null };
+  } catch {
+    return null;
+  }
+}
+
+export type MpSaldo = { disponivel: number; aLiberar: number; total: number };
+
+/**
+ * Saldo da conta.
+ *
+ * ATENÇÃO: o Mercado Pago NÃO tem endpoint público documentado de saldo em
+ * tempo real — o caminho oficial é o relatório de conta, que é assíncrono e não
+ * serve para uma tela. Este endpoint existe e é o que as integrações usam, mas
+ * não é documentado: pode mudar sem aviso.
+ *
+ * Por isso ele é BEST-EFFORT: devolve null em vez de estourar, e a Carteira
+ * funciona sem ele — o que a empresa precisa ver (o que entrou) vem de
+ * `mpRecebimentos`, que é documentado e estável.
+ */
+export async function mpSaldo(token: string, userId?: number): Promise<MpSaldo | null> {
+  try {
+    const uid = userId ?? (await mpConta(token))?.id;
+    if (!uid) return null;
+    const res = await fetch(`${MP}/users/${uid}/mercadopago_account/balance`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    // Nomes variam entre contas/países; pegamos o que vier.
+    const disponivel = n(d.available_balance ?? d.availableBalance);
+    const aLiberar = n(d.unavailable_balance ?? d.unavailableBalance);
+    const total = n(d.total_balance ?? d.totalBalance) || disponivel + aLiberar;
+    return { disponivel, aLiberar, total };
+  } catch {
+    return null;
+  }
+}
+
+export type MpRecebimento = {
+  id: string;
+  valor: number;
+  liquido: number;
+  status: string;
+  metodo: string | null;
+  descricao: string | null;
+  pagador: string | null;
+  ref: string | null;
+  em: string | null;
+};
+
+/**
+ * O que entrou na conta. `/v1/payments/search` é documentado e estável — é a
+ * base da Carteira, e o que responde "quanto caiu do que o Cobrador cobrou".
+ */
+export async function mpRecebimentos(
+  token: string,
+  opts: { dias?: number; limite?: number } = {}
+): Promise<MpRecebimento[] | null> {
+  const dias = Math.min(Math.max(opts.dias ?? 30, 1), 180);
+  const limite = Math.min(Math.max(opts.limite ?? 50, 1), 100);
+  try {
+    const qs = new URLSearchParams({
+      sort: "date_created",
+      criteria: "desc",
+      range: "date_created",
+      begin_date: `NOW-${dias}DAYS`,
+      end_date: "NOW",
+      limit: String(limite),
+    });
+    const res = await fetch(`${MP}/v1/payments/search?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const results = Array.isArray(d?.results) ? d.results : [];
+    return results.map((p: Record<string, unknown>) => {
+      const detail = (p.transaction_details ?? {}) as Record<string, unknown>;
+      const payer = (p.payer ?? {}) as Record<string, unknown>;
+      const ident = (payer.first_name || payer.last_name)
+        ? `${payer.first_name ?? ""} ${payer.last_name ?? ""}`.trim()
+        : (payer.email as string) || null;
+      return {
+        id: String(p.id ?? ""),
+        valor: Number(p.transaction_amount ?? 0),
+        // O que sobra depois da taxa do Mercado Pago — é o que realmente entra.
+        liquido: Number(detail.net_received_amount ?? p.transaction_amount ?? 0),
+        status: String(p.status ?? ""),
+        metodo: (p.payment_method_id as string) ?? null,
+        descricao: (p.description as string) ?? null,
+        pagador: ident,
+        ref: (p.external_reference as string) ?? null,
+        em: (p.date_approved as string) ?? (p.date_created as string) ?? null,
+      };
+    });
+  } catch {
+    return null;
   }
 }
 

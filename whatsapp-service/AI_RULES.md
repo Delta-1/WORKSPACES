@@ -124,6 +124,38 @@ vazio remove a chave.
 Na segunda monografia ela chega sabendo e **confirma** ("continua na UPDS,
 medicina?") em vez de perguntar tudo de novo.
 
+## Carteira — a conta Mercado Pago da empresa
+
+O token do Mercado Pago da empresa é registrado na **Carteira** (não mais no
+Cobrador) e validado no `/users/me` antes de ser salvo. De lá saem duas coisas:
+o que já entrou na conta e o **Pix automático** do Cobrador.
+
+**Pix automático (`carteira_pix_auto`).** Ligado, cada cobrança ganha um Pix
+próprio criado pela API, carimbado com `external_reference = cob:<alvo>`. Quando
+cai, o webhook sabe exatamente qual cobrança quitar, de quanto e por qual meio —
+**ninguém precisa ler o comprovante que o cliente mandou**. Desligado, o Cobrador
+segue mandando a chave Pix estática, como sempre.
+
+Dois detalhes que não são opcionais:
+
+- O `notification_url` leva `?cid=<empresa>`. O pagamento foi criado com o token
+  DA EMPRESA e **só pode ser lido com ele** — sem o `cid`, o webhook consultaria
+  com o token da plataforma, tomaria 404 e a cobrança nunca seria quitada.
+- A criação do Pix mora em `/api/carteira/pix`, usada tanto pelo agendador quanto
+  pelo botão "enviar agora" do painel. Se cada um gerasse o seu, o cliente
+  receberia dois códigos para a mesma dívida.
+
+Quando a cobrança tem Pix próprio, o comprovante enviado no WhatsApp **não** dá
+baixa: o bot agradece e espera o webhook, que chega em segundos. Um print pode
+ser de outro valor, de outro dia ou de outra pessoa — e aqui não precisamos
+confiar nele.
+
+Saldo da conta: o Mercado Pago **não** tem endpoint público de saldo em tempo
+real (o oficial é um relatório assíncrono). A Carteira tenta o endpoint não
+documentado e, se ele não responder, esconde o cartão em vez de mostrar R$ 0,00.
+O que a empresa realmente precisa ver — o que entrou — vem de
+`/v1/payments/search`, que é documentado e estável.
+
 ## Saldo em reais
 
 Tudo em **reais**, sem moeda interna: monografia/trabalho **R$ 50,00**,

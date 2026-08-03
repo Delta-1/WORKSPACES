@@ -27,6 +27,7 @@ import ClientsTab from "@/components/tabs/ClientsTab";
 import FormsTab from "@/components/tabs/FormsTab";
 import LogisticsTab from "@/components/tabs/LogisticsTab";
 import BillingTab from "@/components/tabs/BillingTab";
+import CarteiraTab from "@/components/tabs/CarteiraTab";
 import AppHubTab from "@/components/tabs/AppHubTab";
 import ClientsIaTab from "@/components/tabs/ClientsIaTab";
 import EnvironmentSwitcher from "@/components/EnvironmentSwitcher";
@@ -74,6 +75,9 @@ const APPS: AppDef[] = [
   { id: "formularios", label: "Formulários", icon: FileSpreadsheet, accent: "bg-teal-800/60", roles: ["gestor", "gerente"] },
   { id: "logistica", label: "Logística Internacional", icon: Truck, accent: "bg-amber-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "cobrador", label: "Cobrador", icon: DollarSign, accent: "bg-green-900/60", roles: ["gestor", "gerente", "funcionario"] },
+  // Carteira: a conta Mercado Pago da empresa. É onde o token é registrado e
+  // onde se vê o que caiu — inclusive o que o Cobrador cobrou.
+  { id: "carteira", label: "Carteira", icon: Wallet, accent: "bg-emerald-900/60", roles: ["gestor", "gerente"] },
   { id: "apphub", label: "App Hub", icon: Store, accent: "bg-violet-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "clientes_ia", label: "Work.IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
@@ -573,6 +577,7 @@ export default function Home() {
         {tab === "clientes" && <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "formularios" && <FormsTab profile={profile} />}
         {tab === "logistica" && <LogisticsTab profile={profile} />}
+        {tab === "carteira" && <CarteiraTab profile={profile} />}
         {tab === "cobrador" && <BillingTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
         {tab === "apphub" && <AppHubTab profile={profile} superAdmin={superAdmin} />}
         {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
