@@ -1,7 +1,7 @@
 // Tipos base do Estúdio → Documentos.
 //
 // Tudo aqui é DADO PURO (serializável em JSON) de propósito: a mesma definição
-// alimenta a interface do site e, via /api/studio/models, também a Nina no
+// alimenta a interface do site e, via /api/studio/models, também a Yumi no
 // WhatsApp — assim os dois nunca ficam desencontrados sobre quais modelos
 // existem, o que cada um pergunta e como cada um é formatado.
 
@@ -35,7 +35,7 @@ export const parsePt = (size: string) => parseFloat(String(size).replace(/[^\d.]
 export type DocFieldType = "text" | "textarea" | "number" | "select";
 
 // Um campo que o modelo precisa saber para se montar. `question` é a forma
-// falada — é literalmente o que a Nina pergunta no WhatsApp, um campo por vez.
+// falada — é literalmente o que a Yumi pergunta no WhatsApp, um campo por vez.
 export type DocField = {
   id: string;
   label: string;

@@ -183,9 +183,9 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
       <div className="flex-1 flex overflow-hidden">
         {/* Formulário */}
         <div className="w-full sm:w-[350px] shrink-0 border-r border-white/10 overflow-y-auto custom-scroll p-3 space-y-3 bg-[#0b0f16]">
-          {/* Preencher com a Nina */}
+          {/* Preencher com a Yumi */}
           <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-2.5 space-y-2">
-            <p className="text-[11px] font-bold text-sky-300 flex items-center gap-1.5"><Wand2 size={12} /> Preencher com a Nina</p>
+            <p className="text-[11px] font-bold text-sky-300 flex items-center gap-1.5"><Wand2 size={12} /> Preencher com a Yumi</p>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}

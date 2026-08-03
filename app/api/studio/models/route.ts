@@ -5,16 +5,16 @@ import { RESUME_THEMES } from "@/lib/doc-templates/resume";
 
 export const runtime = "nodejs";
 
-// Catálogo do Estúdio → Documentos, para a Nina (whatsapp-service).
+// Catálogo do Estúdio → Documentos, para a Yumi (whatsapp-service).
 //
 // O serviço do WhatsApp é um projeto Node separado e não consegue importar o
 // código do app. Em vez de duplicar a lista lá (e ela desencontrar na primeira
-// mudança), ele lê daqui. Quando um modelo novo entra no registry, a Nina passa
+// mudança), ele lê daqui. Quando um modelo novo entra no registry, a Yumi passa
 // a saber oferecê-lo e quais perguntas fazer, sem mexer no código dela.
 //
 // Só metadados públicos (nome, descrição, perguntas, formatação) — nada de dado
 // de empresa —, por isso é aberto e cacheável.
-// Formato exato do campo `dados` de cada modelo. A Nina precisa disto para
+// Formato exato do campo `dados` de cada modelo. A Yumi precisa disto para
 // mandar o conteúdo já redigido por ela em /api/studio/render — sem o formato
 // ela chutaria os nomes dos campos e o documento sairia vazio.
 const FORMATO: Record<string, string> = {
@@ -39,7 +39,7 @@ export async function GET() {
       nome: m.label,
       descricao: m.desc,
       grupo: m.group,
-      // O que a Nina precisa perguntar, um campo por vez, na ordem.
+      // O que a Yumi precisa perguntar, um campo por vez, na ordem.
       perguntas: m.fields.map((f) => ({
         id: f.id,
         rotulo: f.label,

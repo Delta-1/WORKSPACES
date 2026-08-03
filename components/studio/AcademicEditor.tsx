@@ -52,7 +52,7 @@ export default function AcademicEditor({ row, modelLabel, authorName, onClose }:
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A norma que vale: a escolhida, já com os ajustes lidos de um arquivo-modelo
-  // (quando o documento veio da Nina). Prévia, PDF e .docx usam esta.
+  // (quando o documento veio da Yumi). Prévia, PDF e .docx usam esta.
   const norma = normOf(doc);
 
   const doSave = useCallback(async (d: AcademicDoc, t: string) => {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseService } from "@/lib/supabase-server";
-import { parsePipRef } from "@/lib/mercadopago";
+import { parseRecargaRef } from "@/lib/mercadopago";
 
 export const runtime = "nodejs";
 
@@ -99,19 +99,21 @@ export async function POST(request: Request) {
       const pay = await mpGet(`/v1/payments/${id}`, token);
       if (!pay) return NextResponse.json({ ok: true });
 
-      // COMPRA DE PIPS — external_reference no formato "pip:<contato>:<pips>".
-      // É o que credita os pips sozinho assim que o Pix cai, sem a pessoa
+      // RECARGA DE SALDO — external_reference no formato "rec:<contato>:<centavos>".
+      // É o que credita o saldo sozinho assim que o Pix cai, sem a pessoa
       // precisar avisar. credits_add é idempotente pelo `ref`, então o reenvio
       // do webhook (o MP insiste até receber 200) não credita em dobro.
-      const pip = parsePipRef(pay.external_reference);
-      if (pip) {
+      const rec = parseRecargaRef(pay.external_reference);
+      if (rec) {
         if (String(pay.status || "") === "approved") {
-          const { data: ct } = await svc.from("contacts").select("company_id").eq("id", pip.contactId).maybeSingle();
+          const { data: ct } = await svc.from("contacts").select("company_id").eq("id", rec.contactId).maybeSingle();
+          // Vale o que o MP realmente recebeu; a referência é só o fallback.
+          const cents = Math.round(Number(pay.transaction_amount ?? 0) * 100) || rec.cents;
           await svc.rpc("credits_add", {
-            p_contact: pip.contactId,
+            p_contact: rec.contactId,
             p_company: ct?.company_id ?? null,
-            p_pips: pip.pips,
-            p_reason: "compra",
+            p_cents: cents,
+            p_reason: "recarga",
             p_detail: `Mercado Pago ${pay.id}`,
             p_ref: `mp:${pay.id}`,
           });

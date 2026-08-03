@@ -1,4 +1,4 @@
-// Mercado Pago — cobrança avulsa (compra de pips).
+// Mercado Pago — cobrança avulsa (recarga de saldo do cliente).
 //
 // Diferente da assinatura do plano, que usa `preapproval` (recorrente), aqui é
 // pagamento único: Pix criado pela API (devolve o copia-e-cola e o QR) ou um
@@ -27,11 +27,15 @@ export async function resolvePaymentToken(agentId?: string | null): Promise<stri
   return process.env.MERCADOPAGO_ACCESS_TOKEN || null;
 }
 
-/** `external_reference` carrega quem creditar quando o pagamento cair. */
-export const pipRef = (contactId: string, pips: number) => `pip:${contactId}:${pips}`;
-export function parsePipRef(ref?: string | null): { contactId: string; pips: number } | null {
-  const m = /^pip:([0-9a-f-]{36}):(\d+)$/i.exec(String(ref ?? ""));
-  return m ? { contactId: m[1], pips: Number(m[2]) } : null;
+/**
+ * `external_reference` carrega quem creditar, e quanto, quando o pagamento cair.
+ * O valor vai em CENTAVOS — o mesmo inteiro que o banco guarda, sem conversão
+ * no caminho de volta.
+ */
+export const recargaRef = (contactId: string, cents: number) => `rec:${contactId}:${cents}`;
+export function parseRecargaRef(ref?: string | null): { contactId: string; cents: number } | null {
+  const m = /^rec:([0-9a-f-]{36}):(\d+)$/i.exec(String(ref ?? ""));
+  return m ? { contactId: m[1], cents: Number(m[2]) } : null;
 }
 
 export type PixCharge = {

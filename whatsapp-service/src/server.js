@@ -24,7 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
 const SERVICE_SECRET = process.env.WHATSAPP_SERVICE_SECRET || "";
 const AUTH_ROOT = path.join(__dirname, "..", ".wa-session");
-// Endereço público do site (ex.: https://workspaces.vercel.app). A Nina usa
+// Endereço público do site (ex.: https://workspaces.vercel.app). A Yumi usa
 // para (1) ler o catálogo de modelos do Estúdio, (2) mandar a imagem de prévia
 // e (3) pedir o documento montado. Sem isto, ela ainda atende normalmente — só
 // não oferece os modelos do Estúdio.
@@ -1348,7 +1348,7 @@ async function walkFlow({ sock, jid, conversation, chatbot, customerText, cid, h
       await supabase.from("conversations").update({ flow_node: n.id }).eq("id", conversation.id);
       return true;
     } else if (n.type === "tool") {
-      // Aciona explicitamente UMA ferramenta/capacidade do agente (ex.: a Nina
+      // Aciona explicitamente UMA ferramenta/capacidade do agente (ex.: a Yumi
       // gerando uma apresentação) como etapa do fluxo, em vez de depender da IA
       // decidir sozinha. Reaproveita o motor de ferramentas do Copiloto,
       // restrito a essa única capacidade.
@@ -1516,13 +1516,13 @@ async function flowTimerSweep() {
 // Catálogo dos modelos do Estúdio → Documentos.
 //
 // Lido do próprio site (/api/studio/models) em vez de duplicado aqui: quando um
-// modelo novo é criado no registry do app, a Nina passa a saber oferecê-lo e
+// modelo novo é criado no registry do app, a Yumi passa a saber oferecê-lo e
 // quais perguntas fazer, sem precisar de deploy deste serviço. Cache de 10 min
 // porque a lista muda raramente e cada mensagem poderia disparar uma consulta.
 // ---------------------------------------------------------------------------
 // Pega a última mídia que a PESSOA mandou nesta conversa e devolve como dataURL.
 // É assim que a foto do currículo (e o arquivo-modelo da monografia) chegam até
-// o gerador: a pessoa manda a imagem no WhatsApp e a Nina a referencia.
+// o gerador: a pessoa manda a imagem no WhatsApp e a Yumi a referencia.
 async function lastIncomingMedia(conv, kinds = ["image"]) {
   if (!supabase || !conv?.id) return null;
   const { data } = await supabase
@@ -1548,12 +1548,12 @@ async function lastIncomingMedia(conv, kinds = ["image"]) {
   }
 }
 
-// Fala com /api/pips no site. Todo movimento de saldo passa por lá (e de lá
+// Fala com /api/creditos no site. Todo movimento de saldo passa por lá (e de lá
 // para as funções do banco) — nunca por conta feita aqui ou pela IA.
-async function pipsApi(payload) {
+async function creditosApi(payload) {
   if (!APP_URL || !SERVICE_SECRET) return { error: "Pagamentos indisponíveis (serviço sem endereço do site ou sem segredo)." };
   try {
-    const resp = await fetch(`${APP_URL}/api/pips`, {
+    const resp = await fetch(`${APP_URL}/api/creditos`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-service-secret": SERVICE_SECRET },
       body: JSON.stringify(payload),
@@ -1562,13 +1562,13 @@ async function pipsApi(payload) {
     if (!resp.ok && !out?.error) return { error: `Falha na chamada (HTTP ${resp.status}).` };
     return out;
   } catch (e) {
-    console.error("pipsApi falhou:", e?.message || e);
+    console.error("creditosApi falhou:", e?.message || e);
     return { error: "Não consegui falar com o sistema de créditos agora." };
   }
 }
 
 // PDF e Word viram texto no site (que tem os leitores). Aqui só chega o texto —
-// é o que permite a Nina ler o modelo de trabalho, o manual da faculdade ou um
+// é o que permite a Yumi ler o modelo de trabalho, o manual da faculdade ou um
 // currículo antigo que a pessoa mandou.
 async function extractTextApi(dataUrl, name) {
   if (!APP_URL) return null;
@@ -1594,7 +1594,7 @@ async function lerUltimoArquivo(conv) {
   if (!media) return { ok: false, message: "Não achei nenhum arquivo nem foto nesta conversa. Peça para a pessoa enviar aqui e tente de novo." };
   if (media.type === "image") return { ok: true, media, imagem: { b64: media.buffer.toString("base64"), mime: media.mime } };
   // O arquivo viaja em base64 dentro de um JSON até o site; acima disso a
-  // requisição é recusada lá e a Nina só veria um erro sem explicação.
+  // requisição é recusada lá e a Yumi só veria um erro sem explicação.
   if (media.buffer.byteLength > 3_000_000) {
     return { ok: false, message: "Esse arquivo é grande demais para eu ler aqui. Peça só as páginas que importam (ou uma foto da capa e da folha de normas)." };
   }
@@ -1626,7 +1626,7 @@ function grupoBlock(nomeDoGrupo) {
 }
 
 // O que já foi aprendido sobre a pessoa entra no prompt de toda conversa. É o
-// que faz a Nina "lembrar": o histórico é cortado, o cadastro do contato não.
+// que faz a Yumi "lembrar": o histórico é cortado, o cadastro do contato não.
 async function contactMemoryBlock(conv) {
   if (!supabase || !conv?.contact_id) return "";
   try {
@@ -1637,8 +1637,8 @@ async function contactMemoryBlock(conv) {
     // não ficar falando de preço com quem está só testando.
     const admBlock = data?.billing_exempt
       ? `\n\nESTA PESSOA É ADM — usa tudo de graça.\n` +
-        `- NÃO fale de preço, de pips, de saldo nem de pagamento com ela. Nem para avisar que "seria" tanto.\n` +
-        `- NÃO chame pips_cobrar, pips_comprar nem pips_saldo. Faça o serviço direto.\n` +
+        `- NÃO fale de preço, de valor, de saldo nem de pagamento com ela. Nem para avisar que "seria" tanto.\n` +
+        `- NÃO chame cobrar_servico, saldo_recarregar nem saldo_consultar. Faça o serviço direto.\n` +
         `- Se ela perguntar de valores, responda que o acesso dela é liberado e siga.`
       : "";
     const mem = data?.memory && typeof data.memory === "object" ? data.memory : {};
@@ -1933,52 +1933,52 @@ const COPILOT_TOOLS = [
       "Use assim que ela disser o nome, na primeira conversa. Se o cadastro já tiver um nome de verdade, não sobrescreva sem ela pedir.",
     input_schema: { type: "object", properties: { nome: { type: "string" } }, required: ["nome"] },
   },
-  // ---- PIPS (créditos dos serviços da Nina) ----
+  // ---- SALDO E COBRANÇA (tudo em reais) ----
   {
-    name: "pips_tabela",
+    name: "tabela_precos",
     description:
-      "Mostra quanto custa cada serviço em pips e em reais, e os pacotes de compra. Use ao se apresentar, quando perguntarem preço, ou ANTES de começar um serviço pago. Nunca invente valores — consulte aqui.",
+      "Mostra quanto custa cada serviço, em REAIS, e os valores sugeridos de recarga. Use ao se apresentar, quando perguntarem preço, ou ANTES de começar um serviço pago. Nunca invente valores — consulte aqui.",
     input_schema: { type: "object", properties: {} },
   },
   {
-    name: "pips_saldo",
+    name: "saldo_consultar",
     description:
-      "Consulta o SALDO de pips da pessoa com quem você está falando. Use quando ela perguntar o saldo, mandar /saldo, ou antes de cobrar um serviço. NUNCA calcule saldo de cabeça — sempre consulte aqui, mesmo que ache que sabe o valor.",
+      "Consulta o SALDO em reais da pessoa com quem você está falando. Use quando ela perguntar quanto tem, mandar /saldo, ou antes de cobrar um serviço. NUNCA calcule saldo de cabeça — sempre consulte aqui, mesmo que ache que sabe o valor.",
     input_schema: { type: "object", properties: { extrato: { type: "boolean", description: "true também traz as últimas movimentações" } } },
   },
   {
-    name: "pips_comprar",
+    name: "saldo_recarregar",
     description:
-      "Gera o pagamento para a pessoa comprar pips. metodo 'pix' devolve o código copia-e-cola e manda o QR Code como imagem; metodo 'cartao' devolve um link do Mercado Pago. " +
-      "Depois de gerar, avise que assim que o pagamento cair os pips entram sozinhos, e que ela pode pedir para você conferir.",
+      "Gera o pagamento para a pessoa colocar saldo. metodo 'pix' devolve o código copia-e-cola e manda o QR Code como imagem; metodo 'cartao' devolve um link do Mercado Pago. " +
+      "Depois de gerar, avise que assim que o pagamento cair o saldo entra sozinho, e que ela pode pedir para você conferir.",
     input_schema: {
       type: "object",
       properties: {
-        pips: { type: "number", description: "quantos pips ela quer comprar" },
+        valor: { type: "number", description: "quanto ela quer colocar, em REAIS (ex.: 50 para R$ 50,00)" },
         metodo: { type: "string", description: "pix (padrão) ou cartao" },
       },
-      required: ["pips"],
+      required: ["valor"],
     },
   },
   {
-    name: "pips_conferir",
+    name: "pagamento_conferir",
     description:
-      "Confere se um pagamento já caiu e credita os pips. Use quando a pessoa disser 'já paguei'. Passe o payment_id que veio do pips_comprar. Se ainda não caiu, avise com calma e ofereça conferir de novo em instantes.",
-    input_schema: { type: "object", properties: { payment_id: { type: "string" }, pips: { type: "number" } }, required: ["payment_id"] },
+      "Confere se um pagamento já caiu e credita o saldo. Use quando a pessoa disser 'já paguei'. Passe o payment_id que veio do saldo_recarregar. Se ainda não caiu, avise com calma e ofereça conferir de novo em instantes.",
+    input_schema: { type: "object", properties: { payment_id: { type: "string" } }, required: ["payment_id"] },
   },
   {
-    name: "pips_cobrar",
+    name: "cobrar_servico",
     description:
-      "Debita os pips de um serviço DEPOIS que a pessoa confirmou. Fluxo obrigatório: (1) diga o preço em pips e em reais, (2) consulte pips_saldo, (3) PEÇA CONFIRMAÇÃO dizendo 'vou usar X pips do seu saldo de Y pips, posso?', (4) só com o 'pode' chame isto, (5) só então produza o documento. " +
-      "Se não houver saldo, a ferramenta recusa e informa quanto falta — aí ofereça a compra com pips_comprar.",
+      "Desconta do saldo o valor de um serviço, DEPOIS que a pessoa confirmou. Fluxo obrigatório: (1) diga o preço em reais, (2) consulte saldo_consultar, (3) PEÇA CONFIRMAÇÃO dizendo 'vou descontar R$ X do seu saldo de R$ Y, posso?', (4) só com o 'pode' chame isto, (5) só então produza o documento. " +
+      "Se não houver saldo, a ferramenta recusa e informa quanto falta — aí ofereça a recarga com saldo_recarregar.",
     input_schema: {
       type: "object",
       properties: {
         servico: { type: "string", description: "id do serviço na tabela (monografia, trabalho, apresentacao)" },
-        pips: { type: "number", description: "quantos pips debitar (use o valor da tabela)" },
+        valor: { type: "number", description: "quanto descontar, em REAIS (use o valor da tabela)" },
         detalhe: { type: "string", description: "do que se trata, para o extrato (ex.: tema da monografia)" },
       },
-      required: ["servico", "pips"],
+      required: ["servico", "valor"],
     },
   },
   // ---- Logística Internacional (TransLog) ----
@@ -2018,7 +2018,7 @@ const COPILOT_TOOLS = [
 // Executa uma ação do copiloto no workspace (escopo da empresa).
 // IMPORTANTE: recebe files/sends/ctx do copilotDispatch. Sem eles, ferramentas
 // como gerar_documento/gerar_apresentacao (que usam ctx.key e files.push)
-// quebravam com "ReferenceError: ctx is not defined" — a Nina dizia que "teve um
+// quebravam com "ReferenceError: ctx is not defined" — a Yumi dizia que "teve um
 // errinho" e NÃO entregava o arquivo. Agora chegam corretamente.
 async function copilotAction(companyId, name, input, files = [], sends = [], ctx = {}) {
   input = input || {};
@@ -2123,60 +2123,60 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       return { ok: true, message: `Salvei o contato como "${nome}".`, nome };
     }
 
-    // ---- PIPS ----
-    if (name === "pips_tabela") return pipsApi({ acao: "tabela" });
-    if (name === "pips_saldo") {
+    // ---- SALDO E COBRANÇA (em reais) ----
+    if (name === "tabela_precos") return creditosApi({ acao: "tabela" });
+    if (name === "saldo_consultar") {
       const contato = ctx.conv?.contact_id;
       if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
-      const saldo = await pipsApi({ acao: "saldo", contact_id: contato });
+      const saldo = await creditosApi({ acao: "saldo", contact_id: contato });
       if (saldo?.error) return { ok: false, message: saldo.error };
       if (!input.extrato) return saldo;
-      const ext = await pipsApi({ acao: "extrato", contact_id: contato });
+      const ext = await creditosApi({ acao: "extrato", contact_id: contato });
       return { ...saldo, extrato: ext?.extrato ?? [] };
     }
-    if (name === "pips_comprar") {
+    if (name === "saldo_recarregar") {
       const contato = ctx.conv?.contact_id;
       if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
-      const out = await pipsApi({
-        acao: "comprar", contact_id: contato, company_id: companyId,
-        agent_id: ctx.agentId ?? null, pips: Number(input.pips || 0), metodo: input.metodo === "cartao" ? "cartao" : "pix",
+      const out = await creditosApi({
+        acao: "recarregar", contact_id: contato, company_id: companyId,
+        agent_id: ctx.agentId ?? null, valor: Number(input.valor || 0), metodo: input.metodo === "cartao" ? "cartao" : "pix",
       });
       if (out?.error) return { ok: false, message: out.error };
       // O QR vai como IMAGEM na conversa — é bem mais prático que só o código.
       if (out.pix_qr_base64) {
         try {
-          files.push({ name: `Pix ${out.pips} pips.png`, mime: "image/png", buffer: Buffer.from(out.pix_qr_base64, "base64") });
+          files.push({ name: `Pix ${out.valor}.png`, mime: "image/png", buffer: Buffer.from(out.pix_qr_base64, "base64") });
         } catch { /* sem QR, o copia-e-cola resolve */ }
       }
       return {
         ok: true,
         ...out,
         instrucao: out.metodo === "pix"
-          ? "Mandei o QR Code. Passe TAMBÉM o código copia-e-cola (pix_copia_e_cola) numa mensagem separada, sozinho, para a pessoa conseguir copiar. Avise que os pips entram sozinhos quando o pagamento cair, e que ela pode pedir para você conferir."
-          : "Passe o link para a pessoa pagar com cartão. Avise que os pips entram sozinhos assim que o pagamento for aprovado.",
+          ? "Mandei o QR Code. Passe TAMBÉM o código copia-e-cola (pix_copia_e_cola) numa mensagem separada, sozinho, para a pessoa conseguir copiar. Avise que o saldo entra sozinho quando o pagamento cair, e que ela pode pedir para você conferir."
+          : "Passe o link para a pessoa pagar com cartão. Avise que o saldo entra sozinho assim que o pagamento for aprovado.",
       };
     }
-    if (name === "pips_conferir") {
+    if (name === "pagamento_conferir") {
       const contato = ctx.conv?.contact_id;
       if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
-      const out = await pipsApi({
+      const out = await creditosApi({
         acao: "conferir", contact_id: contato, company_id: companyId,
-        agent_id: ctx.agentId ?? null, payment_id: String(input.payment_id || ""), pips: Number(input.pips || 0) || undefined,
+        agent_id: ctx.agentId ?? null, payment_id: String(input.payment_id || ""),
       });
       if (out?.error) return { ok: false, message: out.error };
       return out;
     }
-    if (name === "pips_cobrar") {
+    if (name === "cobrar_servico") {
       const contato = ctx.conv?.contact_id;
       if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
-      const out = await pipsApi({
-        acao: "debitar", contact_id: contato, company_id: companyId,
-        pips: Number(input.pips || 0), servico: String(input.servico || "servico"), detalhe: input.detalhe || null,
+      const out = await creditosApi({
+        acao: "cobrar", contact_id: contato, company_id: companyId,
+        valor: Number(input.valor || 0), servico: String(input.servico || "servico"), detalhe: input.detalhe || null,
       });
       if (out?.error) return { ok: false, message: out.error };
-      // A função do banco recusa sozinha quando falta saldo — a Nina nunca decide isso.
-      if (out.ok === false) return { ...out, instrucao: "Sem saldo suficiente. Diga quanto falta e ofereça comprar pips com pips_comprar. NÃO produza o serviço." };
-      return { ...out, instrucao: "Debitado. Agora sim pode produzir o serviço." };
+      // A função do banco recusa sozinha quando falta saldo — a Yumi nunca decide isso.
+      if (out.ok === false) return { ...out, instrucao: "Sem saldo suficiente. Diga quanto falta e ofereça a recarga com saldo_recarregar. NÃO produza o serviço." };
+      return { ...out, instrucao: "Descontado. Agora sim pode produzir o serviço." };
     }
 
     // ---- Estúdio → Documentos ----
@@ -2231,7 +2231,7 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       if (!companyId) return { ok: false, message: "Sem empresa vinculada a esta conversa." };
       try {
         const dados = { ...(input.dados || {}) };
-        // Foto do currículo: a pessoa manda a imagem no WhatsApp e a Nina só
+        // Foto do currículo: a pessoa manda a imagem no WhatsApp e a Yumi só
         // sinaliza usar_foto_enviada — aqui a gente busca e embute.
         if (input.usar_foto_enviada) {
           const foto = await lastIncomingMedia(ctx.conv, ["image"]);
@@ -2239,7 +2239,7 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
           dados.photo = foto.dataUrl;
         }
         // Logo da instituição na capa da monografia — mesmo caminho da foto do
-        // currículo: a pessoa manda a imagem e a Nina só sinaliza.
+        // currículo: a pessoa manda a imagem e a Yumi só sinaliza.
         if (input.usar_logo_enviada) {
           const logo = await lastIncomingMedia(ctx.conv, ["image"]);
           if (!logo) return { ok: false, message: "Não achei nenhuma imagem nesta conversa. Peça a logo da instituição e tente de novo." };
@@ -2706,9 +2706,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       `QUEM É VOCÊ E COMO COBRA\n` +
       `Na PRIMEIRA mensagem de alguém que você ainda não conhece: apresente-se em poucas linhas (quem você é e o que faz), PERGUNTE O NOME da pessoa e, assim que ela disser, salve com salvar_nome_contato. Use o nome dela dali em diante.\n` +
       `LEMBRE-SE DAS PESSOAS: assim que souber universidade, faculdade, curso, cidade, orientador(a) ou a norma que ela usa, salve com memoria_salvar. Numa próxima conversa você já chega sabendo — CONFIRME ("continua na UPDS, medicina?") em vez de perguntar tudo de novo do zero.\n` +
-      `Explique, sem enrolar, que os serviços são pagos em PIPS: 1 pip = R$ 0,50, e que dá para comprar por Pix ou cartão aqui mesmo no chat. Consulte pips_tabela para os valores — NUNCA invente preço.\n` +
-      `Se ela mandar /saldo ou perguntar quanto tem, chame pips_saldo. NUNCA responda saldo de memória nem faça a conta você: o número vem sempre da ferramenta.\n` +
-      `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em pips E em reais -> consulte pips_saldo -> peça confirmação (\"vou usar X pips do seu saldo de Y pips, posso?\") -> só com o sim chame pips_cobrar -> só então produza. Sem saldo, ofereça comprar com pips_comprar.\n` +
+      `Fale de dinheiro em REAIS, sempre — nada de moeda interna, ponto ou crédito. "A monografia sai por R$ 50,00". Consulte tabela_precos para os valores; NUNCA invente preço.\n` +
+      `A pessoa tem um SALDO em reais aqui, que ela coloca por Pix ou cartão pelo próprio chat. Se ela mandar /saldo ou perguntar quanto tem, chame saldo_consultar. NUNCA responda saldo de memória nem faça a conta você: o número vem sempre da ferramenta.\n` +
+      `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em reais -> consulte saldo_consultar -> peça confirmação (\"vou descontar R$ 50,00 do seu saldo de R$ 80,00, posso?\") -> só com o sim chame cobrar_servico -> só então produza. Sem saldo, ofereça a recarga com saldo_recarregar.\n` +
       `Só cobre quando o serviço estiver DEFINIDO (tema, norma e dados combinados). Nada de cobrar para começar a conversar.\n` +
       `Seja honesta sobre o que entrega: a monografia sai completa e formatada na norma, pronta para a pessoa desenvolver e ajustar — você entrega a base construída, não a revisão final nem a defesa. Diga isso ANTES de cobrar, não depois.\n` +
       `Dê uma previsão de tempo antes de começar a produzir. NÃO invente dados que a pessoa não deu (nomes, CPF/CNPJ, valores) — pergunte.\n` +
@@ -2734,7 +2734,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
     academico: ["gerar_documento", "gerar_apresentacao", "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo", "memoria_salvar"],
-    pips: ["pips_tabela", "pips_saldo", "pips_comprar", "pips_conferir", "pips_cobrar", "salvar_nome_contato", "memoria_salvar"],
+    creditos: ["tabela_precos", "saldo_consultar", "saldo_recarregar", "pagamento_conferir", "cobrar_servico", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
@@ -2749,7 +2749,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
       "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo",
-      "pips_tabela", "pips_saldo", "salvar_nome_contato", "memoria_salvar",
+      "tabela_precos", "saldo_consultar", "salvar_nome_contato", "memoria_salvar",
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
@@ -3329,7 +3329,7 @@ async function startSession(numberId) {
             if (reply) {
               // Split opcional: a IA pode marcar "[[TEXTO]]" (ou "[[LISTA]]") para
               // FALAR a parte de cima por áudio e mandar a parte de baixo por TEXTO
-              // (ex.: Nina se apresenta por voz e manda a listinha de funções em texto).
+              // (ex.: Yumi se apresenta por voz e manda a listinha de funções em texto).
               let textAfter = null;
               const splitIdx = reply.search(/\[\[\s*(texto|lista)\s*\]\]/i);
               if (splitIdx >= 0) {
