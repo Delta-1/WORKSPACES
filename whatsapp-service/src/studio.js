@@ -9,25 +9,35 @@ import PDFDocument from "pdfkit";
 import pptxgen from "pptxgenjs";
 
 // ---- chamada de IA (mesmo provedor/chave do bot) que devolve texto ----
-async function askModel(provider, key, system, userMsg) {
+// `imagem` ({ b64, mime }) é opcional: quando vem, o modelo OLHA a imagem — é
+// assim que a Nina lê a capa de um modelo fotografado ou printado.
+async function askModel(provider, key, system, userMsg, imagem = null) {
   if (provider === "gemini") {
+    const parts = [{ text: userMsg }];
+    if (imagem) parts.push({ inline_data: { mime_type: imagem.mime, data: imagem.b64 } });
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: userMsg }] }] }) }
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts }] }) }
     );
     const data = await res.json();
     return data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n") ?? "";
   }
   if (provider === "openai") {
+    const content = imagem
+      ? [{ type: "text", text: userMsg }, { type: "image_url", image_url: { url: `data:${imagem.mime};base64,${imagem.b64}` } }]
+      : userMsg;
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: system }, { role: "user", content: userMsg }] }),
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: system }, { role: "user", content }] }),
     });
     const data = await res.json();
     return data?.choices?.[0]?.message?.content ?? "";
   }
   const anthropic = new Anthropic({ apiKey: key });
-  const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 8000, system, messages: [{ role: "user", content: userMsg }] });
+  const content = imagem
+    ? [{ type: "image", source: { type: "base64", media_type: imagem.mime, data: imagem.b64 } }, { type: "text", text: userMsg }]
+    : userMsg;
+  const res = await anthropic.messages.create({ model: "claude-sonnet-5", max_tokens: 8000, system, messages: [{ role: "user", content }] });
   return res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
@@ -58,6 +68,75 @@ export async function generateWork(provider, key, input) {
     palavras_chave: Array.isArray(o.palavras_chave) ? o.palavras_chave.map(String) : [],
     secoes: o.secoes.map((s) => ({ titulo: String(s.titulo || ""), conteudo: String(s.conteudo || "") })),
     referencias: Array.isArray(o.referencias) ? o.referencias.map(String) : [],
+  };
+}
+
+// ---- ARQUIVO-MODELO → NORMA SOB MEDIDA ----
+//
+// A pessoa manda o modelo da própria faculdade (o PDF do manual, um trabalho
+// antigo, a foto da capa) e a formatação sai DELE, em vez de a Nina chutar uma
+// norma parecida. O que o modelo devolve é só uma proposta: quem valida campo a
+// campo é `resolveNorm` no app — margem, fonte e citação inventadas são
+// descartadas lá, então uma leitura ruim nunca vira um documento fora de norma.
+const NORMA_SYS =
+  `Você analisa um MODELO de trabalho acadêmico (manual de normas, trabalho pronto ou foto da capa) e extrai a FORMATAÇÃO exigida.\n` +
+  `Extraia SOMENTE o que estiver realmente visível/escrito no material. O que não der para saber, DEIXE DE FORA do JSON (não invente, não preencha com padrão).\n` +
+  `Medidas de margem em CENTÍMETROS (número). fontSize no formato "12pt". lineHeight como número (1, 1.5, 2). indent = recuo da primeira linha do parágrafo, em cm.\n` +
+  `norma_base: escolha a mais próxima entre "abnt" (Brasil/ABNT), "apa-upds" (UPDS Domingo Savio, citação APA), "upds-inv4" (UPDS trabalho de investigação, citação Vancouver) e "uap" (Universidad Amazónica de Pando).\n` +
+  `capaMoldura = true só se a capa tiver uma BORDA/moldura desenhada em volta da página inteira.\n` +
+  `Responda SOMENTE com JSON:\n` +
+  `{"norma_base":"abnt","nome":"","citacao":"ABNT|APA|Vancouver","capaMoldura":false,"capaAlinhamento":"center|left","capaLinhaExtra":"",` +
+  `"page":{"paper":"a4|carta","margins":{"mt":3,"mb":2,"ml":3,"mr":2},"fontSize":"12pt","lineHeight":1.5,"indent":1.25},` +
+  `"capa":{"universidade":"","faculdade":"","carreira":"","disciplina":"","professor":"","cidade":""},` +
+  `"tem_logo":false,"resumo_do_que_encontrei":"uma frase em português"}`;
+
+const CITACOES = new Set(["APA", "Vancouver", "ABNT"]);
+const NORMAS_BASE = new Set(["abnt", "apa-upds", "upds-inv4", "uap"]);
+const soTexto = (v) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+const soNumero = (v) => (Number.isFinite(Number(v)) ? Number(v) : undefined);
+
+/**
+ * @param {{ texto?: string, imagem?: { b64: string, mime: string }, nomeArquivo?: string }} fonte
+ * @returns {Promise<null | { norma_base: string, custom: object, capa: object, tem_logo: boolean, resumo: string }>}
+ */
+export async function extractNorm(provider, key, fonte) {
+  const texto = String(fonte?.texto || "").trim();
+  if (!texto && !fonte?.imagem) return null;
+  const userMsg = texto
+    // O começo tem a capa e a folha de rosto; o fim costuma ter as referências,
+    // que denunciam o estilo de citação.
+    ? `Arquivo: ${fonte.nomeArquivo || "modelo"}\n\nCONTEÚDO:\n${texto.slice(0, 24000)}${texto.length > 30000 ? `\n\n[...]\n\nFINAL DO ARQUIVO:\n${texto.slice(-6000)}` : ""}\n\nExtraia a formatação no JSON pedido.`
+    : `Esta imagem é o modelo (provavelmente a capa). Extraia a formatação no JSON pedido.`;
+
+  const o = parseJson(await askModel(provider, key, NORMA_SYS, userMsg, fonte.imagem || null));
+  if (!o) return null;
+
+  const m = o.page?.margins ?? {};
+  const custom = {
+    nome: soTexto(o.nome),
+    citacao: CITACOES.has(o.citacao) ? o.citacao : undefined,
+    capaMoldura: typeof o.capaMoldura === "boolean" ? o.capaMoldura : undefined,
+    capaAlinhamento: o.capaAlinhamento === "left" || o.capaAlinhamento === "center" ? o.capaAlinhamento : undefined,
+    capaLinhaExtra: soTexto(o.capaLinhaExtra),
+    page: {
+      paper: o.page?.paper === "carta" || o.page?.paper === "a4" ? o.page.paper : undefined,
+      fontSize: /^\d{1,2}(\.\d)?pt$/.test(String(o.page?.fontSize)) ? String(o.page.fontSize) : undefined,
+      lineHeight: soNumero(o.page?.lineHeight),
+      indent: soNumero(o.page?.indent),
+      margins: { mt: soNumero(m.mt), mb: soNumero(m.mb), ml: soNumero(m.ml), mr: soNumero(m.mr) },
+    },
+  };
+  const capa = {};
+  for (const campo of ["universidade", "faculdade", "carreira", "disciplina", "professor", "cidade"]) {
+    const v = soTexto(o.capa?.[campo]);
+    if (v) capa[campo] = v;
+  }
+  return {
+    norma_base: NORMAS_BASE.has(o.norma_base) ? o.norma_base : "abnt",
+    custom,
+    capa,
+    tem_logo: !!o.tem_logo,
+    resumo: soTexto(o.resumo_do_que_encontrei) || "Li o modelo e peguei a formatação que deu para identificar.",
   };
 }
 

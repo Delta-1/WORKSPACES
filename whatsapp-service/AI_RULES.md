@@ -55,6 +55,48 @@ resumão. O roteiro é sempre o mesmo:
 Depende de `APP_URL` configurada no serviço. Sem ela, a Nina segue atendendo
 normalmente, apenas sem oferecer os modelos do Estúdio.
 
+### Monografia — quando o modelo é o da faculdade
+
+Antes de escrever, a Nina pergunta quatro coisas: **universidade e curso**,
+**ABNT ou APA**, se quer a **logo** da instituição na capa e se ela **tem o
+modelo/manual** da faculdade.
+
+Se tiver, `documento_norma_do_arquivo` lê o arquivo (PDF, Word ou foto da capa)
+e extrai margens, fonte, entrelinha, recuo, papel, estilo de citação e se a capa
+tem moldura. A formatação sai do documento dela, em vez de a Nina escolher uma
+norma parecida.
+
+O que o modelo devolve é uma **proposta**: quem decide é `resolveNorm`
+(`lib/doc-templates/norms.ts`), no app. Cada campo é conferido — margem fora de
+0,5-8 cm, entrelinha absurda ou citação inventada são descartadas em silêncio e o
+valor da norma base prevalece. Uma leitura ruim nunca vira um documento sem
+margem: no pior caso ele sai na norma base inteira.
+
+A logo vai em `capa.logo_url`, embutida como data URL — sai igual na prévia, no
+PDF e no `.docx`, e a proporção real da imagem é lida do próprio arquivo
+(`lib/studio-docx.ts`), então nada é entregue esticado.
+
+`ler_arquivo_enviado` é a versão geral: devolve o texto de qualquer PDF/Word que
+a pessoa mandou, para a Nina aproveitar os dados (nome, universidade, o enunciado
+do professor). PDF escaneado volta sem texto — aí ela pede uma foto.
+
+Quando a pessoa **não tem tema**, a Nina não escolhe por ela: pergunta curso,
+matéria e interesse e sugere três temas viáveis, com uma linha dizendo por quê.
+
+## A Nina lembra das pessoas
+
+`contacts.memory` (jsonb) guarda o que ela aprendeu: nome completo, universidade,
+faculdade, curso, cidade, orientador(a), norma preferida. Entra no prompt de toda
+conversa daquele contato — é o que faz a Nina "lembrar" mesmo depois de o
+histórico ser cortado.
+
+Escrita só por `memoria_salvar` → `contact_memory_set`, que **mescla** com o que
+já existe: salvar a universidade não apaga o curso guardado semanas atrás. Campo
+vazio remove a chave.
+
+Na segunda monografia ela chega sabendo e **confirma** ("continua na UPDS,
+medicina?") em vez de perguntar tudo de novo.
+
 ## Pips — os créditos dos serviços da Nina
 
 1 pip = **R$ 0,50**. Monografia/trabalho custam **100 pips (R$ 50)**; apresentação,

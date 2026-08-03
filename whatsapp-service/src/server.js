@@ -18,7 +18,7 @@ import makeWASocket, {
 } from "baileys";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
-import { generateWork, buildDocx, buildPdf, generateDeck, buildPptx, fileName as studioFileName } from "./studio.js";
+import { generateWork, buildDocx, buildPdf, generateDeck, buildPptx, extractNorm, fileName as studioFileName } from "./studio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
@@ -1470,6 +1470,74 @@ async function pipsApi(payload) {
   }
 }
 
+// PDF e Word viram texto no site (que tem os leitores). Aqui só chega o texto —
+// é o que permite a Nina ler o modelo de trabalho, o manual da faculdade ou um
+// currículo antigo que a pessoa mandou.
+async function extractTextApi(dataUrl, name) {
+  if (!APP_URL) return null;
+  try {
+    const resp = await fetch(`${APP_URL}/api/extract-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, name }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const out = await resp.json();
+    return { texto: String(out?.text || "").trim(), naoSuportado: !!out?.unsupported };
+  } catch (e) {
+    console.error("extractTextApi falhou:", e?.message || e);
+    return null;
+  }
+}
+
+// Última coisa que a pessoa mandou (arquivo OU foto), já com o texto extraído
+// quando dá. Base das ferramentas de leitura de arquivo.
+async function lerUltimoArquivo(conv) {
+  const media = await lastIncomingMedia(conv, ["document", "image"]);
+  if (!media) return { ok: false, message: "Não achei nenhum arquivo nem foto nesta conversa. Peça para a pessoa enviar aqui e tente de novo." };
+  if (media.type === "image") return { ok: true, media, imagem: { b64: media.buffer.toString("base64"), mime: media.mime } };
+  // O arquivo viaja em base64 dentro de um JSON até o site; acima disso a
+  // requisição é recusada lá e a Nina só veria um erro sem explicação.
+  if (media.buffer.byteLength > 3_000_000) {
+    return { ok: false, message: "Esse arquivo é grande demais para eu ler aqui. Peça só as páginas que importam (ou uma foto da capa e da folha de normas)." };
+  }
+  const out = await extractTextApi(media.dataUrl, media.name);
+  if (!out) return { ok: false, message: "Não consegui abrir esse arquivo agora. Peça para a pessoa mandar em PDF ou .docx." };
+  if (out.naoSuportado) return { ok: false, message: "Esse formato (.doc antigo) eu não leio. Peça para salvar como .docx ou PDF e mandar de novo." };
+  if (!out.texto) return { ok: false, message: "Abri o arquivo mas ele veio sem texto (pode ser um PDF escaneado). Peça uma foto nítida da página ou o arquivo em Word." };
+  return { ok: true, media, texto: out.texto };
+}
+
+const MEMORIA_ROTULOS = {
+  nome_completo: "Nome completo", universidade: "Universidade", faculdade: "Faculdade",
+  curso: "Curso", cidade: "Cidade", professor: "Orientador(a)", norma: "Norma que usa",
+  observacoes: "Observações",
+};
+
+// O que já foi aprendido sobre a pessoa entra no prompt de toda conversa. É o
+// que faz a Nina "lembrar": o histórico é cortado, o cadastro do contato não.
+async function contactMemoryBlock(conv) {
+  if (!supabase || !conv?.contact_id) return "";
+  try {
+    const { data } = await supabase.from("contacts").select("name,memory").eq("id", conv.contact_id).maybeSingle();
+    const mem = data?.memory && typeof data.memory === "object" ? data.memory : {};
+    const linhas = Object.entries(MEMORIA_ROTULOS)
+      .filter(([k]) => String(mem[k] ?? "").trim())
+      .map(([k, rotulo]) => `- ${rotulo}: ${String(mem[k]).trim()}`);
+    const nome = data?.name && !/^\+?\d[\d\s-]*$/.test(data.name) ? data.name : null;
+    if (!nome && !linhas.length) return "";
+    return (
+      `\n\nVOCÊ JÁ CONHECE ESTA PESSOA${nome ? ` — é ${nome}` : ""}. O que você guardou dela:\n` +
+      (linhas.join("\n") || "- (só o nome)") +
+      `\nUse isso: não pergunte de novo o que já está aqui — CONFIRME rapidinho quando for usar ("continua na mesma universidade?"). ` +
+      `Se ela corrigir ou contar algo novo, salve com memoria_salvar.`
+    );
+  } catch (e) {
+    console.error("contactMemoryBlock falhou:", e?.message || e);
+    return "";
+  }
+}
+
 let docModelsCache = { at: 0, data: null };
 async function fetchDocModels() {
   if (!APP_URL) return null;
@@ -1692,8 +1760,46 @@ const COPILOT_TOOLS = [
         titulo: { type: "string", description: "nome do arquivo" },
         dados: { type: "object", description: "conteúdo do documento no formato do modelo (veja 'formato' em documento_modelos)" },
         usar_foto_enviada: { type: "boolean", description: "só no currículo: true usa a ÚLTIMA foto que a pessoa mandou nesta conversa. Antes de gerar um currículo, PERGUNTE se ela quer foto; se sim, peça que mande a imagem e então passe true aqui." },
+        usar_logo_enviada: { type: "boolean", description: "só na monografia/trabalho: true usa a ÚLTIMA imagem que a pessoa mandou como LOGO da instituição na capa. Peça a logo antes; se ela não tiver, siga sem." },
       },
       required: ["modelo", "dados"],
+    },
+  },
+  {
+    name: "ler_arquivo_enviado",
+    description:
+      "LÊ o último arquivo (PDF, Word, texto) ou foto que a pessoa mandou nesta conversa e devolve o conteúdo, para você aproveitar os dados dele. " +
+      "Use quando ela disser que mandou instruções, um trabalho antigo, um currículo, o roteiro do professor ou qualquer material de apoio. " +
+      "Depois de ler, RESUMA para ela o que entendeu e confirme antes de usar.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "documento_norma_do_arquivo",
+    description:
+      "Lê o MODELO que a pessoa mandou (manual de normas da faculdade, trabalho antigo ou foto da capa) e extrai a FORMATAÇÃO dele: margens, fonte, entrelinha, recuo, papel, estilo de citação e como é a capa. " +
+      "Use quando ela disser que tem o modelo/manual da instituição — é bem melhor do que escolher uma norma parecida no chute. " +
+      "Devolve 'norma' e 'norma_custom': passe os DOIS em documento_criar (dados.norma e dados.normaCustom) para o trabalho sair na formatação dela. " +
+      "Também devolve os dados de capa que apareceram no modelo — confirme com a pessoa antes de usar.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "memoria_salvar",
+    description:
+      "Guarda o que você descobriu sobre a pessoa para LEMBRAR nas próximas conversas: universidade, faculdade, curso, cidade, professor, norma preferida. " +
+      "Use assim que ela contar cada coisa — não espere o fim. Numa próxima monografia você já sabe a universidade e o curso e não precisa perguntar de novo (só confirmar). " +
+      "Mande só os campos que descobriu agora; o resto continua salvo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nome_completo: { type: "string", description: "nome completo, como ele deve aparecer na capa/currículo" },
+        universidade: { type: "string" },
+        faculdade: { type: "string" },
+        curso: { type: "string", description: "curso ou carreira" },
+        cidade: { type: "string", description: "cidade e país" },
+        professor: { type: "string", description: "orientador(a) ou docente" },
+        norma: { type: "string", description: "id da norma que ela usa (abnt, apa-upds, upds-inv4, uap)" },
+        observacoes: { type: "string", description: "qualquer preferência útil (ex.: 'sempre pede com logo', 'prefere entrega em PDF')" },
+      },
     },
   },
   {
@@ -1826,6 +1932,59 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       if (!files.length) return { ok: false, message: "Gerei o texto mas falhei ao montar os arquivos." };
       return { ok: true, message: `Trabalho "${work.titulo}" pronto. Enviei o .docx (editável) e o .pdf. Diga o que quer ajustar que eu refaço.` };
     }
+    if (name === "memoria_salvar") {
+      const contato = ctx.conv?.contact_id;
+      if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
+      const CAMPOS = ["nome_completo", "universidade", "faculdade", "curso", "cidade", "professor", "norma", "observacoes"];
+      const patch = {};
+      for (const c of CAMPOS) {
+        const v = String(input[c] ?? "").trim();
+        if (v) patch[c] = v.slice(0, 300);
+      }
+      if (!Object.keys(patch).length) return { ok: false, message: "Nada para guardar — mande ao menos um campo." };
+      // A função do banco MESCLA com o que já está lá: mandar só a universidade
+      // não apaga o curso salvo na conversa passada.
+      const { data, error } = await supabase.rpc("contact_memory_set", { p_contact: contato, p_patch: patch });
+      if (error) return { ok: false, message: error.message };
+      return { ok: true, message: "Guardei. Vou lembrar disso nas próximas conversas.", memoria: data ?? patch };
+    }
+    if (name === "ler_arquivo_enviado") {
+      const r = await lerUltimoArquivo(ctx.conv);
+      if (!r.ok) return r;
+      if (r.texto) {
+        return {
+          ok: true, tipo: "documento", arquivo: r.media.name || "arquivo",
+          // Um trabalho inteiro não cabe na resposta da ferramenta; o começo já
+          // traz capa, sumário e instruções, que é o que costuma importar.
+          conteudo: r.texto.slice(0, 20000),
+          truncado: r.texto.length > 20000,
+          instrucao: "Leia, RESUMA para a pessoa o que você entendeu e confirme antes de usar. Salve com memoria_salvar o que for dado dela (universidade, curso, nome).",
+        };
+      }
+      // Imagem: quem "lê" é o próprio modelo, olhando a foto — nas ferramentas
+      // que passam a imagem adiante.
+      return { ok: true, tipo: "imagem", arquivo: r.media.name || "imagem", instrucao: "A pessoa mandou uma IMAGEM. Se for a capa de um modelo de trabalho, use documento_norma_do_arquivo para tirar a formatação dela. Se for foto para currículo, use documento_criar com usar_foto_enviada=true." };
+    }
+    if (name === "documento_norma_do_arquivo") {
+      if (!ctx.key) return { ok: false, message: "Sem chave de IA para ler o modelo." };
+      const r = await lerUltimoArquivo(ctx.conv);
+      if (!r.ok) return r;
+      const norma = await extractNorm(ctx.provider, ctx.key, { texto: r.texto, imagem: r.imagem, nomeArquivo: r.media.name });
+      if (!norma) return { ok: false, message: "Não consegui identificar a formatação nesse arquivo. Pergunte à pessoa qual é a norma (ABNT ou APA) e a universidade." };
+      return {
+        ok: true,
+        norma: norma.norma_base,
+        norma_custom: norma.custom,
+        capa_encontrada: norma.capa,
+        tem_logo: norma.tem_logo,
+        message: norma.resumo,
+        instrucao:
+          "Conte à pessoa, em uma frase, o que você pegou do modelo (margens, fonte, citação) e CONFIRME. " +
+          "Ao gerar, passe em documento_criar: dados.norma = 'norma' e dados.normaCustom = 'norma_custom'. " +
+          (norma.tem_logo ? "O modelo tem logo na capa — PEÇA que ela mande a logo e use usar_logo_enviada=true. " : "") +
+          "Os dados de capa_encontrada são do modelo, não necessariamente dela: confirme antes de usar.",
+      };
+    }
     if (name === "salvar_nome_contato") {
       const contato = ctx.conv?.contact_id;
       const nome = String(input.nome || "").trim();
@@ -1954,6 +2113,13 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
           const foto = await lastIncomingMedia(ctx.conv, ["image"]);
           if (!foto) return { ok: false, message: "Não achei nenhuma foto nesta conversa. Peça para a pessoa mandar a foto e tente de novo." };
           dados.photo = foto.dataUrl;
+        }
+        // Logo da instituição na capa da monografia — mesmo caminho da foto do
+        // currículo: a pessoa manda a imagem e a Nina só sinaliza.
+        if (input.usar_logo_enviada) {
+          const logo = await lastIncomingMedia(ctx.conv, ["image"]);
+          if (!logo) return { ok: false, message: "Não achei nenhuma imagem nesta conversa. Peça a logo da instituição e tente de novo." };
+          dados.capa = { ...(dados.capa || {}), logo_url: logo.dataUrl };
         }
         const resp = await fetch(`${APP_URL}/api/studio/render`, {
           method: "POST",
@@ -2403,11 +2569,19 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       `2) Escolhido o modelo, faça as perguntas dele UMA POR VEZ, em conversa natural — nunca despeje um formulário inteiro de uma vez. Aproveite o que a pessoa já disse e não repita pergunta.\n` +
       `3) Com os dados na mão, chame documento_previa para ela VER o visual e aprovar. Se o modelo tiver variações (4 temas de currículo, 4 normas de monografia), OFEREÇA mostrar todas de uma vez (documento_previa com todas=true) — é bem melhor ela comparar do que escolher no escuro. Se ela pedir "quero ver todos os modelos", mande todas.\n` +
       `3.1) CURRÍCULO: antes de gerar, PERGUNTE se ela quer foto no currículo. Se sim, peça que mande a foto aqui na conversa e depois chame documento_criar com usar_foto_enviada=true. Se não quiser, siga sem foto.\n` +
+      `3.2) MONOGRAFIA E TRABALHO ACADÊMICO: pergunte sempre estas quatro coisas (uma por vez, sem despejar tudo junto):\n` +
+      `   • A UNIVERSIDADE/instituição e o curso.\n` +
+      `   • A FORMATAÇÃO: ABNT ou APA? Se ela não souber, ofereça as normas de documento_modelos e mande as prévias das capas para ela escolher olhando.\n` +
+      `   • Se ela quer a LOGO da instituição na capa. Se sim, peça que mande a imagem aqui e chame documento_criar com usar_logo_enviada=true.\n` +
+      `   • Se ela TEM o modelo/manual da faculdade (PDF, Word ou foto da capa). Se tiver, peça que mande e use documento_norma_do_arquivo — a formatação sai do arquivo dela em vez de você escolher uma norma parecida. Depois passe dados.norma e dados.normaCustom em documento_criar.\n` +
+      `3.3) SEM TEMA DEFINIDO: se ela não tem tema, NÃO escolha por ela nem peça "me diz o tema". Pergunte o curso, a matéria, o que ela gosta na área e se tem alguma exigência do professor; depois SUGIRA 3 temas com uma linha cada, dizendo por que cada um é viável (tem material publicado, dá para desenvolver no tamanho pedido). Deixe ela escolher ou pedir outros.\n` +
+      `3.4) ARQUIVOS: se ela disser que mandou instruções, um trabalho antigo ou qualquer material, chame ler_arquivo_enviado, RESUMA o que entendeu e confirme antes de usar.\n` +
       `4) SÓ depois do "pode fazer": ESCREVA VOCÊ o conteúdo (as cláusulas do contrato, as questões da prova, os tópicos do resumo, o texto do currículo) e chame documento_criar com esse conteúdo no formato indicado em documento_modelos. Nunca mande campos vazios.\n` +
       `5) Entregue e ofereça ajustes. Se ela pedir mudança, refaça e reenvie.\n` +
       `\n` +
       `QUEM É VOCÊ E COMO COBRA\n` +
       `Na PRIMEIRA mensagem de alguém que você ainda não conhece: apresente-se em poucas linhas (quem você é e o que faz), PERGUNTE O NOME da pessoa e, assim que ela disser, salve com salvar_nome_contato. Use o nome dela dali em diante.\n` +
+      `LEMBRE-SE DAS PESSOAS: assim que souber universidade, faculdade, curso, cidade, orientador(a) ou a norma que ela usa, salve com memoria_salvar. Numa próxima conversa você já chega sabendo — CONFIRME ("continua na UPDS, medicina?") em vez de perguntar tudo de novo do zero.\n` +
       `Explique, sem enrolar, que os serviços são pagos em PIPS: 1 pip = R$ 0,50, e que dá para comprar por Pix ou cartão aqui mesmo no chat. Consulte pips_tabela para os valores — NUNCA invente preço.\n` +
       `Se ela mandar /saldo ou perguntar quanto tem, chame pips_saldo. NUNCA responda saldo de memória nem faça a conta você: o número vem sempre da ferramenta.\n` +
       `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em pips E em reais -> consulte pips_saldo -> peça confirmação (\"vou usar X pips do seu saldo de Y pips, posso?\") -> só com o sim chame pips_cobrar -> só então produza. Sem saldo, ofereça comprar com pips_comprar.\n` +
@@ -2418,6 +2592,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       (chatbot?.knowledge ? `\n\nBase: ${chatbot.knowledge}` : "") + brain +
       companyContextBlock(await getCompanyInfo(companyId));
   }
+  system += await contactMemoryBlock(conv);
   system += SYSTEM_RULES;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
@@ -2434,8 +2609,8 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     finance: ["finance_summary", "add_finance_entry"],
     remote: ["screenshot_client"],
     forms: ["list_forms", "save_to_form"],
-    academico: ["gerar_documento", "gerar_apresentacao", "documento_modelos", "documento_previa", "documento_criar"],
-    pips: ["pips_tabela", "pips_saldo", "pips_comprar", "pips_conferir", "pips_cobrar", "salvar_nome_contato"],
+    academico: ["gerar_documento", "gerar_apresentacao", "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo", "memoria_salvar"],
+    pips: ["pips_tabela", "pips_saldo", "pips_comprar", "pips_conferir", "pips_cobrar", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
@@ -2449,8 +2624,8 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "search_files", "send_file", "list_folder", "graph_overview",
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
-      "documento_modelos", "documento_previa", "documento_criar",
-      "pips_tabela", "pips_saldo", "salvar_nome_contato",
+      "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo",
+      "pips_tabela", "pips_saldo", "salvar_nome_contato", "memoria_salvar",
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);

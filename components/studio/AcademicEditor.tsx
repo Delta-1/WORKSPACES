@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, FileDown, FileText, Loader2, Printer, RefreshCw,
-  Save, Sparkles, Trash2, Wand2,
+  ArrowLeft, ArrowRight, Check, FileDown, FileText, Image as ImageIcon, Loader2, Printer,
+  RefreshCw, Save, Sparkles, Trash2, Wand2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import {
-  EMPTY_ACADEMIC, filledCount, renderAcademicHtml, type AcademicDoc,
+  EMPTY_ACADEMIC, filledCount, normOf, renderAcademicHtml, type AcademicDoc,
 } from "@/lib/doc-templates/academic";
 import { COVER_FIELDS, NORM_TEMPLATES, normById } from "@/lib/doc-templates/norms";
 import { PAPER, pageStyle } from "@/lib/doc-templates/types";
@@ -51,7 +51,9 @@ export default function AcademicEditor({ row, modelLabel, authorName, onClose }:
   const [exporting, setExporting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const norma = normById(doc.norma);
+  // A norma que vale: a escolhida, já com os ajustes lidos de um arquivo-modelo
+  // (quando o documento veio da Nina). Prévia, PDF e .docx usam esta.
+  const norma = normOf(doc);
 
   const doSave = useCallback(async (d: AcademicDoc, t: string) => {
     if (!supabase) return;
@@ -75,6 +77,13 @@ export default function AcademicEditor({ row, modelLabel, authorName, onClose }:
   function setCapa(k: string, v: string) {
     setDoc((prev) => { const next = { ...prev, capa: { ...prev.capa, [k]: v } }; schedule(next, title); return next; });
   }
+  // A logo vira data URL e fica dentro do próprio documento — assim ela sai
+  // igual na prévia, no PDF e no .docx, sem depender de um link externo.
+  function logoUpload(file: File) {
+    const r = new FileReader();
+    r.onload = () => setCapa("logo_url", String(r.result || ""));
+    r.readAsDataURL(file);
+  }
   function setSecaoHtml(id: string, html: string) {
     setDoc((prev) => { const next = { ...prev, secoes: prev.secoes.map((s) => (s.id === id ? { ...s, html } : s)) }; schedule(next, title); return next; });
   }
@@ -88,6 +97,9 @@ export default function AcademicEditor({ row, modelLabel, authorName, onClose }:
       const next: AcademicDoc = {
         ...prev,
         norma: n.id,
+        // Escolher uma norma da lista descarta os ajustes vindos de um
+        // arquivo-modelo — senão o documento sairia meio de uma, meio de outra.
+        normaCustom: null,
         capa: { ...(n.capaDados ?? {}), ...prev.capa },
         secoes: n.secoes.map((s) => ({ id: s.id, label: s.label, html: antes.get(s.id) ?? "" })),
       };
@@ -256,6 +268,28 @@ export default function AcademicEditor({ row, modelLabel, authorName, onClose }:
             <div>
               <h4 className="text-sm font-bold">Dados da capa</h4>
               <p className="text-[11px] text-gray-400 mt-0.5">O modelo <b>{norma.nome}</b> já preencheu o que sabia. Ajuste o que precisar.</p>
+            </div>
+            {/* Logo/brasão da instituição — vai no topo da capa, como os manuais pedem. */}
+            <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/20 p-2.5">
+              <span className="w-14 h-14 rounded-lg bg-black/40 border border-white/10 grid place-items-center overflow-hidden shrink-0">
+                {doc.capa.logo_url
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={doc.capa.logo_url} alt="" className="w-full h-full object-contain" />
+                  : <ImageIcon size={16} className="text-gray-600" />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Logo da instituição</p>
+                <p className="text-[11px] text-gray-500">Aparece no topo da capa. Opcional.</p>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <label className="text-[11px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">
+                    {doc.capa.logo_url ? "Trocar" : "Enviar imagem"}
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && logoUpload(e.target.files[0])} />
+                  </label>
+                  {doc.capa.logo_url && (
+                    <button onClick={() => setCapa("logo_url", "")} className="text-[10px] text-red-400 hover:text-red-300 cursor-pointer">remover</button>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {COVER_FIELDS.map((f) => (

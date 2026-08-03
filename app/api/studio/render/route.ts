@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import { parseHTML } from "linkedom";
 import { supabaseForRequest, supabaseService } from "@/lib/supabase-server";
 import { modelById } from "@/lib/doc-templates";
-import { normById } from "@/lib/doc-templates/norms";
 import { EMPTY_RESUME, RESUME_PAGE, renderResumeHtml, type Resume } from "@/lib/doc-templates/resume";
 import { buildResumeDocxBlob } from "@/lib/doc-templates/resume-docx";
-import { renderAcademicHtml, type AcademicDoc } from "@/lib/doc-templates/academic";
+import { normOf, renderAcademicHtml, type AcademicDoc } from "@/lib/doc-templates/academic";
 import {
   BUSINESS_PAGE, EMPTY_CONTRATO, EMPTY_ORCAMENTO, EMPTY_QUESTIONARIO, EMPTY_RESUMO as EMPTY_RES,
   renderContratoHtml, renderOrcamentoHtml, renderQuestionarioHtml, renderResumoHtml,
@@ -38,6 +37,27 @@ function docCompanyFrom(row: Record<string, unknown> | null): DocCompany {
     endereco: row.address as string, phone: row.phone as string, email: row.email as string,
     logo_url: row.logo_url as string,
   };
+}
+
+// Baixa uma imagem e devolve como data URL. O construtor do .docx só embute
+// bytes — um src http viraria um espaço em branco no arquivo entregue.
+async function inlineImage(src: string): Promise<string | null> {
+  const url = String(src || "").trim();
+  if (!url) return null;
+  if (url.startsWith("data:")) return url;
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!resp.ok) return null;
+    const mime = resp.headers.get("content-type")?.split(";")[0] || "image/png";
+    if (!mime.startsWith("image/")) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    // Uma capa não precisa de imagem gigante, e o .docx vai por WhatsApp.
+    if (buf.byteLength > 5_000_000) return null;
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 /** Envolve o HTML num documento e devolve o <body> como raiz para o conversor. */
@@ -91,7 +111,10 @@ export async function POST(request: Request) {
       docx = await buildResumeDocxBlob(r);
     } else if (model === "monografia" || model === "trabalho") {
       const doc = d as unknown as AcademicDoc;
-      const norma = normById(doc.norma);
+      // A logo da capa pode chegar como link (upload do site). O .docx só embute
+      // bytes, então o link vira data URL antes de montar o documento.
+      if (doc.capa?.logo_url) doc.capa = { ...doc.capa, logo_url: (await inlineImage(doc.capa.logo_url)) ?? "" };
+      const norma = normOf(doc);
       html = renderAcademicHtml(doc);
       page = norma.page;
       nome = titulo?.trim() || doc.capa?.titulo || def.label;
