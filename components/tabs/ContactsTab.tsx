@@ -64,6 +64,51 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
     load();
   }
 
+  // Conta o que a limpeza levaria junto ANTES de perguntar. Apagar um contato
+  // apaga em cascata a conversa dele, as mensagens, o saldo e as etiquetas — a
+  // pessoa precisa ver esse número antes de decidir, não depois.
+  const [limpando, setLimpando] = useState<null | {
+    total: number; semConversa: number; comConversa: number; comSaldo: number;
+  }>(null);
+  const [confirmacao, setConfirmacao] = useState("");
+  const [apagando, setApagando] = useState(false);
+
+  async function abrirLimpeza() {
+    if (!supabase || !companyId) return;
+    const [convs, saldos] = await Promise.all([
+      supabase.from("conversations").select("contact_id").eq("company_id", companyId),
+      supabase.from("contact_credits").select("contact_id, balance_cents").eq("company_id", companyId).gt("balance_cents", 0),
+    ]);
+    const comConversa = new Set((convs.data ?? []).map((c) => c.contact_id as string));
+    setConfirmacao("");
+    setLimpando({
+      total: contacts.length,
+      semConversa: contacts.filter((c) => !comConversa.has(c.id)).length,
+      comConversa: contacts.filter((c) => comConversa.has(c.id)).length,
+      comSaldo: (saldos.data ?? []).length,
+    });
+  }
+
+  async function limpar(modo: "sem-conversa" | "tudo") {
+    if (!supabase || !companyId || apagando) return;
+    setApagando(true);
+    try {
+      if (modo === "tudo") {
+        await supabase.from("contacts").delete().eq("company_id", companyId);
+      } else {
+        const { data: convs } = await supabase.from("conversations").select("contact_id").eq("company_id", companyId);
+        const comConversa = new Set((convs ?? []).map((c) => c.contact_id as string));
+        const alvos = contacts.filter((c) => !comConversa.has(c.id)).map((c) => c.id);
+        // Em blocos: uma lista de milhares de ids não cabe numa URL só.
+        for (let i = 0; i < alvos.length; i += 200) {
+          await supabase.from("contacts").delete().in("id", alvos.slice(i, i + 200));
+        }
+      }
+      setLimpando(null);
+      await load();
+    } finally { setApagando(false); }
+  }
+
   const filtered = contacts.filter((c) => {
     if (!query) return true;
     const q = query.toLowerCase();
@@ -78,8 +123,61 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
     <div className="h-full flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-lg font-bold flex items-center gap-2"><Users className="text-emerald-400" size={20} /> Contatos <span className="text-xs font-normal text-gray-500">({contacts.length})</span></h3>
-        <button onClick={() => setAdding((v) => !v)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"><UserPlus size={14} /> Novo contato</button>
+        <div className="flex items-center gap-2">
+          {profile?.role === "gestor" && contacts.length > 0 && (
+            <button onClick={abrirLimpeza} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"><Trash2 size={14} /> Limpar lista</button>
+          )}
+          <button onClick={() => setAdding((v) => !v)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-2 rounded-lg cursor-pointer"><UserPlus size={14} /> Novo contato</button>
+        </div>
       </div>
+
+      {limpando && (
+        <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4" onClick={() => setLimpando(null)}>
+          <div className="w-full max-w-md bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold">Limpar lista de contatos</h3>
+              <p className="text-[12px] text-gray-400 mt-1">
+                São <b>{limpando.total}</b> contatos: {limpando.semConversa} nunca trocaram mensagem e {limpando.comConversa} têm conversa.
+              </p>
+            </div>
+
+            <button
+              onClick={() => limpar("sem-conversa")}
+              disabled={apagando || limpando.semConversa === 0}
+              className="w-full text-left rounded-xl border border-emerald-700/50 bg-emerald-950/25 p-3 cursor-pointer hover:bg-emerald-950/40 disabled:opacity-40"
+            >
+              <p className="text-sm font-semibold">Só os {limpando.semConversa} sem conversa</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Tira o entulho que veio da agenda do WhatsApp. Nenhuma conversa, mensagem ou saldo é perdido.
+              </p>
+            </button>
+
+            <div className="rounded-xl border border-red-800/50 bg-red-950/20 p-3 space-y-2">
+              <p className="text-sm font-semibold text-red-200">Apagar os {limpando.total}</p>
+              <p className="text-[11px] text-red-100/80 leading-snug">
+                Junto vão <b>{limpando.comConversa} conversas com todo o histórico de mensagens</b>
+                {limpando.comSaldo > 0 && <> e o <b>saldo de {limpando.comSaldo} {limpando.comSaldo === 1 ? "cliente" : "clientes"}</b></>}.
+                Isso não tem volta.
+              </p>
+              <input
+                value={confirmacao}
+                onChange={(e) => setConfirmacao(e.target.value)}
+                placeholder="digite APAGAR TUDO"
+                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:border-red-500"
+              />
+              <button
+                onClick={() => limpar("tudo")}
+                disabled={apagando || confirmacao.trim().toUpperCase() !== "APAGAR TUDO"}
+                className="w-full text-xs font-semibold px-3 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {apagando ? "Apagando…" : "Apagar tudo"}
+              </button>
+            </div>
+
+            <button onClick={() => setLimpando(null)} className="w-full text-xs py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">Cancelar</button>
+          </div>
+        </div>
+      )}
 
       {adding && (
         <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex flex-wrap items-end gap-2">

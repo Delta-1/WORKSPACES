@@ -946,8 +946,25 @@ function sanitizeForSpeech(text) {
   t = t.replace(/[([]\s*(pausa|suspiro|silêncio|silencio|tom\b[^)\]]*|voz\b[^)\]]*|sussurr[^)\]]*|em voz[^)\]]*|com [^)\]]*)\s*[)\]]/gi, "");
   // Colchetes remanescentes (quase sempre rubrica) — remove.
   t = t.replace(/\[[^\]]*\]/g, "");
+  // DINHEIRO: "R$ 50,00" lido como está vira "erre cifrão cinco zero vírgula
+  // zero zero". Vira palavra ("50 reais"), que a voz lê certo — e o separador de
+  // milhar sai, senão "1.234" é lido como "um ponto duzentos e trinta e quatro".
+  t = t.replace(/R\$\s*([\d.]+)(?:,(\d{2}))?/gi, (_m, inteiro, centavos) => {
+    const reais = String(inteiro).replace(/\./g, "");
+    const c = Number(centavos || 0);
+    const parteReais = `${reais} ${reais === "1" ? "real" : "reais"}`;
+    if (!c) return parteReais;
+    return `${parteReais} e ${c} ${c === 1 ? "centavo" : "centavos"}`;
+  });
   // Espaços/limpeza final.
   return t.replace(/\s{2,}/g, " ").trim();
+}
+
+// Código Pix "copia e cola" (BR Code). Lido em voz alta é inútil — são centenas
+// de caracteres — e a pessoa precisa COPIAR, o que só dá para fazer no texto.
+function contemCodigoPix(text) {
+  const t = String(text || "");
+  return /\b0002 ?01\d{2}/.test(t) || /br\.gov\.bcb\.pix/i.test(t) || /[A-Z0-9]{60,}/.test(t.replace(/\s/g, ""));
 }
 
 // Remove uma saudação repetida no começo da resposta quando o bot JÁ falou antes
@@ -1633,6 +1650,22 @@ async function contactMemoryBlock(conv) {
     const { data } = await supabase.from("contacts").select("name,memory,is_group,billing_exempt").eq("id", conv.contact_id).maybeSingle();
     // Grupo não tem "memória de pessoa" — tem regras de convivência.
     if (data?.is_group) return grupoBlock(data.name);
+
+    // SALDO no prompt, sempre. Antes ela só sabia se lembrasse de consultar — e
+    // quando não lembrava, falava de saldo por cima ou perguntava de novo. Vem
+    // direto da função do banco (a mesma da cobrança), então não é palpite.
+    let saldoBlock = "";
+    if (!data?.billing_exempt) {
+      const { data: cents } = await supabase.rpc("credits_balance", { p_contact: conv.contact_id });
+      const c = Number(cents ?? 0);
+      const emReais = (c / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      saldoBlock =
+        `\n\nSALDO DESTA PESSOA AGORA: R$ ${emReais}.\n` +
+        (c > 0
+          ? `Já sabe disso — não pergunte nem mande consultar. Ao cobrar, diga "vou descontar R$ X do seu saldo de R$ ${emReais}".`
+          : `Está zerada. Antes de produzir algo pago, avise o preço e ofereça a recarga com saldo_recarregar.`) +
+        `\nSe a conversa estiver longa ou ela acabar de pagar, confirme com saldo_consultar — este número foi lido no começo desta mensagem.`;
+    }
     // ADM: não paga nada. O bloqueio de verdade é no banco; isto aqui é para ela
     // não ficar falando de preço com quem está só testando.
     const admBlock = data?.billing_exempt
@@ -1648,13 +1681,13 @@ async function contactMemoryBlock(conv) {
     const nome = data?.name && !/^\+?\d[\d\s-]*$/.test(data.name) ? data.name : null;
     // Sem nome e sem memória não há o que lembrar — mas a isenção do ADM vale
     // desde a primeira mensagem, então ela vai de qualquer jeito.
-    if (!nome && !linhas.length) return admBlock;
+    if (!nome && !linhas.length) return admBlock + saldoBlock;
     return (
       `\n\nVOCÊ JÁ CONHECE ESTA PESSOA${nome ? ` — é ${nome}` : ""}. O que você guardou dela:\n` +
       (linhas.join("\n") || "- (só o nome)") +
       `\nUse isso: não pergunte de novo o que já está aqui — CONFIRME rapidinho quando for usar ("continua na mesma universidade?"). ` +
       `Se ela corrigir ou contar algo novo, salve com memoria_salvar.` +
-      admBlock
+      admBlock + saldoBlock
     );
   } catch (e) {
     console.error("contactMemoryBlock falhou:", e?.message || e);
@@ -1929,9 +1962,17 @@ const COPILOT_TOOLS = [
   {
     name: "salvar_nome_contato",
     description:
-      "Guarda o NOME da pessoa no cadastro do contato, para você chamá-la pelo nome sempre e achar o saldo dela depois. " +
-      "Use assim que ela disser o nome, na primeira conversa. Se o cadastro já tiver um nome de verdade, não sobrescreva sem ela pedir.",
-    input_schema: { type: "object", properties: { nome: { type: "string" } }, required: ["nome"] },
+      "Guarda o NOME da pessoa no cadastro do contato — é o que faz a lista de contatos ter nome de gente em vez de número de telefone. " +
+      "Use assim que ela disser como se chama. Se ela CORRIGIR depois (\"na verdade é Ana\", \"pode me chamar de Dudu\", \"escreveu errado\"), chame de novo com corrigir=true: o nome antigo é substituído. " +
+      "Sem corrigir=true, um nome já cadastrado não é sobrescrito.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nome: { type: "string" },
+        corrigir: { type: "boolean", description: "true quando a PESSOA pediu para mudar o nome que já estava salvo" },
+      },
+      required: ["nome"],
+    },
   },
   // ---- SALDO E COBRANÇA (tudo em reais) ----
   {
@@ -2115,12 +2156,19 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       if (!contato) return { ok: false, message: "Não consegui identificar o contato desta conversa." };
       if (!nome) return { ok: false, message: "Nome vazio." };
       const { data: atual } = await supabase.from("contacts").select("name,phone").eq("id", contato).maybeSingle();
-      // Só sobrescreve quando o que está lá é o telefone/placeholder — o nome
-      // que a pessoa deu antes vale mais que um novo palpite.
+      // Só sobrescreve sozinho quando o que está lá é o telefone/placeholder — um
+      // nome que a pessoa já deu vale mais que um novo palpite. Mas quando ELA
+      // pede para corrigir (corrigir=true), troca sem discutir.
       const semNome = !atual?.name || atual.name === atual.phone || /^\+?\d[\d\s-]*$/.test(atual.name);
-      if (!semNome) return { ok: true, message: `Já está salvo como "${atual.name}". Só troque se a pessoa pedir.`, nome: atual.name };
+      if (!semNome && !input.corrigir) {
+        return { ok: true, message: `Já está salvo como "${atual.name}". Se ela pedir para trocar, chame de novo com corrigir=true.`, nome: atual.name };
+      }
       await supabase.from("contacts").update({ name: nome }).eq("id", contato);
-      return { ok: true, message: `Salvei o contato como "${nome}".`, nome };
+      return {
+        ok: true,
+        message: input.corrigir && !semNome ? `Troquei de "${atual.name}" para "${nome}".` : `Salvei o contato como "${nome}".`,
+        nome,
+      };
     }
 
     // ---- SALDO E COBRANÇA (em reais) ----
@@ -2644,7 +2692,12 @@ async function copilotLoadFile(companyId, id) {
 
 // Retorna { reply, files: [{name,mime,buffer}] }. Usa a IA configurada no bot
 // (Gemini ou Anthropic); se não houver, cai na chave Anthropic do ambiente.
-async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null, conv = null) {
+/**
+ * @param onParcial função opcional que RECEBE e ENTREGA na hora o que o agente
+ *   escreveu antes de usar uma ferramenta. Sem ela, a pessoa fica no vácuo
+ *   enquanto o documento é gerado ou o Pix é criado.
+ */
+async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null, conv = null, onParcial = null) {
   // Provedor: o do agente (se tiver chave própria); senão o do agente mesmo, e a
   // chave cai no fallback (env ou de outro chatbot da empresa com o mesmo provedor).
   const provider = chatbot?.provider || "anthropic";
@@ -2708,7 +2761,10 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       `LEMBRE-SE DAS PESSOAS: assim que souber universidade, faculdade, curso, cidade, orientador(a) ou a norma que ela usa, salve com memoria_salvar. Numa próxima conversa você já chega sabendo — CONFIRME ("continua na UPDS, medicina?") em vez de perguntar tudo de novo do zero.\n` +
       `Fale de dinheiro em REAIS, sempre — nada de moeda interna, ponto ou crédito. "A monografia sai por R$ 50,00". Consulte tabela_precos para os valores; NUNCA invente preço.\n` +
       `A pessoa tem um SALDO em reais aqui, que ela coloca por Pix ou cartão pelo próprio chat. Se ela mandar /saldo ou perguntar quanto tem, chame saldo_consultar. NUNCA responda saldo de memória nem faça a conta você: o número vem sempre da ferramenta.\n` +
-      `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em reais -> consulte saldo_consultar -> peça confirmação (\"vou descontar R$ 50,00 do seu saldo de R$ 80,00, posso?\") -> só com o sim chame cobrar_servico -> só então produza. Sem saldo, ofereça a recarga com saldo_recarregar.\n` +
+      `ANTES de produzir qualquer serviço pago, nesta ordem: diga o preço em reais -> confira o saldo -> peça confirmação (\"vou descontar R$ 50,00 do seu saldo de R$ 80,00, posso?\") -> só com o sim chame cobrar_servico -> só então produza. Sem saldo, ofereça a recarga com saldo_recarregar.\n` +
+      `NUNCA SUMA NO MEIO. Antes de usar qualquer ferramenta que demore (gerar documento, criar Pix, montar apresentação), ESCREVA PRIMEIRO o que você vai fazer e quanto custa — em uma frase. Só depois chame a ferramenta. Esse texto sai na hora para a pessoa; se você chamar a ferramenta calado, ela fica olhando para a tela sem saber se você entendeu.\n` +
+      `O código Pix (copia e cola) vai SEMPRE em mensagem de TEXTO separada, sozinho, sem mais nada junto — a pessoa precisa copiar. Nunca leia o código em áudio.\n` +
+      `Falando de dinheiro, escreva \"R$ 50,00\". Nunca soletre o número.\n` +
       `Só cobre quando o serviço estiver DEFINIDO (tema, norma e dados combinados). Nada de cobrar para começar a conversar.\n` +
       `Seja honesta sobre o que entrega: a monografia sai completa e formatada na norma, pronta para a pessoa desenvolver e ajustar — você entrega a base construída, não a revisão final nem a defesa. Diga isso ANTES de cobrar, não depois.\n` +
       `Dê uma previsão de tempo antes de começar a produzir. NÃO invente dados que a pessoa não deu (nomes, CPF/CNPJ, valores) — pergunte.\n` +
@@ -2721,6 +2777,14 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
+  // Entrega o aviso do meio do caminho, sem repetir o que já saiu.
+  const jaDito = new Set();
+  const emitirParcial = async (texto) => {
+    const t = String(texto || "").trim();
+    if (!onParcial || !t || jaDito.has(t)) return;
+    jaDito.add(t);
+    try { await onParcial(t); } catch (e) { console.error("aviso parcial falhou:", e?.message || e); }
+  };
   // Ferramentas liberadas pelas CAPACIDADES do agente (Labs). Vazio/nulo = todas.
   const caps = Array.isArray(chatbot?.capabilities) ? chatbot.capabilities : null;
   const CAP_TOOLS = {
@@ -2738,8 +2802,14 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
   };
+  // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
+  // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
+  // só de números. Por isso estas duas ficam sempre liberadas, para qualquer bot.
+  const SEMPRE = ["salvar_nome_contato", "memoria_salvar"];
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
-  let allowedNames = fullAccess || !caps || !caps.length ? null : new Set(caps.flatMap((c) => CAP_TOOLS[c] || []));
+  let allowedNames = fullAccess || !caps || !caps.length
+    ? null
+    : new Set([...caps.flatMap((c) => CAP_TOOLS[c] || []), ...SEMPRE]);
   // ESCOPO POR PERMISSÃO: quando a pessoa entrou por login na linha do copiloto e
   // NÃO é gestor/super, o copiloto fica restrito a ferramentas seguras (consulta e
   // tarefas do dia a dia) — nada de finanças, cadastros, exclusões ou acesso remoto.
@@ -2749,7 +2819,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
       "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo",
-      "tabela_precos", "saldo_consultar", "salvar_nome_contato", "memoria_salvar",
+      "tabela_precos", "saldo_consultar", ...SEMPRE,
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
@@ -2780,6 +2850,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
         reply = parts.filter((p) => p.text).map((p) => p.text).join("\n") || reply;
         const calls = parts.filter((p) => p.functionCall);
         if (calls.length === 0) break;
+        await emitirParcial(reply); // avisa antes de sumir para trabalhar
         contents.push({ role: "model", parts });
         const responseParts = [];
         for (const c of calls) {
@@ -2803,6 +2874,11 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       reply = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
       const toolUses = res.content.filter((b) => b.type === "tool_use");
       if (res.stop_reason !== "tool_use" || toolUses.length === 0) break;
+      // O que ela escreveu ANTES de usar a ferramenta ("beleza, vou montar sua
+      // monografia — são R$ 50,00, deixa eu ver seu saldo") sai AGORA. Antes isso
+      // era sobrescrito pela resposta final e a pessoa ficava no vácuo enquanto o
+      // documento era gerado.
+      await emitirParcial(reply);
       messages.push({ role: "assistant", content: res.content });
       const results = [];
       for (const tu of toolUses) {
@@ -2811,6 +2887,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       }
       messages.push({ role: "user", content: results });
     }
+    // Se a resposta final repetir palavra por palavra o aviso que já saiu, não
+    // manda de novo — a pessoa veria a mesma frase duas vezes.
+    if (jaDito.has(String(reply || "").trim())) reply = "";
     return { reply, files, sends };
   } catch (err) {
     console.error("Copilot reply failed:", err);
@@ -3307,7 +3386,13 @@ async function startSession(numberId) {
             let copilotSends = [];
             let reply = null;
             if (customerText && useTools) {
-              const out = await runCopilotReply(cid, agentForReply, customerText, history, copilotFullAccess, actor, conversation);
+              // O aviso do meio do caminho sai por TEXTO mesmo quando a conversa
+              // é por áudio: ele existe para chegar RÁPIDO, e sintetizar voz
+              // custaria os segundos que ele veio economizar.
+              const out = await runCopilotReply(
+                cid, agentForReply, customerText, history, copilotFullAccess, actor, conversation,
+                (texto) => sendBotMessage(sock, jid, conversation.id, cid, { text: texto })
+              );
               reply = out.reply;
               copilotFiles = out.files || [];
               copilotSends = out.sends || [];
@@ -3338,8 +3423,9 @@ async function startSession(numberId) {
               }
               // Responde por áudio conforme a preferência (copiloto) ou se o cliente falou por áudio.
               // Exceção: se a resposta for uma LISTAGEM, manda por TEXTO (mais fácil de ler).
+              // Código Pix NUNCA vai por áudio: a pessoa precisa copiar.
               let sentAsAudio = false;
-              if (wantVoice && !looksLikeList(reply)) {
+              if (wantVoice && !looksLikeList(reply) && !contemCodigoPix(reply)) {
                 const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, agentForReply?.elevenlabs_voice_id);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
