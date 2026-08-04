@@ -161,6 +161,35 @@ documentado e, se ele não responder, esconde o cartão em vez de mostrar R$ 0,0
 O que a empresa realmente precisa ver — o que entrou — vem de
 `/v1/payments/search`, que é documentado e estável.
 
+## Como a Yumi fala de dinheiro
+
+- **Valor por extenso, não soletrado.** `sanitizeForSpeech` troca "R$ 50,00" por
+  "50 reais" antes de sintetizar. Sem isso a voz lia "erre cifrão cinco zero
+  vírgula zero zero".
+- **Código Pix nunca por áudio.** `contemCodigoPix` reconhece o BR Code e força
+  a resposta por texto — a pessoa precisa COPIAR o código.
+- **Nunca sumir no meio.** O que o agente escreve *antes* de chamar uma
+  ferramenta é entregue na hora (`onParcial` em `runCopilotReply`). Antes esse
+  texto era sobrescrito pela resposta final e a pessoa ficava no vácuo enquanto o
+  documento era gerado. O aviso sai por TEXTO mesmo em conversa por áudio: ele
+  existe para chegar rápido, e sintetizar voz custaria os segundos que ele veio
+  economizar. Se a resposta final repetir o aviso palavra por palavra, ela é
+  descartada.
+- **O saldo entra no prompt.** Toda mensagem carrega o saldo atual do contato,
+  lido da mesma função do banco que faz a cobrança. Ela não depende mais de
+  lembrar de consultar — e não erra o valor.
+
+## Nome do contato
+
+`salvar_nome_contato` e `memoria_salvar` ficam **sempre liberadas**, para
+qualquer agente, independente das capacidades marcadas no Labs: saber e guardar o
+nome de quem está falando é o básico de um atendimento, e sem isso a lista de
+contatos fica só de números.
+
+Um nome já cadastrado não é sobrescrito por palpite. Quando a PESSOA corrige
+("na verdade é Ana", "pode me chamar de Dudu"), o agente chama de novo com
+`corrigir=true` e o nome antigo é substituído.
+
 ## Saldo em reais
 
 Tudo em **reais**, sem moeda interna: monografia/trabalho **R$ 50,00**,
