@@ -17,5 +17,5 @@ export const CAPS: Capability[] = [
   { id: "logistica", label: "Logística Internacional", desc: "Status de cargas, localização de motoristas e documentos aduaneiros" },
   { id: "cobranca", label: "Cobrador (cobranças)", desc: "Consulta cobranças pendentes e situação de cada cliente" },
   { id: "creditos", label: "Saldo e cobrança", desc: "Cobra os serviços em reais, gera Pix/link de cartão e controla o saldo do cliente" },
-  { id: "biblioteca", label: "BibliOpen (biblioteca)", desc: "Procura livros no acervo, desfaz a dúvida entre edições e entrega o link de leitura" },
+  { id: "biblioteca", label: "BibliOpen (biblioteca)", desc: "Procura livros em catálogos abertos, desfaz a dúvida entre edições e entrega o link de leitura e download" },
 ];

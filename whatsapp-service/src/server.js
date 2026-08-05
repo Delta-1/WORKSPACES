@@ -19,6 +19,7 @@ import makeWASocket, {
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateWork, buildDocx, buildPdf, generateDeck, buildPptx, extractNorm, fileName as studioFileName } from "./studio.js";
+import { buscarLivros, acharLivro } from "./catalogos.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
@@ -1978,13 +1979,12 @@ const COPILOT_TOOLS = [
   {
     name: "biblioteca_buscar",
     description:
-      "Procura livros, resumos e slides no acervo do BibliOpen. Use SEMPRE que pedirem um material — nunca responda de cabeça se um livro existe. " +
-      "Devolve título, autor, edição, ano, matéria e a ORIGEM de cada um. Se vier mais de um resultado parecido (mesmo livro em edições diferentes, autores parecidos), LISTE numerado e PERGUNTE qual a pessoa quer, em vez de escolher por ela.",
+      "Procura livros em catálogos abertos (Project Gutenberg, Internet Archive, Wikisource, Open Library). Use SEMPRE que pedirem um livro — nunca responda de cabeça se uma obra existe ou onde achar. " +
+      "Devolve título, autor, fonte e licença de cada um. Se vier mais de um parecido (mesma obra em edições ou traduções diferentes), LISTE numerado e PERGUNTE qual a pessoa quer, em vez de escolher por ela.",
     input_schema: {
       type: "object",
       properties: {
-        busca: { type: "string", description: "título, autor ou assunto (ex.: 'Guyton fisiologia', 'anatomia do coração')" },
-        materia: { type: "string", description: "filtra por matéria (Anatomia, Fisiologia, Patologia…)" },
+        busca: { type: "string", description: "título, autor ou assunto (ex.: 'Machado de Assis Dom Casmurro', 'anatomia')" },
       },
       required: ["busca"],
     },
@@ -1992,12 +1992,12 @@ const COPILOT_TOOLS = [
   {
     name: "biblioteca_entregar",
     description:
-      "Entrega um livro para a pessoa, pelo id que veio de biblioteca_buscar. Chame DEPOIS que ela escolher qual quer. " +
-      "Devolve o link certo: no acervo do BibliOpen, um link de leitura no nosso leitor (com a contribuição, quando for o caso); nos títulos de fonte externa, o endereço da própria fonte. " +
+      "Entrega o link de um livro, pelo id que veio de biblioteca_buscar. Chame DEPOIS que a pessoa escolher qual quer. " +
+      "Quando existe arquivo (domínio público do Gutenberg), devolve também o endereço para BAIXAR o texto. " +
       "Mande o link e explique em uma linha o que a pessoa vai encontrar lá.",
     input_schema: {
       type: "object",
-      properties: { livro_id: { type: "string", description: "id do livro vindo de biblioteca_buscar" } },
+      properties: { livro_id: { type: "string", description: "id do livro vindo de biblioteca_buscar (ex.: 'gutenberg:1342')" } },
       required: ["livro_id"],
     },
   },
@@ -2199,58 +2199,54 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
     }
 
     // ---- BIBLIOPEN ----
+    // A Nina não tem acervo próprio: ela pergunta na hora aos mesmos catálogos
+    // abertos que o site do BibliOpen usa. Sem banco no meio, as duas pontas
+    // dão a mesma resposta — e não existe "livro que a Nina indica e o site
+    // não tem".
     if (name === "biblioteca_buscar") {
-      if (!APP_URL) return { ok: false, message: "Biblioteca indisponível (serviço sem endereço do site)." };
       try {
-        const qs = new URLSearchParams({ q: String(input.busca || ""), limite: "12" });
-        if (input.materia) qs.set("materia", String(input.materia));
-        const resp = await fetch(`${APP_URL}/api/bibli/buscar?${qs}`);
-        const out = await resp.json();
-        if (!resp.ok) return { ok: false, message: out?.error || "Não consegui consultar o acervo agora." };
-        if (!out.livros?.length) {
-          return { ok: true, total: 0, message: "Não achei nada com esse termo. Sugira outra grafia, o nome do autor, ou pergunte a matéria para eu procurar por lá." };
+        const livros = await buscarLivros(String(input.busca || ""), 12);
+        if (!livros.length) {
+          return {
+            ok: true, total: 0,
+            message: "Não achei nada com esse termo nos catálogos abertos. Sugira outra grafia, o nome do autor, ou o título no idioma original.",
+          };
         }
         return {
           ok: true,
-          total: out.total,
-          livros: out.livros.map((l) => ({
-            id: l.id, titulo: l.titulo_completo, autor: l.autor, materia: l.materia,
-            tipo: l.tipo, idioma: l.idioma, origem: l.origem, fonte: l.fonte,
+          total: livros.length,
+          livros: livros.map((l) => ({
+            id: l.id, titulo: l.titulo, autor: l.autor, idioma: l.idioma,
+            fonte: l.fonte, licenca: l.licenca, tem_arquivo: !!l.arquivo,
           })),
           instrucao:
-            out.total > 1
-              ? "Vieram vários. LISTE numerado (título, autor e edição) e PERGUNTE qual ela quer. Não escolha por ela e não entregue antes da resposta."
+            livros.length > 1
+              ? "Vieram vários. LISTE numerado (título, autor e fonte) e PERGUNTE qual ela quer. Não escolha por ela e não entregue antes da resposta."
               : "Veio um só. Confirme se é esse mesmo e então use biblioteca_entregar.",
         };
       } catch (e) {
         console.error("biblioteca_buscar falhou:", e?.message || e);
-        return { ok: false, message: "Não consegui falar com o acervo agora." };
+        return { ok: false, message: "Não consegui falar com os catálogos agora." };
       }
     }
     if (name === "biblioteca_entregar") {
-      if (!APP_URL) return { ok: false, message: "Biblioteca indisponível (serviço sem endereço do site)." };
       try {
-        const resp = await fetch(`${APP_URL}/api/bibli/buscar?q=&limite=1&id=${encodeURIComponent(String(input.livro_id || ""))}`);
-        const out = await resp.json();
-        const l = (out.livros ?? [])[0];
+        const l = await acharLivro(String(input.livro_id || ""));
         if (!l) return { ok: false, message: "Não achei esse livro. Busque de novo com biblioteca_buscar." };
-        // Fonte externa não passa pelo nosso leitor e NÃO é cobrada — a pessoa
-        // vai direto à origem. Cobrar por obra de terceiro não é curadoria.
-        if (!l.disponivel_no_leitor) {
-          return {
-            ok: true, externo: true, titulo: l.titulo_completo, link: l.link_externo || l.fonte_url,
-            instrucao: "Este título é de fonte externa: mande o link e deixe claro que o acesso é direto na fonte, sem custo nenhum pelo BibliOpen.",
-          };
-        }
-        const contato = ctx.conv?.contact_id;
         return {
           ok: true,
-          titulo: l.titulo_completo,
-          link: `${APP_URL}/bibli/ler/${l.id}${contato ? `?c=${contato}` : ""}`,
+          titulo: l.titulo,
+          autor: l.autor,
+          fonte: l.fonte,
           licenca: l.licenca,
-          instrucao:
-            "Mande o link do leitor. Explique em UMA linha que a leitura abre no navegador, funciona offline depois de carregada, " +
-            "e que o BibliOpen se mantém por contribuição — a partir de R$ 2,00 por livro ou R$ 10,00 no passe mensal. Sem pressão: a página explica tudo.",
+          link: l.pagina,
+          // Só o Gutenberg entrega arquivo. Nos outros, quem serve é a própria
+          // biblioteca de origem — mandar um "baixe aqui" que não existe seria
+          // prometer porta que ninguém abriu.
+          baixar: l.arquivo || null,
+          instrucao: l.arquivo
+            ? "Mande o link da página E o link de baixar, em mensagens de TEXTO (link em áudio não dá para copiar). Diga em uma linha que é domínio público, de graça, e que dá para guardar o arquivo."
+            : "Mande o link em TEXTO. Explique em uma linha que a leitura é gratuita e acontece na própria biblioteca de origem — o BibliOpen só faz a ponte.",
         };
       } catch (e) {
         console.error("biblioteca_entregar falhou:", e?.message || e);
