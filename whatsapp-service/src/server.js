@@ -1974,6 +1974,33 @@ const COPILOT_TOOLS = [
       required: ["nome"],
     },
   },
+  // ---- BIBLIOPEN (a bibliotecária Nina) ----
+  {
+    name: "biblioteca_buscar",
+    description:
+      "Procura livros, resumos e slides no acervo do BibliOpen. Use SEMPRE que pedirem um material — nunca responda de cabeça se um livro existe. " +
+      "Devolve título, autor, edição, ano, matéria e a ORIGEM de cada um. Se vier mais de um resultado parecido (mesmo livro em edições diferentes, autores parecidos), LISTE numerado e PERGUNTE qual a pessoa quer, em vez de escolher por ela.",
+    input_schema: {
+      type: "object",
+      properties: {
+        busca: { type: "string", description: "título, autor ou assunto (ex.: 'Guyton fisiologia', 'anatomia do coração')" },
+        materia: { type: "string", description: "filtra por matéria (Anatomia, Fisiologia, Patologia…)" },
+      },
+      required: ["busca"],
+    },
+  },
+  {
+    name: "biblioteca_entregar",
+    description:
+      "Entrega um livro para a pessoa, pelo id que veio de biblioteca_buscar. Chame DEPOIS que ela escolher qual quer. " +
+      "Devolve o link certo: no acervo do BibliOpen, um link de leitura no nosso leitor (com a contribuição, quando for o caso); nos títulos de fonte externa, o endereço da própria fonte. " +
+      "Mande o link e explique em uma linha o que a pessoa vai encontrar lá.",
+    input_schema: {
+      type: "object",
+      properties: { livro_id: { type: "string", description: "id do livro vindo de biblioteca_buscar" } },
+      required: ["livro_id"],
+    },
+  },
   // ---- SALDO E COBRANÇA (tudo em reais) ----
   {
     name: "tabela_precos",
@@ -2169,6 +2196,66 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         message: input.corrigir && !semNome ? `Troquei de "${atual.name}" para "${nome}".` : `Salvei o contato como "${nome}".`,
         nome,
       };
+    }
+
+    // ---- BIBLIOPEN ----
+    if (name === "biblioteca_buscar") {
+      if (!APP_URL) return { ok: false, message: "Biblioteca indisponível (serviço sem endereço do site)." };
+      try {
+        const qs = new URLSearchParams({ q: String(input.busca || ""), limite: "12" });
+        if (input.materia) qs.set("materia", String(input.materia));
+        const resp = await fetch(`${APP_URL}/api/bibli/buscar?${qs}`);
+        const out = await resp.json();
+        if (!resp.ok) return { ok: false, message: out?.error || "Não consegui consultar o acervo agora." };
+        if (!out.livros?.length) {
+          return { ok: true, total: 0, message: "Não achei nada com esse termo. Sugira outra grafia, o nome do autor, ou pergunte a matéria para eu procurar por lá." };
+        }
+        return {
+          ok: true,
+          total: out.total,
+          livros: out.livros.map((l) => ({
+            id: l.id, titulo: l.titulo_completo, autor: l.autor, materia: l.materia,
+            tipo: l.tipo, idioma: l.idioma, origem: l.origem, fonte: l.fonte,
+          })),
+          instrucao:
+            out.total > 1
+              ? "Vieram vários. LISTE numerado (título, autor e edição) e PERGUNTE qual ela quer. Não escolha por ela e não entregue antes da resposta."
+              : "Veio um só. Confirme se é esse mesmo e então use biblioteca_entregar.",
+        };
+      } catch (e) {
+        console.error("biblioteca_buscar falhou:", e?.message || e);
+        return { ok: false, message: "Não consegui falar com o acervo agora." };
+      }
+    }
+    if (name === "biblioteca_entregar") {
+      if (!APP_URL) return { ok: false, message: "Biblioteca indisponível (serviço sem endereço do site)." };
+      try {
+        const resp = await fetch(`${APP_URL}/api/bibli/buscar?q=&limite=1&id=${encodeURIComponent(String(input.livro_id || ""))}`);
+        const out = await resp.json();
+        const l = (out.livros ?? [])[0];
+        if (!l) return { ok: false, message: "Não achei esse livro. Busque de novo com biblioteca_buscar." };
+        // Fonte externa não passa pelo nosso leitor e NÃO é cobrada — a pessoa
+        // vai direto à origem. Cobrar por obra de terceiro não é curadoria.
+        if (!l.disponivel_no_leitor) {
+          return {
+            ok: true, externo: true, titulo: l.titulo_completo, link: l.link_externo || l.fonte_url,
+            instrucao: "Este título é de fonte externa: mande o link e deixe claro que o acesso é direto na fonte, sem custo nenhum pelo BibliOpen.",
+          };
+        }
+        const contato = ctx.conv?.contact_id;
+        return {
+          ok: true,
+          titulo: l.titulo_completo,
+          link: `${APP_URL}/bibli/ler/${l.id}${contato ? `?c=${contato}` : ""}`,
+          licenca: l.licenca,
+          instrucao:
+            "Mande o link do leitor. Explique em UMA linha que a leitura abre no navegador, funciona offline depois de carregada, " +
+            "e que o BibliOpen se mantém por contribuição — a partir de R$ 2,00 por livro ou R$ 10,00 no passe mensal. Sem pressão: a página explica tudo.",
+        };
+      } catch (e) {
+        console.error("biblioteca_entregar falhou:", e?.message || e);
+        return { ok: false, message: "Não consegui montar o link agora." };
+      }
     }
 
     // ---- SALDO E COBRANÇA (em reais) ----
@@ -2801,6 +2888,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     creditos: ["tabela_precos", "saldo_consultar", "saldo_recarregar", "pagamento_conferir", "cobrar_servico", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
+    biblioteca: ["biblioteca_buscar", "biblioteca_entregar"],
   };
   // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
   // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
@@ -2819,7 +2907,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
       "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo",
-      "tabela_precos", "saldo_consultar", ...SEMPRE,
+      "tabela_precos", "saldo_consultar", "biblioteca_buscar", "biblioteca_entregar", ...SEMPRE,
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
