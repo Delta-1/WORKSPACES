@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { supabaseService } from "@/lib/supabase-server";
 import { companyPaymentToken, parseCobrancaRef, parseRecargaRef } from "@/lib/mercadopago";
 import { callWhatsappService, whatsappServiceConfigured } from "@/lib/whatsapp-proxy";
-import { parseBibliRef } from "@/lib/bibliopen";
 
 export const runtime = "nodejs";
 
@@ -174,33 +173,6 @@ export async function POST(request: Request) {
       const alvo = parseCobrancaRef(pay.external_reference);
       if (alvo) {
         await quitarCobranca(svc, alvo, pay);
-        return NextResponse.json({ ok: true });
-      }
-
-      // BIBLIOPEN — contribuição que libera a leitura ("bib:<tipo>:<quem>:<livro>").
-      const bib = parseBibliRef(pay.external_reference);
-      if (bib) {
-        if (String(pay.status || "") === "approved") {
-          const cents = Math.round(Number(pay.transaction_amount ?? 0) * 100);
-          // O "quem" é um uuid de contato (veio do WhatsApp) ou um e-mail.
-          const ehContato = /^[0-9a-f-]{36}$/i.test(bib.quem);
-          await svc.from("library_licenses").upsert(
-            {
-              contact_id: ehContato ? bib.quem : null,
-              email: ehContato ? null : bib.quem,
-              livro_id: bib.tipo === "mensal" ? null : bib.livroId,
-              tipo: bib.tipo,
-              valor_centavos: cents > 0 ? cents : 200,
-              // Passe mensal vence; a avulsa é daquele livro para sempre — a
-              // pessoa contribuiu por ele, não alugou.
-              expira_em: bib.tipo === "mensal" ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
-              mp_payment_id: String(pay.id ?? ""),
-            },
-            // O MP reenvia o webhook até receber 200: o mesmo pagamento não
-            // pode virar duas licenças.
-            { onConflict: "mp_payment_id", ignoreDuplicates: true }
-          );
-        }
         return NextResponse.json({ ok: true });
       }
 
