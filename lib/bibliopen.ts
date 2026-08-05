@@ -35,6 +35,7 @@ export type Livro = {
   id: string;
   titulo: string;
   autor: string | null;
+  area: string | null;
   materia: string | null;
   tipo: string | null;
   edicao: string | null;
@@ -52,7 +53,7 @@ export type Livro = {
 
 /** Campos que podem ir para fora — `arquivo_url` nunca sai daqui. */
 export const CAMPOS_PUBLICOS =
-  "id, titulo, autor, materia, tipo, edicao, ano, idioma, capa_url, descricao, origem, fonte, licenca, fonte_url, link_externo, disponivel_no_leitor";
+  "id, titulo, autor, area, materia, tipo, edicao, ano, idioma, capa_url, descricao, origem, fonte, licenca, fonte_url, link_externo, disponivel_no_leitor";
 
 /** Só livro que a gente tem direito de servir é cobrado. */
 export const podeSerLido = (l: Pick<Livro, "origem" | "disponivel_no_leitor">) =>

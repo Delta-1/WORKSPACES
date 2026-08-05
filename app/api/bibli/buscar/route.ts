@@ -18,6 +18,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const q = termoDeBusca(url.searchParams.get("q") ?? "");
+  const area = url.searchParams.get("area");
   const materia = url.searchParams.get("materia");
   const limite = Math.min(Math.max(Number(url.searchParams.get("limite") ?? 20), 1), 50);
 
@@ -31,12 +32,14 @@ export async function GET(request: Request) {
   }
 
   let query = svc.from("library_books").select(CAMPOS_PUBLICOS).limit(limite);
+  if (!q) query = query.order("area").order("titulo");
 
   if (q) {
     // Busca por relevância no índice de texto; se o termo não render nada
     // (nome próprio, sigla), cai no "contém" do título, que é mais tolerante.
     query = query.textSearch("busca", q, { type: "websearch", config: "portuguese" });
   }
+  if (area) query = query.eq("area", area);
   if (materia) query = query.eq("materia", materia);
 
   const resultado = await query;
@@ -45,6 +48,7 @@ export async function GET(request: Request) {
 
   if (q && (!data || data.length === 0)) {
     let alt = svc.from("library_books").select(CAMPOS_PUBLICOS).ilike("titulo", `%${q}%`).limit(limite);
+    if (area) alt = alt.eq("area", area);
     if (materia) alt = alt.eq("materia", materia);
     const r = await alt;
     data = r.data;

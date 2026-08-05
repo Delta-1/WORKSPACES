@@ -16,7 +16,7 @@ export const maxDuration = 120;
 //                do sistema, que confia em `origem` para decidir o que cobrar.
 
 type Linha = {
-  titulo: string; autor: string | null; materia: string | null; tipo: string | null;
+  titulo: string; autor: string | null; area: string | null; materia: string | null; tipo: string | null;
   idioma: string | null; origem: "aberto" | "link"; fonte: string | null;
   licenca: string | null; fonte_url: string | null; link_externo: string | null;
   capa_url: string | null; descricao: string | null; ano: number | null;
@@ -63,6 +63,7 @@ export async function POST(request: Request) {
     const linhas: Linha[] = ACERVO_ABERTO.map((s) => ({
       titulo: s.titulo,
       autor: s.autor ?? null,
+      area: s.area,
       materia: s.materia,
       tipo: s.tipo ?? "Livro",
       idioma: s.idioma ?? "pt",
@@ -112,6 +113,8 @@ export async function POST(request: Request) {
       livros.push({
         titulo,
         autor,
+        // A planilha antiga é o acervo médico: entra tudo em Saúde.
+        area: "Saúde",
         materia: (r[2] || "").trim() || null,
         tipo: (r[3] || "").trim() || "Livro",
         idioma: (r[7] || "").trim() || "pt",

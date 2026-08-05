@@ -102,3 +102,27 @@ $$;
 
 revoke all on function public.library_pode_ler(uuid, uuid, text) from public;
 grant execute on function public.library_pode_ler(uuid, uuid, text) to authenticated, service_role;
+
+-- ── Áreas do conhecimento ───────────────────────────────────────────────────
+-- O BibliOpen deixou de ser só medicina. `materia` sozinha não organiza um
+-- acervo geral: "Anatomia", "Cálculo" e "Direito Penal" viram uma lista chapada
+-- de dezenas de opções. `area` é o nível de cima — a pessoa escolhe o campo e só
+-- então a matéria.
+alter table public.library_books add column if not exists area text;
+
+comment on column public.library_books.area is
+  'Área do conhecimento (Saúde, Exatas, Humanas, Direito, Tecnologia…). Nível acima de `materia`, para navegar sem virar lista chapada.';
+
+create index if not exists library_books_area_idx on public.library_books (area);
+
+-- A busca passa a considerar a área: procurar por "saúde" acha o que está lá
+-- dentro, mesmo sem a palavra no título.
+alter table public.library_books drop column if exists busca;
+alter table public.library_books add column busca tsvector generated always as (
+  to_tsvector('portuguese',
+    coalesce(titulo, '') || ' ' || coalesce(autor, '') || ' ' ||
+    coalesce(area, '') || ' ' || coalesce(materia, '') || ' ' ||
+    coalesce(edicao, '') || ' ' || coalesce(descricao, ''))
+) stored;
+
+create index if not exists library_books_busca_idx on public.library_books using gin (busca);
