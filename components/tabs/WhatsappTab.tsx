@@ -95,7 +95,16 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
       setShowUpgrade(true);
       return;
     }
-    const { data } = await supabase.from("whatsapp_numbers").insert({ label: newLabel.trim() }).select("*").single();
+    const { data, error } = await supabase.from("whatsapp_numbers").insert({ label: newLabel.trim() }).select("*").single();
+    // Quem manda no limite é o gatilho do banco. Se ele recusar, a tela precisa
+    // dizer — antes o erro era descartado e o botão simplesmente não fazia
+    // nada, que é o pior jeito de recusar alguma coisa.
+    if (error) {
+      if (/limite/i.test(error.message)) setShowUpgrade(true);
+      else alert(`Não consegui registrar o número: ${error.message}`);
+      await loadAll();
+      return;
+    }
     setNewLabel("");
     await loadAll();
     if (data) setSelectedId(data.id as string);
