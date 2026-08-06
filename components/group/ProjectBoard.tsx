@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase-client";
 import {
   ArrowLeft, BoxSelect, Check, ChevronDown, Circle, Copy, Diamond,
   Download, Focus, Grid3X3, Hand, Lightbulb, Link2, MousePointer2,
   Maximize2, Minimize2, Pencil, Plus, Redo2, RotateCcw, Shapes, Sparkles, Square, StickyNote,
-  Trash2, Type, Undo2, Waypoints, ZoomIn, ZoomOut,
+  Trash2, TriangleAlert, Type, Undo2, Waypoints, ZoomIn, ZoomOut,
 } from "lucide-react";
 
 type NodeKind = "box" | "text" | "sticky" | "ellipse" | "diamond";
@@ -16,17 +16,34 @@ type Stroke = { id: string; color: string; width: number; pts: number[][] };
 type Scene = { nodes: Node[]; edges: Edge[]; strokes: Stroke[] };
 type Tool = "select" | "hand" | "pen" | "sticky" | "shape" | "text" | "connect";
 type View = { x: number; y: number; k: number };
+type ProjectBoardProps = { projectId: string; title: string; meId: string; onBack: () => void };
 
 const COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#f43f5e", "#f59e0b", "#10b981", "#06b6d4", "#64748b"];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const emptyScene = (): Scene => ({ nodes: [], edges: [], strokes: [] });
 
 function normalizeScene(raw: unknown): Scene {
-  const value = (raw ?? {}) as Partial<Scene>;
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+  }
+  const value = (parsed ?? {}) as Partial<Scene>;
   return {
-    nodes: Array.isArray(value.nodes) ? value.nodes.map((node) => ({ ...node, kind: node.kind ?? "box" })) : [],
-    edges: Array.isArray(value.edges) ? value.edges : [],
-    strokes: Array.isArray(value.strokes) ? value.strokes : [],
+    nodes: Array.isArray(value.nodes)
+      ? value.nodes.filter((node) => !!node && typeof node === "object").map((node) => ({ ...node, kind: node.kind ?? "box" }))
+      : [],
+    edges: Array.isArray(value.edges) ? value.edges.filter((edge) => !!edge && typeof edge === "object") : [],
+    strokes: Array.isArray(value.strokes)
+      ? value.strokes
+        .filter((stroke) => !!stroke && typeof stroke === "object")
+        .map((stroke) => ({
+          ...stroke,
+          pts: Array.isArray(stroke.pts)
+            ? stroke.pts.filter((point) => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))).map((point) => [Number(point[0]), Number(point[1])])
+            : [],
+        }))
+        .filter((stroke) => stroke.pts.length > 0)
+      : [],
   };
 }
 
@@ -46,9 +63,40 @@ function edgePath(from: Node, to: Node) {
   return `M ${a.x} ${a.y} C ${a.x + bend * direction} ${a.y}, ${b.x - bend * direction} ${b.y}, ${b.x} ${b.y}`;
 }
 
-export default function ProjectBoard({
+class ProjectBoardBoundary extends Component<{ children: ReactNode; onBack: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() { return { failed: true }; }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Falha isolada no quadro de Projetos", error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="fixed inset-0 z-[150] grid place-items-center bg-[#0b0d12] p-6 text-slate-100">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#151923] p-6 text-center shadow-2xl">
+          <TriangleAlert size={32} className="mx-auto text-amber-400" />
+          <h2 className="mt-4 text-base font-bold">Não foi possível abrir este quadro</h2>
+          <p className="mt-2 text-sm leading-relaxed text-slate-400">O restante do Workspaces continua funcionando. Você pode tentar carregar o quadro novamente sem atualizar a página inteira.</p>
+          <div className="mt-5 flex justify-center gap-2">
+            <button onClick={this.props.onBack} className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15">Voltar</button>
+            <button onClick={() => this.setState({ failed: false })} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Tentar novamente</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+export default function ProjectBoard(props: ProjectBoardProps) {
+  return <ProjectBoardBoundary onBack={props.onBack}><ProjectBoardCanvas {...props} /></ProjectBoardBoundary>;
+}
+
+function ProjectBoardCanvas({
   projectId, title, meId, onBack,
-}: { projectId: string; title: string; meId: string; onBack: () => void }) {
+}: ProjectBoardProps) {
   const [scene, setScene] = useState<Scene>(emptyScene);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [tool, setTool] = useState<Tool>("select");
@@ -86,14 +134,35 @@ export default function ProjectBoard({
   }, []);
 
   useEffect(() => {
-    const sync = () => setFullscreen(document.fullscreenElement === boardRef.current);
+    const fullscreenDocument = document as Document & { webkitFullscreenElement?: Element | null };
+    const sync = () => setFullscreen((document.fullscreenElement ?? fullscreenDocument.webkitFullscreenElement) === boardRef.current);
     document.addEventListener("fullscreenchange", sync);
-    return () => document.removeEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
   }, []);
 
   const toggleFullscreen = useCallback(async () => {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await boardRef.current?.requestFullscreen();
+    const element = boardRef.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> | void }) | null;
+    const fullscreenDocument = document as Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> | void };
+    if (!element) return;
+    try {
+      const active = document.fullscreenElement ?? fullscreenDocument.webkitFullscreenElement;
+      if (active) {
+        const exit = document.exitFullscreen?.bind(document) ?? fullscreenDocument.webkitExitFullscreen?.bind(document);
+        if (exit) await Promise.resolve(exit());
+        setFullscreen(false);
+        return;
+      }
+      const enter = element.requestFullscreen?.bind(element) ?? element.webkitRequestFullscreen?.bind(element);
+      if (enter) await Promise.resolve(enter());
+      else setFullscreen((current) => !current);
+    } catch (error) {
+      console.warn("Tela cheia não disponível neste navegador", error);
+      setFullscreen(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -347,7 +416,7 @@ export default function ProjectBoard({
     interacting.current = true;
     setSelected(stroke.id);
     gesture.current = { type: "stroke", id: stroke.id, sx: event.clientX, sy: event.clientY, ox: point.x, oy: point.y };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* SVG sem captura de ponteiro */ }
   }
 
   function onNodeDown(event: React.PointerEvent, node: Node) {
