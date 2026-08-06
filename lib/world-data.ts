@@ -1,4 +1,6 @@
-export type NewsMode = "local" | "pt";
+import type { AppLanguage } from "./language";
+
+export type NewsMode = "local" | "language";
 
 export type NewsArticle = {
   id: string;
@@ -17,6 +19,8 @@ export type CountryNewsFeed = {
     flag: string;
   };
   mode: NewsMode;
+  language: AppLanguage;
+  localizedBy: "source" | "edition" | "ai";
   generatedAt: string;
   sources: Array<{ name: string; count: number }>;
   articles: NewsArticle[];
@@ -29,18 +33,19 @@ export function countryFlag(code: string) {
   return String.fromCodePoint(...[...normalized].map((letter) => 127397 + letter.charCodeAt(0)));
 }
 
-export function formatNewsTime(value: string | null) {
-  if (!value) return "Agora";
+export function formatNewsTime(value: string | null, language: AppLanguage = "pt-BR") {
+  const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" });
+  if (!value) return relative.format(0, "minute");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Agora";
+  if (Number.isNaN(date.getTime())) return relative.format(0, "minute");
   const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
-  if (minutes < 1) return "Agora";
-  if (minutes < 60) return `Há ${minutes} min`;
+  if (minutes < 1) return relative.format(0, "minute");
+  if (minutes < 60) return relative.format(-minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `Há ${hours}h`;
+  if (hours < 24) return relative.format(-hours, "hour");
   const days = Math.floor(hours / 24);
-  if (days < 7) return `Há ${days}d`;
-  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+  if (days < 7) return relative.format(-days, "day");
+  return date.toLocaleDateString(language, { day: "2-digit", month: "short" });
 }
 
 export function sourceColor(source: string) {

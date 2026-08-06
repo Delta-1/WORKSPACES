@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { Layers } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Languages, Layers } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
+import { APP_LANGUAGES, detectBrowserLanguage, rememberLanguage, type AppLanguage } from "@/lib/language";
 
 export default function LoginScreen({
   onLogin,
@@ -15,14 +16,25 @@ export default function LoginScreen({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [companyCode, setCompanyCode] = useState("");
+  const [language, setLanguage] = useState<AppLanguage>("pt-BR");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const shownError = error ?? externalError ?? null;
 
+  useEffect(() => {
+    queueMicrotask(() => setLanguage(detectBrowserLanguage()));
+  }, []);
+
   function stashCode() {
     if (companyCode.trim()) localStorage.setItem("pendingCompanyCode", companyCode.trim().toUpperCase());
     else localStorage.removeItem("pendingCompanyCode");
+  }
+
+  function stashRegistrationLanguage() {
+    if (mode !== "signup") return;
+    localStorage.setItem("pendingRegistrationLanguage", language);
+    rememberLanguage(language);
   }
 
   async function handleGoogleLogin() {
@@ -30,6 +42,7 @@ export default function LoginScreen({
     setLoading(true);
     setError(null);
     stashCode();
+    stashRegistrationLanguage();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.origin },
@@ -48,7 +61,13 @@ export default function LoginScreen({
     stashCode();
     try {
       if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
+        rememberLanguage(language);
+        localStorage.setItem("pendingRegistrationLanguage", language);
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { language } },
+        });
         if (error) {
           setError(error.message);
         } else if (!data.session) {
@@ -135,6 +154,25 @@ export default function LoginScreen({
                   Funcionário? Cole o código da sua empresa. Dono? Deixe em branco — você cria a empresa no próximo passo.
                 </p>
               </div>
+              {mode === "signup" && (
+                <label className="block">
+                  <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-gray-400">
+                    <Languages size={13} /> Idioma do sistema e das notícias
+                  </span>
+                  <select
+                    value={language}
+                    onChange={(event) => setLanguage(event.target.value as AppLanguage)}
+                    className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none cursor-pointer"
+                  >
+                    {APP_LANGUAGES.map((item) => (
+                      <option key={item.code} value={item.code} className="bg-[#0b1019]">
+                        {item.flag} {item.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[11px] text-gray-500">Você pode trocar depois em Editar perfil.</span>
+                </label>
+              )}
               <button
                 onClick={handleEmailAuth}
                 disabled={loading || !email.trim() || !password}

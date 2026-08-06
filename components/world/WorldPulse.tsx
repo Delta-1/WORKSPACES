@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowUpRight, Globe2, Newspaper, RefreshCw } from "lucide-react";
 import { formatNewsTime, sourceColor, type CountryNewsFeed } from "@/lib/world-data";
+import type { AppLanguage } from "@/lib/language";
 
 export default function WorldPulse({
   variant = "home",
+  language,
   onOpen,
 }: {
   variant?: "home" | "tv";
+  language: AppLanguage;
   onOpen?: () => void;
 }) {
   const [feed, setFeed] = useState<CountryNewsFeed | null>(null);
@@ -18,7 +21,8 @@ export default function WorldPulse({
   const load = useCallback(async () => {
     setError(false);
     try {
-      const response = await fetch(`/api/world/news?country=BR&mode=local&limit=${variant === "tv" ? 12 : 8}`);
+      const params = new URLSearchParams({ country: "BR", mode: "language", language, limit: variant === "tv" ? "12" : "8" });
+      const response = await fetch(`/api/world/news?${params.toString()}`);
       if (!response.ok) throw new Error("news unavailable");
       setFeed(await response.json() as CountryNewsFeed);
     } catch {
@@ -26,7 +30,7 @@ export default function WorldPulse({
     } finally {
       setLoading(false);
     }
-  }, [variant]);
+  }, [language, variant]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
@@ -61,7 +65,7 @@ export default function WorldPulse({
                 <span className="h-1.5 w-1.5 rounded-full bg-current" /><span className="truncate">{article.source}</span>
               </div>
               <p className="line-clamp-2 text-[11px] font-semibold leading-snug text-slate-100">{article.title}</p>
-              <p className="mt-1 text-[9px] text-slate-500">{formatNewsTime(article.publishedAt)}</p>
+              <p className="mt-1 text-[9px] text-slate-500">{formatNewsTime(article.publishedAt, language)}</p>
             </div>
           ))}
         </div>
@@ -97,7 +101,7 @@ export default function WorldPulse({
             <button key={article.id} onClick={onOpen} className="min-w-0 rounded-xl border border-white/8 bg-black/15 p-3 text-left transition hover:border-white/20 hover:bg-white/5">
               <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider" style={{ color: sourceColor(article.source) }}><span className="h-1.5 w-1.5 rounded-full bg-current" /><span className="truncate">{article.source}</span></div>
               <p className="line-clamp-2 text-[11px] font-semibold leading-snug text-slate-100">{article.title}</p>
-              <p className="mt-1.5 text-[9px] text-slate-500">{formatNewsTime(article.publishedAt)}</p>
+              <p className="mt-1.5 text-[9px] text-slate-500">{formatNewsTime(article.publishedAt, language)}</p>
             </button>
           ))}
         </div>
