@@ -61,6 +61,10 @@ export default function ConfigTab({
   remoteAgentUrl,
   onUpdateCompany,
   onReplayTutorials,
+  dockPosition,
+  onDockPosition,
+  animStyle,
+  onAnimStyle,
 }: {
   companyName: string;
   companyCode?: string | null;
@@ -101,6 +105,10 @@ export default function ConfigTab({
     themeStyle?: string;
   }) => void;
   onReplayTutorials?: () => void;
+  dockPosition?: "bottom" | "top" | "left" | "right";
+  onDockPosition?: (p: "bottom" | "top" | "left" | "right") => void;
+  animStyle?: "mac" | "windows" | "fun" | "none";
+  onAnimStyle?: (a: "mac" | "windows" | "fun" | "none") => void;
 }) {
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
@@ -293,6 +301,43 @@ export default function ConfigTab({
 
           {active === "aparencia" && (
             <div className="liquid-glass rounded-2xl p-5 space-y-4 max-w-lg">
+              {onDockPosition && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Barra de aplicativos</label>
+                  <p className="text-[11px] text-gray-500 mb-2">Onde a barra de apps fica na tela. Clique com o botão direito num app para abri-lo em janela ou fixá-lo.</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {([["bottom", "Embaixo"], ["top", "Em cima"], ["left", "Esquerda"], ["right", "Direita"]] as const).map(([pos, label]) => (
+                      <button
+                        key={pos}
+                        onClick={() => onDockPosition(pos)}
+                        className={`rounded-xl py-2 text-[11px] font-semibold cursor-pointer border transition-colors ${
+                          dockPosition === pos ? "border-emerald-400 ring-1 ring-emerald-400/40 text-emerald-300" : "border-white/10 hover:border-white/25 text-gray-300"
+                        }`}
+                      >{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {onAnimStyle && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Animação</label>
+                  <p className="text-[11px] text-gray-500 mb-2">Como as telas entram. Escolha o estilo que combina com você.</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {([["mac", "Mac", "Suave"], ["windows", "Windows", "Desliza"], ["fun", "Divertido", "Com molejo"], ["none", "Nenhuma", "Sem efeito"]] as const).map(([id, label, desc]) => (
+                      <button
+                        key={id}
+                        onClick={() => onAnimStyle(id)}
+                        className={`rounded-xl py-2 px-1 cursor-pointer border transition-colors ${
+                          animStyle === id ? "border-emerald-400 ring-1 ring-emerald-400/40 text-emerald-300" : "border-white/10 hover:border-white/25 text-gray-300"
+                        }`}
+                      >
+                        <span className="text-[11px] font-semibold block">{label}</span>
+                        <span className="text-[9px] text-gray-500">{desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Estilo do site</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

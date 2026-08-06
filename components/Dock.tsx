@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 import { Grid3x3, LucideIcon, X } from "lucide-react";
 
+type DockPos = "bottom" | "top" | "left" | "right";
+
 export default function Dock({
   apps,
   active,
@@ -14,6 +16,8 @@ export default function Dock({
   onUnpin,
   onReorder,
   wheelApps,
+  position = "bottom",
+  onContext,
 }: {
   apps: { id: string; label: string; icon: LucideIcon }[];
   active: string;
@@ -25,7 +29,16 @@ export default function Dock({
   onUnpin?: (id: string) => void;
   onReorder?: (id: string, beforeId: string) => void;
   wheelApps?: { id: string }[]; // lista completa para navegar com o scroll do mouse
+  position?: DockPos;
+  onContext?: (id: string, x: number, y: number) => void;
 }) {
+  const vertical = position === "left" || position === "right";
+  // Onde a barra ancora, conforme o lado escolhido nas Configurações.
+  const ancora =
+    position === "top" ? "top-3 sm:top-4 left-1/2 -translate-x-1/2" :
+    position === "left" ? "left-3 sm:left-4 top-1/2 -translate-y-1/2" :
+    position === "right" ? "right-3 sm:right-4 top-1/2 -translate-y-1/2" :
+    "bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2";
   const [dragOver, setDragOver] = useState(false);
   const lastWheel = useRef(0);
 
@@ -45,7 +58,7 @@ export default function Dock({
 
   return (
     // No modo edição (pinMode) a barra fica ACIMA do fundo borrado para arrastar.
-    <div className={`fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 max-w-[96vw] ${pinMode ? "z-50" : "z-30"}`}>
+    <div className={`fixed ${ancora} ${vertical ? "max-h-[92vh]" : "max-w-[96vw]"} ${pinMode ? "z-50" : "z-30"}`}>
       {pinMode && (
         <p className="text-center text-[11px] text-emerald-300/90 mb-1.5 select-none">
           Arraste apps pra cá para fixar · arraste na barra para reordenar
@@ -67,8 +80,8 @@ export default function Dock({
           if (id && !apps.some((a) => a.id === id)) onPin?.(id);
         }}
         className={`liquid-glass rounded-2xl px-2 sm:px-3 py-2 flex items-center gap-1 shadow-2xl transition-all ${
-          pinMode ? "ring-2 ring-dashed" : ""
-        } ${dragOver ? "ring-emerald-400 scale-105" : pinMode ? "ring-emerald-500/40" : ""}`}
+          vertical ? "flex-col overflow-y-auto" : ""
+        } ${pinMode ? "ring-2 ring-dashed" : ""} ${dragOver ? "ring-emerald-400 scale-105" : pinMode ? "ring-emerald-500/40" : ""}`}
       >
         {apps.length === 0 && pinMode && (
           <span className="text-[11px] text-gray-500 px-3 py-2 whitespace-nowrap">Solte um app aqui…</span>
@@ -95,6 +108,7 @@ export default function Dock({
                 draggable={pinMode}
                 onDragStart={(e) => pinMode && e.dataTransfer.setData("text/app-id", app.id)}
                 onClick={() => onSelect(app.id)}
+                onContextMenu={(e) => { if (onContext) { e.preventDefault(); onContext(app.id, e.clientX, e.clientY); } }}
                 title={app.label}
                 className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
                   pinMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
@@ -114,7 +128,7 @@ export default function Dock({
             </div>
           );
         })}
-        <div className="w-px h-6 bg-white/10 mx-1" />
+        <div className={`bg-white/10 ${vertical ? "h-px w-6 my-1" : "w-px h-6 mx-1"}`} />
         <button
           onClick={onOpenDrawer}
           title="Menu de aplicativos"

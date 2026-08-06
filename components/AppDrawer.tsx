@@ -13,6 +13,7 @@ export default function AppDrawer({
   onClose,
   onSelect,
   quickIds,
+  onContext,
 }: {
   apps: AppDef[];
   open: boolean;
@@ -21,6 +22,7 @@ export default function AppDrawer({
   onClose: () => void;
   onSelect: (id: string) => void;
   quickIds: string[];
+  onContext?: (id: string, x: number, y: number) => void;
 }) {
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState(20);
@@ -145,6 +147,7 @@ export default function AppDrawer({
                         draggable={editMode}
                         onDragStart={(e) => editMode && e.dataTransfer.setData("text/app-id", app.id)}
                         onClick={() => { if (editMode) return; onSelect(app.id); onClose(); }}
+                        onContextMenu={(e) => { if (onContext && !editMode) { e.preventDefault(); onContext(app.id, e.clientX, e.clientY); } }}
                         className={`w-14 h-14 rounded-2xl flex items-center justify-center border border-white/10 transition-transform hover:scale-105 active:scale-95 ${
                           editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
                         } ${app.accent}`}
