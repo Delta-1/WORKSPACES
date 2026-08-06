@@ -45,10 +45,12 @@ export async function POST(request: Request) {
   const client = supabaseForRequest(request);
   if (!client) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
 
-  const { model, prompt, current } = (await request.json()) as { model?: string; prompt?: string; current?: unknown };
+  const { model, prompt, current, referenceDecision, referenceText, referenceName } = (await request.json()) as { model?: string; prompt?: string; current?: unknown; referenceDecision?: "file" | "none"; referenceText?: string; referenceName?: string };
   const shape = model ? SHAPES[model] : null;
   if (!shape) return NextResponse.json({ error: "Modelo não suportado." }, { status: 400 });
   if (!prompt?.trim()) return NextResponse.json({ error: "Diga o que você quer neste documento." }, { status: 400 });
+  if ((model === "resumo" || model === "resumao") && referenceDecision !== "file" && referenceDecision !== "none") return NextResponse.json({ needsReference: true, error: "A Yumi precisa perguntar primeiro se existe um arquivo de referência." }, { status: 400 });
+  if ((model === "resumo" || model === "resumao") && referenceDecision === "file" && !referenceText?.trim()) return NextResponse.json({ needsReference: true, error: "Envie o arquivo de referência antes de criar o resumo." }, { status: 400 });
 
   let override: AiOverride | null = null;
   const { data: { user } } = await client.auth.getUser();
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
 
   const userMsg =
     `Pedido: ${prompt.trim()}\n\n` +
+    (referenceDecision === "file" ? `Arquivo de referência "${referenceName || "material"}":\n${referenceText!.slice(0, 50000)}\n\nUse esse material como fonte principal e não invente informações que não estejam nele.\n\n` : "") +
     (current ? `Conteúdo atual do documento (para complementar/corrigir, não jogue fora o que já está bom):\n${JSON.stringify(current).slice(0, 4000)}\n\n` : "") +
     `Gere o JSON agora.`;
 
