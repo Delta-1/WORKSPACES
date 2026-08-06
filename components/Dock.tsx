@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Grid3x3, LucideIcon, X } from "lucide-react";
+import { Grid3x3, LucideIcon, Plus, X } from "lucide-react";
+import ShortcutIcon from "@/components/ShortcutIcon";
+import type { WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 
 type DockPos = "bottom" | "top" | "left" | "right";
 
@@ -18,6 +20,9 @@ export default function Dock({
   wheelApps,
   position = "bottom",
   onContext,
+  shortcuts = [],
+  onShortcut,
+  onAddShortcut,
 }: {
   apps: { id: string; label: string; icon: LucideIcon }[];
   active: string;
@@ -31,6 +36,9 @@ export default function Dock({
   wheelApps?: { id: string }[]; // lista completa para navegar com o scroll do mouse
   position?: DockPos;
   onContext?: (id: string, x: number, y: number) => void;
+  shortcuts?: WorkspaceShortcut[];
+  onShortcut?: (shortcut: WorkspaceShortcut) => void;
+  onAddShortcut?: () => void;
 }) {
   const vertical = position === "left" || position === "right";
   // Onde a barra ancora, conforme o lado escolhido nas Configurações.
@@ -58,7 +66,7 @@ export default function Dock({
 
   return (
     // No modo edição (pinMode) a barra fica ACIMA do fundo borrado para arrastar.
-    <div className={`fixed ${ancora} ${vertical ? "max-h-[92vh]" : "max-w-[96vw]"} ${pinMode ? "z-50" : "z-30"}`}>
+    <div className={`workspace-dock fixed ${ancora} ${vertical ? "is-vertical max-h-[92vh]" : "max-w-[96vw]"} ${pinMode ? "z-50" : "z-30"}`}>
       {pinMode && (
         <p className="text-center text-[11px] text-emerald-300/90 mb-1.5 select-none">
           Arraste apps pra cá para fixar · arraste na barra para reordenar
@@ -79,7 +87,7 @@ export default function Dock({
           const id = e.dataTransfer.getData("text/app-id");
           if (id && !apps.some((a) => a.id === id)) onPin?.(id);
         }}
-        className={`liquid-glass rounded-2xl px-2 sm:px-3 py-2 flex items-center gap-1 shadow-2xl transition-all ${
+        className={`workspace-dock-surface liquid-glass rounded-2xl px-2 sm:px-3 py-2 flex items-center gap-1 shadow-2xl transition-all ${
           vertical ? "flex-col overflow-y-auto" : ""
         } ${pinMode ? "ring-2 ring-dashed" : ""} ${dragOver ? "ring-emerald-400 scale-105" : pinMode ? "ring-emerald-500/40" : ""}`}
       >
@@ -92,7 +100,7 @@ export default function Dock({
           return (
             <div
               key={app.id}
-              className={`relative ${i >= 4 && !isActive ? "hidden sm:block" : "block"} shrink-0`}
+              className={`workspace-dock-slot relative ${i >= 4 && !isActive ? "hidden sm:block" : "block"} shrink-0`}
               onDragOver={(e) => pinMode && e.preventDefault()}
               onDrop={(e) => {
                 if (!pinMode) return;
@@ -110,12 +118,13 @@ export default function Dock({
                 onClick={() => onSelect(app.id)}
                 onContextMenu={(e) => { if (onContext) { e.preventDefault(); onContext(app.id, e.clientX, e.clientY); } }}
                 title={app.label}
-                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-colors shrink-0 ${
+                className={`workspace-dock-item w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-all shrink-0 ${
                   pinMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-                } ${isActive ? "bg-emerald-500/20 text-emerald-400" : "text-gray-400 hover:bg-white/10 hover:text-white"}`}
+                } ${isActive ? "is-active bg-emerald-500/20 text-emerald-400" : "text-gray-400 hover:bg-white/10 hover:text-white"}`}
               >
                 <app.icon size={20} />
               </button>
+              {isActive && <span className="workspace-running-indicator" aria-hidden="true" />}
               {pinMode && onUnpin && (
                 <button
                   onClick={() => onUnpin(app.id)}
@@ -128,11 +137,26 @@ export default function Dock({
             </div>
           );
         })}
+        {shortcuts.map((shortcut) => (
+          <button
+            key={shortcut.id}
+            onClick={() => onShortcut?.(shortcut)}
+            title={shortcut.name}
+            className="workspace-dock-item w-10 h-10 sm:w-11 sm:h-11 rounded-xl grid place-items-center transition-all shrink-0 hover:bg-white/10"
+          >
+            <ShortcutIcon provider={shortcut.provider} size={19} className="h-8 w-8" />
+          </button>
+        ))}
         <div className={`bg-white/10 ${vertical ? "h-px w-6 my-1" : "w-px h-6 mx-1"}`} />
+        {onAddShortcut && (
+          <button onClick={onAddShortcut} title="Criar atalho" className="workspace-dock-item w-10 h-10 sm:w-11 sm:h-11 rounded-xl grid place-items-center text-gray-400 hover:bg-white/10 hover:text-white transition-all shrink-0">
+            <Plus size={20} />
+          </button>
+        )}
         <button
           onClick={onOpenDrawer}
           title="Menu de aplicativos"
-          className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center cursor-pointer shrink-0 ${
+          className={`workspace-dock-item workspace-drawer-trigger w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center cursor-pointer shrink-0 ${
             drawerOpen ? "bg-emerald-500/20 text-emerald-400" : "text-gray-400 hover:bg-white/10 hover:text-white"
           }`}
         >

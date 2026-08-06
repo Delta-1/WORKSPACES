@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase-client";
 import { extractText } from "@/lib/extract-text";
 import { logAction } from "@/lib/activity-log";
 import type { FileNodeRow, Profile } from "@/lib/types";
+import ShortcutIcon from "@/components/ShortcutIcon";
 
 type PositionedNode = FileNodeRow & { pos_x: number; pos_y: number };
 
@@ -79,6 +80,11 @@ function demoNodes(): PositionedNode[] {
     mime: null,
     source_path: null,
     server_agent_id: null,
+    external_url: null,
+    external_provider: null,
+    external_kind: null,
+    shortcut_id: null,
+    group_id: null,
     pos_x: CENTER_X + (Math.random() - 0.5) * 200,
     pos_y: CENTER_Y + (Math.random() - 0.5) * 200,
     created_at: new Date().toISOString(),
@@ -687,6 +693,12 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
 
   // Abre o arquivo para VISUALIZAR (nova aba) — imagens, PDFs, etc.
   async function openFile(node: PositionedNode) {
+    if (node.external_url) {
+      if (node.external_kind === "workspace") window.dispatchEvent(new CustomEvent("workspace-open-app", { detail: node.external_url }));
+      else if (node.external_kind === "local_app") window.location.href = node.external_url;
+      else window.open(node.external_url, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (node.storage_path && supabase) {
       const { data, error } = await supabase.storage.from("company-files").createSignedUrl(node.storage_path, 300);
       if (error || !data?.signedUrl) {
@@ -957,6 +969,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
     if (wasClick) {
       const n = byId.get(clickedId);
       if (n?.type === "folder") toggleExpand(clickedId);
+      else if (n?.external_url) void openFile(n);
     }
     kick(0.7); // relaxa suavemente e persiste ao assentar
   }
@@ -1053,7 +1066,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                       className={`w-full flex items-center gap-2 pr-2 py-1.5 rounded-lg text-left cursor-pointer hover:bg-white/5 ${selected === n.id ? "bg-emerald-950/40" : ""}`}
                     >
                       {isFolder ? (isOpen ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />) : <span className="w-3.5 shrink-0" />}
-                      {isFolder ? <Folder size={15} className="text-emerald-400 shrink-0" /> : <FileIcon size={15} className="text-gray-400 shrink-0" />}
+                      {isFolder ? <Folder size={15} className="text-emerald-400 shrink-0" /> : n.external_url ? <Link2 size={15} className="text-cyan-300 shrink-0" /> : <FileIcon size={15} className="text-gray-400 shrink-0" />}
                       <span className="text-sm truncate flex-1">{n.name}</span>
                       {isFolder && kids > 0 && <span className="text-[10px] text-gray-500 shrink-0">{kids}</span>}
                     </button>
@@ -1143,6 +1156,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   >
                     {n.type === "folder" ? (
                       <Folder size={radius} className="text-emerald-400" />
+                    ) : n.external_url ? (
+                      <ShortcutIcon provider={n.external_provider || "link"} size={radius} className="h-full w-full rounded-full" />
                     ) : (
                       <FileIcon size={radius} className="text-gray-400" />
                     )}
@@ -1178,6 +1193,8 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             <div className="flex items-center gap-2 mb-2">
               {selectedNode.type === "folder" ? (
                 <Folder size={16} className="text-emerald-400" />
+              ) : selectedNode.external_url ? (
+                <ShortcutIcon provider={selectedNode.external_provider || "link"} size={14} className="h-7 w-7" />
               ) : (
                 <FileIcon size={16} />
               )}
@@ -1286,7 +1303,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
-              {selectedNode.type === "file" && (selectedNode.storage_path || selectedNode.data_url) && (
+              {selectedNode.type === "file" && (selectedNode.storage_path || selectedNode.data_url || selectedNode.external_url) && (
                 <button
                   onClick={() => openFile(selectedNode)}
                   className="flex items-center gap-1.5 text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"
@@ -1294,7 +1311,7 @@ export default function FilesGraphTab({ profile }: { profile: Profile | null }) 
                   <Eye size={12} /> Abrir
                 </button>
               )}
-              {selectedNode.type === "file" && (
+              {selectedNode.type === "file" && !selectedNode.external_url && (
                 <button
                   onClick={() => download(selectedNode)}
                   className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg cursor-pointer"

@@ -179,6 +179,11 @@ export type FileNodeRow = {
   mime: string | null;
   source_path: string | null;
   server_agent_id: string | null;
+  external_url: string | null;
+  external_provider: string | null;
+  external_kind: "web" | "workspace" | "local_app" | null;
+  shortcut_id: string | null;
+  group_id: string | null;
   pos_x: number | null;
   pos_y: number | null;
   created_at: string;

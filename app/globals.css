@@ -435,6 +435,10 @@ html[data-anim="mac"] .liquid-glass { transition: transform 0.3s cubic-bezier(0.
 html[data-anim="windows"] .app-anim { animation: anim-win 0.28s ease-out; }
 @keyframes anim-win { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Linux: rápido, discreto e com um pequeno deslocamento lateral. */
+html[data-anim="linux"] .app-anim { animation: anim-linux 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes anim-linux { from { opacity: 0; transform: translateX(-8px) scale(0.99); } to { opacity: 1; transform: none; } }
+
 /* Divertido: uma entrada com molejo (bounce). */
 html[data-anim="fun"] .app-anim { animation: anim-fun 0.6s cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes anim-fun { 0% { opacity: 0; transform: scale(0.8) rotate(-2deg); } 60% { transform: scale(1.04) rotate(1deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
@@ -446,4 +450,213 @@ html[data-anim="none"] .app-anim { animation: none; }
    independentemente do estilo escolhido. */
 @media (prefers-reduced-motion: reduce) {
   .app-anim { animation: none !important; }
+}
+
+/* ============================================================================
+   TEMAS DE SISTEMA — experiência local escolhida em Configurações → Aparência.
+   O data-style continua controlando o clima da empresa; estes temas refinam a
+   moldura do desktop, janelas, dock e menu de aplicativos neste dispositivo.
+   ============================================================================ */
+.workspace-shell {
+  position: relative;
+  isolation: isolate;
+  background: var(--os-wallpaper, var(--background));
+  font-family: var(--os-font, var(--font-sans)), system-ui, sans-serif;
+  transition: background 0.35s ease, color 0.25s ease;
+}
+.workspace-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--os-wallpaper-glow, transparent);
+}
+.workspace-header {
+  z-index: 20;
+  background: var(--os-header-bg, rgba(6, 10, 18, 0.72));
+  backdrop-filter: blur(var(--os-blur, 18px)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--os-blur, 18px)) saturate(150%);
+  box-shadow: var(--os-header-shadow, none);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.workspace-main { position: relative; }
+.workspace-window {
+  border-radius: var(--os-window-radius, 14px);
+  border-color: var(--os-window-border, rgba(255,255,255,.14));
+  background: var(--os-window-bg, #0b0f16);
+  box-shadow: var(--os-window-shadow, 0 24px 70px rgba(0,0,0,.48));
+  transform-origin: center bottom;
+}
+.workspace-window-titlebar {
+  min-height: var(--os-titlebar-height, 36px);
+  height: var(--os-titlebar-height, 36px);
+  background: var(--os-titlebar-bg, rgba(255,255,255,.05));
+}
+.workspace-window-content { background: var(--os-window-content, transparent); }
+.workspace-window-control { transition: background .15s ease, color .15s ease, transform .15s ease; }
+.workspace-window-control:hover { background: rgba(255,255,255,.1); color: white; }
+.workspace-window-control.is-close:hover { background: #e5484d; }
+.workspace-dock-surface {
+  border-radius: var(--os-dock-radius, 18px);
+  background: var(--os-dock-bg, rgba(20,25,35,.72));
+  border-color: var(--os-dock-border, rgba(255,255,255,.12));
+  backdrop-filter: blur(var(--os-blur, 18px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--os-blur, 18px)) saturate(160%);
+}
+.workspace-dock-slot { display: grid; place-items: center; }
+.workspace-running-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  transform: translateX(-50%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+.workspace-drawer {
+  border-radius: var(--os-drawer-radius, 24px);
+  background: var(--os-drawer-bg, rgba(14,18,27,.86));
+}
+
+/* macOS — transparência profunda, controles à esquerda e dock elástico. */
+html[data-os-theme="mac"] {
+  --os-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue";
+  --os-wallpaper: #080c18;
+  --os-wallpaper-glow: radial-gradient(circle at 16% 12%, rgba(81, 96, 255, .27), transparent 34%), radial-gradient(circle at 84% 72%, rgba(194, 74, 255, .18), transparent 34%), linear-gradient(145deg, rgba(5,9,20,.3), rgba(22,9,36,.35));
+  --os-header-bg: rgba(16, 19, 29, .58);
+  --os-header-shadow: 0 1px 0 rgba(255,255,255,.08), 0 8px 24px rgba(0,0,0,.12);
+  --os-window-radius: 14px;
+  --os-window-bg: rgba(16, 19, 28, .91);
+  --os-window-content: rgba(7, 10, 17, .34);
+  --os-window-border: rgba(255,255,255,.18);
+  --os-window-shadow: 0 34px 90px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.1) inset;
+  --os-titlebar-bg: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.035));
+  --os-titlebar-height: 40px;
+  --os-dock-radius: 22px;
+  --os-dock-bg: rgba(35, 38, 50, .58);
+  --os-dock-border: rgba(255,255,255,.18);
+  --os-drawer-radius: 30px;
+  --os-drawer-bg: rgba(21, 24, 35, .72);
+  --os-blur: 28px;
+}
+html[data-os-theme="mac"] .workspace-window-titlebar { justify-content: center; }
+html[data-os-theme="mac"] .workspace-window-controls { order: -1; gap: 7px; padding: 0 5px; }
+html[data-os-theme="mac"] .workspace-window-title { text-align: center; padding-right: 70px; }
+html[data-os-theme="mac"] .workspace-window-control {
+  width: 13px; height: 13px; padding: 0; border-radius: 50%; color: transparent;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.18) inset;
+}
+html[data-os-theme="mac"] .workspace-window-control svg { opacity: 0; width: 9px; height: 9px; transition: opacity .12s; }
+html[data-os-theme="mac"] .workspace-window-controls:hover .workspace-window-control svg { opacity: .7; color: rgba(0,0,0,.75); }
+html[data-os-theme="mac"] .workspace-window-control.is-close { background: #ff5f57; }
+html[data-os-theme="mac"] .workspace-window-control.is-minimize { background: #febc2e; }
+html[data-os-theme="mac"] .workspace-window-control.is-maximize { background: #28c840; }
+html[data-os-theme="mac"] .workspace-dock-item:hover { transform: translateY(-7px) scale(1.18); background: rgba(255,255,255,.12); color: white; }
+html[data-os-theme="mac"] .workspace-dock-item:active { transform: translateY(-3px) scale(.96); }
+html[data-os-theme="mac"] .workspace-drawer-overlay { align-items: center; background: rgba(2,5,12,.28); }
+html[data-os-theme="mac"] .workspace-drawer { margin: 0; max-width: 760px; }
+html[data-os-theme="mac"] .workspace-window.is-closing { animation: os-mac-genie-close .44s cubic-bezier(.55,.02,.82,.38) both !important; pointer-events: none; }
+@keyframes os-mac-genie-close {
+  0% { opacity: 1; transform: translateY(0) scale(1,1) skewX(0); filter: blur(0); }
+  42% { opacity: .94; transform: translateY(12px) scale(.92,.9) skewX(-1deg); border-radius: 22px; }
+  72% { opacity: .68; transform: translateY(22vh) scale(.52,.34) skewX(7deg); filter: blur(1px); }
+  100% { opacity: 0; transform: translateY(52vh) scale(.12,.025) skewX(18deg); filter: blur(5px); border-radius: 50%; }
+}
+
+/* Windows — Fluent/Mica, cantos precisos e barra com indicador horizontal. */
+html[data-os-theme="windows"] {
+  --os-font: "Segoe UI Variable", "Segoe UI";
+  --os-wallpaper: #07101f;
+  --os-wallpaper-glow: radial-gradient(circle at 72% 24%, rgba(0,120,212,.24), transparent 38%), linear-gradient(135deg, rgba(3,19,38,.12), rgba(1,8,18,.55));
+  --os-header-bg: rgba(8, 18, 32, .82);
+  --os-header-shadow: 0 1px 0 rgba(255,255,255,.06);
+  --os-window-radius: 8px;
+  --os-window-bg: rgba(18, 27, 40, .96);
+  --os-window-content: rgba(8, 14, 24, .58);
+  --os-window-border: rgba(255,255,255,.12);
+  --os-window-shadow: 0 22px 52px rgba(0,0,0,.48);
+  --os-titlebar-bg: rgba(34, 44, 58, .86);
+  --os-titlebar-height: 38px;
+  --os-dock-radius: 8px;
+  --os-dock-bg: rgba(19, 29, 43, .88);
+  --os-dock-border: rgba(255,255,255,.1);
+  --os-drawer-radius: 10px;
+  --os-drawer-bg: rgba(25, 34, 47, .94);
+  --os-blur: 22px;
+}
+html[data-os-theme="windows"] .workspace-window-controls { align-self: stretch; margin: -8px -8px -8px 0; }
+html[data-os-theme="windows"] .workspace-window-control { align-self: stretch; width: 44px; border-radius: 0; display: grid; place-items: center; }
+html[data-os-theme="windows"] .workspace-window-title { padding-left: 8px; }
+html[data-os-theme="windows"] .workspace-dock-item { border-radius: 6px; }
+html[data-os-theme="windows"] .workspace-dock-item:hover { transform: translateY(-2px); background: rgba(255,255,255,.09); }
+html[data-os-theme="windows"] .workspace-running-indicator { width: 18px; height: 3px; bottom: -2px; }
+html[data-os-theme="windows"] .workspace-drawer-overlay { align-items: flex-end; background: rgba(0,0,0,.22); }
+html[data-os-theme="windows"] .workspace-drawer { margin-bottom: 78px; max-width: 610px; }
+html[data-os-theme="windows"] .workspace-window.is-closing { animation: os-windows-close .18s cubic-bezier(.4,0,1,1) both !important; pointer-events: none; }
+@keyframes os-windows-close { to { opacity: 0; transform: scale(.965) translateY(8px); filter: blur(2px); } }
+
+/* Linux — inspiração Ubuntu/GNOME, aubergine, dock sólido e movimento enxuto. */
+html[data-os-theme="linux"] {
+  --os-font: Ubuntu, Cantarell, "Noto Sans";
+  --os-wallpaper: #160b18;
+  --os-wallpaper-glow: radial-gradient(circle at 82% 12%, rgba(233,84,32,.2), transparent 30%), radial-gradient(circle at 24% 80%, rgba(119,33,111,.28), transparent 36%), linear-gradient(145deg, rgba(45,8,42,.35), rgba(11,8,17,.5));
+  --os-header-bg: rgba(24, 20, 27, .94);
+  --os-header-shadow: 0 1px 0 rgba(255,255,255,.06), 0 6px 20px rgba(0,0,0,.2);
+  --os-window-radius: 11px;
+  --os-window-bg: rgba(29, 25, 32, .97);
+  --os-window-content: rgba(14, 12, 17, .5);
+  --os-window-border: rgba(255,255,255,.11);
+  --os-window-shadow: 0 26px 64px rgba(0,0,0,.58);
+  --os-titlebar-bg: #28232b;
+  --os-titlebar-height: 42px;
+  --os-dock-radius: 14px;
+  --os-dock-bg: rgba(34, 29, 37, .92);
+  --os-dock-border: rgba(255,255,255,.1);
+  --os-drawer-radius: 18px;
+  --os-drawer-bg: rgba(35, 29, 38, .96);
+  --os-blur: 16px;
+}
+html[data-os-theme="linux"] .workspace-window-title { text-align: center; }
+html[data-os-theme="linux"] .workspace-window-control { border-radius: 50%; margin-left: 5px; background: rgba(255,255,255,.08); }
+html[data-os-theme="linux"] .workspace-window-control.is-close { background: #e95420; color: white; }
+html[data-os-theme="linux"] .workspace-dock-surface { padding: 7px; }
+html[data-os-theme="linux"] .workspace-dock-item:hover { background: rgba(233,84,32,.2); color: #ff875f; transform: scale(1.08); }
+html[data-os-theme="linux"] .workspace-running-indicator { left: -4px; bottom: 50%; width: 3px; height: 18px; transform: translateY(50%); background: #e95420; }
+html[data-os-theme="linux"] .workspace-drawer-overlay { align-items: center; justify-content: flex-start; padding-left: 88px; background: rgba(9,4,11,.48); }
+html[data-os-theme="linux"] .workspace-drawer { margin: 0; max-width: 720px; }
+html[data-os-theme="linux"] .workspace-window.is-closing { animation: os-linux-close .23s cubic-bezier(.4,0,.2,1) both !important; pointer-events: none; }
+@keyframes os-linux-close { to { opacity: 0; transform: translateX(-18px) scale(.92); filter: blur(2px); } }
+
+/* Miniaturas do seletor de temas. */
+.os-theme-preview { position: relative; display: block; height: 92px; overflow: hidden; border-radius: 11px; background: #101725; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+.os-theme-preview--mac { background: radial-gradient(circle at 75% 20%, #7d58d5, transparent 38%), linear-gradient(145deg,#142447,#27152f); }
+.os-theme-preview--windows { background: radial-gradient(circle at 70% 30%, #116cc1, transparent 38%), #071426; border-radius: 5px; }
+.os-theme-preview--linux { background: radial-gradient(circle at 75% 18%, #c84a26, transparent 35%), linear-gradient(145deg,#3b1239,#170c19); }
+.os-preview-bar { display: flex; align-items: center; gap: 3px; height: 14px; padding: 0 6px; background: rgba(10,12,18,.72); }
+.os-preview-bar i { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,.45); }
+.os-theme-preview--mac .os-preview-bar i:nth-child(1) { background: #ff5f57; }
+.os-theme-preview--mac .os-preview-bar i:nth-child(2) { background: #febc2e; }
+.os-theme-preview--mac .os-preview-bar i:nth-child(3) { background: #28c840; }
+.os-preview-panel { position: absolute; inset: 23px 16px 20px; display: grid; grid-template-columns: 1fr 1.6fr; grid-template-rows: 1fr 1fr; gap: 4px; padding: 6px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; background: rgba(13,17,25,.72); box-shadow: 0 8px 24px rgba(0,0,0,.24); }
+.os-preview-panel b { display: block; border-radius: 3px; background: rgba(255,255,255,.12); }
+.os-preview-panel b:nth-child(2) { grid-row: span 2; }
+.os-preview-dock { position: absolute; left: 50%; bottom: 5px; display: flex; gap: 3px; padding: 3px 5px; transform: translateX(-50%); border-radius: 7px; background: rgba(255,255,255,.16); }
+.os-preview-dock i { width: 7px; height: 7px; border-radius: 2px; background: rgba(255,255,255,.65); }
+.os-theme-preview--windows .os-preview-dock { bottom: 0; width: 100%; justify-content: center; border-radius: 0; background: rgba(17,26,39,.94); }
+.os-theme-preview--linux .os-preview-dock { left: 4px; top: 20px; bottom: auto; flex-direction: column; transform: none; }
+.os-theme-card.is-selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+@media (max-width: 640px) {
+  html[data-os-theme="linux"] .workspace-drawer-overlay { justify-content: center; padding-left: 0; }
+  html[data-os-theme="linux"] .workspace-drawer { margin: 0 12px 76px; }
+  html[data-os-theme="mac"] .workspace-window-title { padding-right: 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-window.is-closing,
+  .workspace-dock-item,
+  .os-theme-card { animation: none !important; transition: none !important; }
 }

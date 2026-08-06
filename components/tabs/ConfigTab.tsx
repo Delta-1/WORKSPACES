@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Download, FolderTree, GraduationCap, Image as ImageIcon, MonitorDown, Package, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
@@ -28,6 +28,12 @@ const SITE_STYLES: { id: string; name: string; desc: string; swatch: string }[] 
   { id: "sunset", name: "Sunset", desc: "Fundo quente com brilho", swatch: "linear-gradient(135deg,#3b1d3a,#fbbf24)" },
   { id: "paper", name: "Paper", desc: "Claro e limpo (documento)", swatch: "#ffffff" },
 ];
+
+const OS_THEMES = [
+  { id: "mac", name: "macOS", desc: "Vidro, dock e movimentos fluidos", icon: Laptop },
+  { id: "windows", name: "Windows", desc: "Mica, barra de tarefas e precisão", icon: PanelsTopLeft },
+  { id: "linux", name: "Linux", desc: "Ubuntu, dock lateral e foco", icon: Terminal },
+] as const;
 
 type SectionId = "empresa" | "aparencia" | "instalacao" | "ferramentas" | "servidores" | "ia" | "chatbot" | "notificacoes";
 const SECTIONS: { id: SectionId; label: string; icon: typeof Building2 }[] = [
@@ -63,6 +69,8 @@ export default function ConfigTab({
   onReplayTutorials,
   dockPosition,
   onDockPosition,
+  osTheme,
+  onOsTheme,
   animStyle,
   onAnimStyle,
 }: {
@@ -107,8 +115,10 @@ export default function ConfigTab({
   onReplayTutorials?: () => void;
   dockPosition?: "bottom" | "top" | "left" | "right";
   onDockPosition?: (p: "bottom" | "top" | "left" | "right") => void;
-  animStyle?: "mac" | "windows" | "fun" | "none";
-  onAnimStyle?: (a: "mac" | "windows" | "fun" | "none") => void;
+  osTheme?: "mac" | "windows" | "linux";
+  onOsTheme?: (theme: "mac" | "windows" | "linux") => void;
+  animStyle?: "mac" | "windows" | "linux" | "fun" | "none";
+  onAnimStyle?: (a: "mac" | "windows" | "linux" | "fun" | "none") => void;
 }) {
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
@@ -300,7 +310,47 @@ export default function ConfigTab({
           )}
 
           {active === "aparencia" && (
-            <div className="liquid-glass rounded-2xl p-5 space-y-4 max-w-lg">
+            <div className="liquid-glass rounded-2xl p-5 space-y-5 max-w-3xl">
+              {onOsTheme && (
+                <div>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider">Temas</label>
+                      <p className="text-[11px] text-gray-500 mt-1">Muda a experiência inteira: janelas, controles, menu, dock, superfícies e animações.</p>
+                    </div>
+                    <span className="text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-1 whitespace-nowrap">Neste dispositivo</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {OS_THEMES.map((item) => {
+                      const selected = osTheme === item.id;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => onOsTheme(item.id)}
+                          aria-pressed={selected}
+                          className={`os-theme-card text-left rounded-2xl p-2.5 border cursor-pointer transition-all ${selected ? "is-selected border-emerald-400 ring-2 ring-emerald-400/20" : "border-white/10 hover:border-white/25 hover:-translate-y-0.5"}`}
+                        >
+                          <span className={`os-theme-preview os-theme-preview--${item.id}`} aria-hidden="true">
+                            <span className="os-preview-bar"><i /><i /><i /></span>
+                            <span className="os-preview-panel"><b /><b /><b /></span>
+                            <span className="os-preview-dock"><i /><i /><i /><i /></span>
+                          </span>
+                          <span className="flex items-center gap-2 mt-2.5">
+                            <span className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0"><Icon size={16} /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="text-xs font-bold block">{item.name}</span>
+                              <span className="text-[9px] text-gray-500 leading-tight block mt-0.5">{item.desc}</span>
+                            </span>
+                            {selected && <Check size={15} className="text-emerald-400 shrink-0" />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <div className="h-px bg-white/8" />
               {onDockPosition && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Barra de aplicativos</label>
@@ -320,10 +370,10 @@ export default function ConfigTab({
               )}
               {onAnimStyle && (
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Animação</label>
-                  <p className="text-[11px] text-gray-500 mb-2">Como as telas entram. Escolha o estilo que combina com você.</p>
-                  <div className="grid grid-cols-4 gap-2">
-                    {([["mac", "Mac", "Suave"], ["windows", "Windows", "Desliza"], ["fun", "Divertido", "Com molejo"], ["none", "Nenhuma", "Sem efeito"]] as const).map(([id, label, desc]) => (
+                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Animação das janelas</label>
+                  <p className="text-[11px] text-gray-500 mb-2">O tema escolhe uma animação recomendada, mas você pode ajustar separadamente.</p>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {([["mac", "Mac", "Fluida"], ["windows", "Windows", "Direta"], ["linux", "Linux", "Ágil"], ["fun", "Divertida", "Molejo"], ["none", "Nenhuma", "Parada"]] as const).map(([id, label, desc]) => (
                       <button
                         key={id}
                         onClick={() => onAnimStyle(id)}
