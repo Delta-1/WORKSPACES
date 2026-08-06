@@ -4,17 +4,20 @@ import { useEffect, useState } from "react";
 import { Bot, Fingerprint, MessageCircle, Network, Sparkles, Tv } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
+import WorldPulse from "@/components/world/WorldPulse";
 
 export default function HomeTab({
   companyName,
   profile,
   onOpenTV,
   onOpenAgent,
+  onOpenWorld,
 }: {
   companyName: string;
   profile: Profile | null;
   onOpenTV: () => void;
   onOpenAgent: () => void;
+  onOpenWorld: () => void;
 }) {
   const [checkedIn, setCheckedIn] = useState(false);
   const [checkInTime, setCheckInTime] = useState<string | null>(null);
@@ -54,7 +57,7 @@ export default function HomeTab({
   }
 
   return (
-    <div className="h-full flex flex-col gap-6">
+    <div className="h-full overflow-y-auto pr-1 flex flex-col gap-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-2xl font-bold">Bem-vindo(a) à {companyName}</h3>
@@ -114,6 +117,7 @@ export default function HomeTab({
           </div>
         </div>
       </div>
+      <WorldPulse onOpen={onOpenWorld} />
     </div>
   );
 }

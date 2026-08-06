@@ -14,7 +14,7 @@ const NATIVE_APPS = [
   ["inicio", "Início"], ["group", "Group"], ["arquivos", "Arquivos"],
   ["mensagens", "Mensagens"], ["kanban", "Kanban"], ["calendario", "Calendário"],
   ["estudio", "Estúdio"], ["chat", "Copiloto IA"], ["remoto", "Acesso Remoto"],
-  ["automacao", "Automação"], ["links", "Links"],
+  ["automacao", "Automação"], ["links", "Links"], ["mundo", "Mundo"],
 ] as const;
 
 export default function ShortcutCreator({

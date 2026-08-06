@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, Globe2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -52,6 +52,7 @@ import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
 import ShortcutCreator from "@/components/ShortcutCreator";
 import LinksTab from "@/components/tabs/LinksTab";
+import WorldTab from "@/components/tabs/WorldTab";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { openWorkspaceShortcut, type WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
@@ -64,6 +65,7 @@ export type AnimStyle = "workspace" | "mac" | "windows" | "linux" | "fun" | "non
 
 const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "mundo", label: "Mundo", icon: Globe2, accent: "bg-cyan-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "organograma", label: "Organograma", icon: Network, accent: "bg-purple-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "kanban", label: "Kanban", icon: SquareKanban, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "calendario", label: "Calendário", icon: CalendarDays, accent: "bg-rose-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -600,7 +602,8 @@ export default function Home() {
   // fonte só evita as duas versões divergirem.
   const renderApp = (appId: string): React.ReactNode => {
     switch (appId) {
-      case "inicio": return <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} />;
+      case "inicio": return <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} />;
+      case "mundo": return <WorldTab />;
       case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
       case "kanban": return <KanbanTab profile={profile} />;
       case "calendario": return <CalendarTab profile={profile} />;

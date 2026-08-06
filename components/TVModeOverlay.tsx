@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import MiniFileGraph from "@/components/MiniFileGraph";
+import WorldPulse from "@/components/world/WorldPulse";
 import type { Attendance, CalendarEvent, FileNodeRow, Profile, Sector, WorkspaceTask } from "@/lib/types";
 
 const CORNER_CLASS: Record<string, string> = {
@@ -117,7 +118,7 @@ export default function TVModeOverlay({
         <span className="text-lg font-bold tracking-wide">{companyName}</span>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center gap-10 mt-16 relative z-[5]">
+      <div className="flex-1 flex flex-col items-center justify-center gap-10 mt-16 pb-32 relative z-[5]">
         <p className="text-6xl font-mono font-black text-emerald-400">{clock}</p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
@@ -200,6 +201,9 @@ export default function TVModeOverlay({
             </div>
           );
         })()}
+      </div>
+      <div className="absolute bottom-5 left-1/2 z-[8] w-[min(92vw,80rem)] -translate-x-1/2">
+        <WorldPulse variant="tv" />
       </div>
     </div>
   );
