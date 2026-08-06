@@ -219,10 +219,11 @@ export default function Home() {
   // V só funciona no computador e dentro do Modo Agente. Fora dele, a tecla
   // continua livre para digitação e não abre um assistente global.
   useEffect(() => {
+    const isVoiceKey = (event: KeyboardEvent) => event.code === "KeyV" || event.key.toLocaleLowerCase("pt-BR") === "v";
     function onKeyDown(e: KeyboardEvent) {
       if (!agentModeActiveRef.current) return;
       if (!window.matchMedia("(pointer: fine)").matches) return;
-      if (e.key !== "v" && e.key !== "V") return;
+      if (!isVoiceKey(e)) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -231,20 +232,25 @@ export default function Home() {
       beginCopilotPushToTalk();
     }
     function onKeyUp(e: KeyboardEvent) {
-      if ((e.key !== "v" && e.key !== "V") || !copilotVoiceHeldRef.current) return;
+      if (!isVoiceKey(e) || !copilotVoiceHeldRef.current) return;
       e.preventDefault();
       endCopilotPushToTalk();
     }
     function onBlur() {
       endCopilotPushToTalk();
     }
+    function onVisibilityChange() {
+      if (document.hidden) endCopilotPushToTalk();
+    }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
