@@ -5,16 +5,19 @@ import { Bot, Fingerprint, MessageCircle, Network, Sparkles, Tv } from "lucide-r
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import WorldPulse from "@/components/world/WorldPulse";
+import type { AppLanguage } from "@/lib/language";
 
 export default function HomeTab({
   companyName,
   profile,
+  language,
   onOpenTV,
   onOpenAgent,
   onOpenWorld,
 }: {
   companyName: string;
   profile: Profile | null;
+  language: AppLanguage;
   onOpenTV: () => void;
   onOpenAgent: () => void;
   onOpenWorld: () => void;
@@ -117,7 +120,7 @@ export default function HomeTab({
           </div>
         </div>
       </div>
-      <WorldPulse onOpen={onOpenWorld} />
+      <WorldPulse language={language} onOpen={onOpenWorld} />
     </div>
   );
 }

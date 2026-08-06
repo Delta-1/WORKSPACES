@@ -1,3 +1,5 @@
+import type { AppLanguage } from "./language";
+
 export type Role = "gestor" | "gerente" | "funcionario";
 
 export type Profile = {
@@ -5,6 +7,7 @@ export type Profile = {
   email: string;
   full_name: string | null;
   avatar_url: string | null;
+  language: AppLanguage | null;
   role: Role;
   sector_id: string | null;
   company_id: string | null;

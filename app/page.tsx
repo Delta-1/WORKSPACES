@@ -57,6 +57,7 @@ import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { openWorkspaceShortcut, type WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
 import type { Company, Profile, Role } from "@/lib/types";
+import { detectBrowserLanguage, normalizeAppLanguage, rememberLanguage, type AppLanguage } from "@/lib/language";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 export type DockPosition = "bottom" | "top" | "left" | "right";
@@ -120,6 +121,7 @@ const ROLE_LABEL: Record<Role, string> = {
 
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>("pt-BR");
   const [myCompany, setMyCompany] = useState<Company | null>(null);
   const [demoUser, setDemoUser] = useState<{ name: string } | null>(null);
   const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
@@ -184,6 +186,19 @@ export default function Home() {
   const role: Role = profile?.role ?? "gestor";
   const isAuthenticated = Boolean(profile) || Boolean(demoUser);
   const displayName = profile?.full_name ?? profile?.email ?? demoUser?.name ?? "Usuário";
+
+  useEffect(() => {
+    const next = profile?.language ? normalizeAppLanguage(profile.language) : detectBrowserLanguage();
+    queueMicrotask(() => setAppLanguage(next));
+    rememberLanguage(next);
+  }, [profile?.language]);
+
+  async function changeAppLanguage(next: AppLanguage) {
+    setAppLanguage(next);
+    rememberLanguage(next);
+    setProfile((current) => current ? { ...current, language: next } : current);
+    if (supabase && profile?.id) await supabase.from("profiles").update({ language: next }).eq("id", profile.id);
+  }
 
   // Recarrega as configurações da EMPRESA do usuário (nome/logo/tema/contato).
   // Refaz quando a empresa muda (login), pois a RLS precisa da sessão pronta.
@@ -347,7 +362,7 @@ export default function Home() {
     let sawInitialLogin = false;
 
     async function loadProfile(
-      authUser: { user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string } },
+      authUser: { user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string; language?: string } },
       attempt = 1
     ): Promise<Profile | null> {
       if (!supabase) return null;
@@ -367,7 +382,17 @@ export default function Home() {
         return null;
       }
       setAuthError(null);
-      return data as Profile | null;
+      const loaded = data as Profile | null;
+      if (!loaded) return null;
+      const pending = window.localStorage.getItem("pendingRegistrationLanguage");
+      const metadataLanguage = authUser.user_metadata?.language;
+      const preferred = normalizeAppLanguage(pending || metadataLanguage || loaded.language);
+      if (loaded.language !== preferred) {
+        await supabase.from("profiles").update({ language: preferred }).eq("id", loaded.id);
+      }
+      window.localStorage.removeItem("pendingRegistrationLanguage");
+      rememberLanguage(preferred);
+      return { ...loaded, language: preferred };
     }
 
     supabase.auth.getSession().then(async ({ data }) => {
@@ -602,8 +627,8 @@ export default function Home() {
   // fonte só evita as duas versões divergirem.
   const renderApp = (appId: string): React.ReactNode => {
     switch (appId) {
-      case "inicio": return <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} />;
-      case "mundo": return <WorldTab />;
+      case "inicio": return <HomeTab companyName={company.name} profile={profile} language={appLanguage} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} />;
+      case "mundo": return <WorldTab language={appLanguage} />;
       case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
       case "kanban": return <KanbanTab profile={profile} />;
       case "calendario": return <CalendarTab profile={profile} />;
@@ -661,7 +686,7 @@ export default function Home() {
 
   // Usuário logado mas sem empresa → onboarding (criar empresa ou entrar com código)
   if (profile && !profile.company_id) {
-    return <OnboardingScreen onDone={refreshIdentity} onLogout={handleLogout} />;
+    return <OnboardingScreen language={appLanguage} onLanguageChange={(next) => void changeAppLanguage(next)} onDone={refreshIdentity} onLogout={handleLogout} />;
   }
 
   // Dono de empresa recém-criada ainda sem plano escolhido → tela de planos
@@ -702,6 +727,7 @@ export default function Home() {
         companyName={company.name}
         logoDataUrl={company.logoDataUrl}
         corner={company.tvLogoCorner}
+        language={appLanguage}
         onClose={() => setShowTV(false)}
       />
     );
@@ -752,11 +778,21 @@ export default function Home() {
           theme={theme}
           profileId={profile?.id}
           avatarUrl={profile?.avatar_url}
+          language={appLanguage}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
-          onProfileUpdated={(patch) =>
-            setProfile((p) => (p ? { ...p, full_name: patch.full_name ?? p.full_name, avatar_url: patch.avatar_url ?? p.avatar_url } : p))
-          }
+          onProfileUpdated={(patch) => {
+            if (patch.language) {
+              setAppLanguage(patch.language);
+              rememberLanguage(patch.language);
+            }
+            setProfile((p) => (p ? {
+              ...p,
+              full_name: patch.full_name ?? p.full_name,
+              avatar_url: patch.avatar_url ?? p.avatar_url,
+              language: patch.language ?? p.language,
+            } : p));
+          }}
         />
         </div>
       </header>

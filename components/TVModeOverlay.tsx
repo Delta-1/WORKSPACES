@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase-client";
 import MiniFileGraph from "@/components/MiniFileGraph";
 import WorldPulse from "@/components/world/WorldPulse";
 import type { Attendance, CalendarEvent, FileNodeRow, Profile, Sector, WorkspaceTask } from "@/lib/types";
+import type { AppLanguage } from "@/lib/language";
 
 const CORNER_CLASS: Record<string, string> = {
   "top-left": "top-6 left-6",
@@ -18,11 +19,13 @@ export default function TVModeOverlay({
   companyName,
   logoDataUrl,
   corner,
+  language,
   onClose,
 }: {
   companyName: string;
   logoDataUrl: string | null;
   corner: string;
+  language: AppLanguage;
   onClose: () => void;
 }) {
   const [clock, setClock] = useState("");
@@ -203,7 +206,7 @@ export default function TVModeOverlay({
         })()}
       </div>
       <div className="absolute bottom-5 left-1/2 z-[8] w-[min(92vw,80rem)] -translate-x-1/2">
-        <WorldPulse variant="tv" />
+        <WorldPulse variant="tv" language={language} />
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Camera, LogOut, Moon, Pencil, Sun, User, X } from "lucide-react";
+import { Camera, Languages, LogOut, Moon, Pencil, Sun, User, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { APP_LANGUAGES, type AppLanguage } from "@/lib/language";
 
 // Reduz a foto escolhida para um quadrado pequeno (≤256px) e devolve como
 // data URL — evita guardar imagens gigantes no perfil.
@@ -37,6 +38,7 @@ export default function ProfileMenu({
   theme,
   profileId,
   avatarUrl,
+  language,
   onToggleTheme,
   onLogout,
   onProfileUpdated,
@@ -46,20 +48,23 @@ export default function ProfileMenu({
   theme: "dark" | "light";
   profileId?: string | null;
   avatarUrl?: string | null;
+  language: AppLanguage;
   onToggleTheme: () => void;
   onLogout: () => void;
-  onProfileUpdated?: (patch: { full_name?: string; avatar_url?: string }) => void;
+  onProfileUpdated?: (patch: { full_name?: string; avatar_url?: string; language?: AppLanguage }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(name);
   const [draftAvatar, setDraftAvatar] = useState<string | null>(avatarUrl ?? null);
+  const [draftLanguage, setDraftLanguage] = useState<AppLanguage>(language);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function openEditor() {
     setDraftName(name);
     setDraftAvatar(avatarUrl ?? null);
+    setDraftLanguage(language);
     setEditing(true);
     setOpen(false);
   }
@@ -76,12 +81,12 @@ export default function ProfileMenu({
     const newName = draftName.trim();
     if (!newName) return;
     setSaving(true);
-    const patch: { full_name: string; avatar_url?: string } = { full_name: newName };
+    const patch: { full_name: string; avatar_url?: string; language: AppLanguage } = { full_name: newName, language: draftLanguage };
     if (draftAvatar !== (avatarUrl ?? null)) patch.avatar_url = draftAvatar ?? undefined;
     if (supabase && profileId) {
       await supabase.from("profiles").update(patch).eq("id", profileId);
     }
-    onProfileUpdated?.({ full_name: newName, avatar_url: draftAvatar ?? undefined });
+    onProfileUpdated?.({ full_name: newName, avatar_url: draftAvatar ?? undefined, language: draftLanguage });
     setSaving(false);
     setEditing(false);
   }
@@ -179,6 +184,19 @@ export default function ProfileMenu({
                 placeholder="Como você quer ser chamado"
                 className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"
               />
+            </div>
+            <div>
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <Languages size={13} /> Idioma do sistema e das notícias
+              </label>
+              <select
+                value={draftLanguage}
+                onChange={(event) => setDraftLanguage(event.target.value as AppLanguage)}
+                className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none cursor-pointer"
+              >
+                {APP_LANGUAGES.map((item) => <option key={item.code} value={item.code} className="bg-[#0b1019]">{item.flag} {item.label}</option>)}
+              </select>
+              <p className="mt-1 text-[10px] text-gray-500">As manchetes do Mundo serão entregues neste idioma.</p>
             </div>
             <div className="flex items-center justify-end gap-2">
               <button onClick={() => setEditing(false)} className="text-xs px-3 py-2 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300">Cancelar</button>

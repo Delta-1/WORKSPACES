@@ -15,6 +15,7 @@ import {
 import {
   countryFlag, formatNewsTime, sourceColor, type CountryNewsFeed, type NewsArticle, type NewsMode,
 } from "@/lib/world-data";
+import { languageConfig, type AppLanguage } from "@/lib/language";
 
 isoCountries.registerLocale(ptLocale);
 
@@ -72,13 +73,13 @@ function CountryMap({ countries, graticule, selected, onSelect }: { countries: C
   );
 }
 
-function ArticleCard({ article, featured = false }: { article: NewsArticle; featured?: boolean }) {
+function ArticleCard({ article, language, featured = false }: { article: NewsArticle; language: AppLanguage; featured?: boolean }) {
   const color = sourceColor(article.source);
   return (
     <a href={article.url} target="_blank" rel="noreferrer" className={`group block rounded-2xl border border-white/8 bg-white/[0.025] transition hover:border-white/20 hover:bg-white/[0.045] ${featured ? "p-5" : "p-3.5"}`}>
       <div className="mb-2 flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider" style={{ color }}><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" /><span className="truncate">{article.source}</span></span>
-        <span className="shrink-0 text-[9px] text-slate-600">{formatNewsTime(article.publishedAt)}</span>
+        <span className="shrink-0 text-[9px] text-slate-600">{formatNewsTime(article.publishedAt, language)}</span>
       </div>
       <h4 className={`${featured ? "text-lg sm:text-xl" : "text-[12px]"} font-bold leading-snug text-slate-100 group-hover:text-white`}>{article.title}</h4>
       {featured && article.description && <p className="mt-3 line-clamp-3 text-xs leading-relaxed text-slate-400">{article.description}</p>}
@@ -87,10 +88,10 @@ function ArticleCard({ article, featured = false }: { article: NewsArticle; feat
   );
 }
 
-export default function WorldTab() {
+export default function WorldTab({ language }: { language: AppLanguage }) {
   const map = useMemo(() => buildCountryShapes(), []);
   const [country, setCountry] = useState("BR");
-  const [mode, setMode] = useState<NewsMode>("local");
+  const [mode, setMode] = useState<NewsMode>("language");
   const [feed, setFeed] = useState<CountryNewsFeed | null>(null);
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
@@ -103,7 +104,7 @@ export default function WorldTab() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ country, mode, limit: "50" });
+      const params = new URLSearchParams({ country, mode, language, limit: "50" });
       const response = await fetch(`/api/world/news?${params.toString()}`);
       if (!response.ok) throw new Error("O noticiário deste país não respondeu agora.");
       setFeed(await response.json() as CountryNewsFeed);
@@ -112,7 +113,7 @@ export default function WorldTab() {
     } finally {
       setLoading(false);
     }
-  }, [country, mode]);
+  }, [country, language, mode]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
@@ -132,12 +133,14 @@ export default function WorldTab() {
   };
 
   const articles = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase("pt-BR");
+    const normalized = query.trim().toLocaleLowerCase(language);
     return (feed?.articles ?? []).filter((article) => {
       if (source && article.source !== source) return false;
-      return !normalized || `${article.title} ${article.description ?? ""} ${article.source}`.toLocaleLowerCase("pt-BR").includes(normalized);
+      return !normalized || `${article.title} ${article.description ?? ""} ${article.source}`.toLocaleLowerCase(language).includes(normalized);
     });
-  }, [feed, query, source]);
+  }, [feed, language, query, source]);
+
+  const languageMeta = languageConfig(language);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -162,7 +165,7 @@ export default function WorldTab() {
           </label>
           <div className="flex rounded-xl border border-white/10 bg-black/20 p-1">
             <button onClick={() => chooseMode("local")} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-semibold transition ${mode === "local" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-500 hover:text-white"}`}><Newspaper size={12} /> Imprensa local</button>
-            <button onClick={() => chooseMode("pt")} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-semibold transition ${mode === "pt" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-500 hover:text-white"}`}><Languages size={12} /> Em português</button>
+            <button onClick={() => chooseMode("language")} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-semibold transition ${mode === "language" ? "bg-cyan-400/15 text-cyan-100" : "text-slate-500 hover:text-white"}`}><Languages size={12} /> No meu idioma</button>
           </div>
           <div className="relative min-w-0 lg:w-72">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -180,7 +183,7 @@ export default function WorldTab() {
           <div className="space-y-3">
             <CountryMap countries={map.countries} graticule={map.graticule} selected={country} onSelect={chooseCountry} />
             <div className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.025] px-4 py-3">
-              <div><p className="text-sm font-bold">{countryFlag(country)} {selectedCountry.name}</p><p className="text-[10px] text-slate-500">{mode === "local" ? "Notícias da imprensa e edição local" : "Cobertura em português sobre este país"}</p></div>
+              <div><p className="text-sm font-bold">{countryFlag(country)} {selectedCountry.name}</p><p className="text-[10px] text-slate-500">{mode === "local" ? `Imprensa local traduzida para ${languageMeta.shortLabel}` : `Cobertura internacional em ${languageMeta.shortLabel}`}</p></div>
               <p className="font-mono text-xs text-cyan-300">{feed?.articles.length ?? 0} matérias</p>
             </div>
           </div>
@@ -191,7 +194,7 @@ export default function WorldTab() {
               {loading && <div className="grid min-h-[360px] place-items-center"><div className="text-center"><Loader2 size={24} className="mx-auto animate-spin text-cyan-300" /><p className="mt-2 text-xs text-slate-500">Buscando notícias em {selectedCountry.name}…</p></div></div>}
               {!loading && error && <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><Newspaper size={28} className="mx-auto mb-3 text-slate-600" /><p className="text-sm font-semibold">Noticiário indisponível</p><p className="mt-1 text-xs text-slate-500">{error}</p><button onClick={() => void load()} className="mt-4 rounded-xl bg-white/5 px-4 py-2 text-xs hover:bg-white/10">Tentar novamente</button></div></div>}
               {!loading && !error && articles.length === 0 && <p className="p-10 text-center text-xs text-slate-500">Nenhuma matéria corresponde aos filtros.</p>}
-              {!loading && !error && articles.length > 0 && <div className="space-y-2.5"><ArticleCard article={articles[0]} featured />{articles.slice(1).map((article) => <ArticleCard key={article.id} article={article} />)}</div>}
+              {!loading && !error && articles.length > 0 && <div className="space-y-2.5"><ArticleCard article={articles[0]} language={language} featured />{articles.slice(1).map((article) => <ArticleCard key={article.id} article={article} language={language} />)}</div>}
             </div>
           </div>
         </div>

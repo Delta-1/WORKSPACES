@@ -1,14 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Home, KeyRound, Layers } from "lucide-react";
+import { Building2, Home, KeyRound, Languages, Layers } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { COMPANY_NICHES, PERSONAL_KINDS, nicheById } from "@/lib/niches";
 import { FEATURES, whatsappPrice, type FeatureId } from "@/lib/plan";
+import { APP_LANGUAGES, type AppLanguage } from "@/lib/language";
 
 const COMPANY_TYPES = ["MEI", "Microempresa (ME)", "Pequena empresa (EPP)", "Média empresa", "Grande empresa", "Outro"];
 
-export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
+export default function OnboardingScreen({
+  language,
+  onLanguageChange,
+  onDone,
+  onLogout,
+}: {
+  language: AppLanguage;
+  onLanguageChange: (language: AppLanguage) => void;
+  onDone: () => void;
+  onLogout: () => void;
+}) {
   const [mode, setMode] = useState<"owner" | "home" | "employee">("owner");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +136,19 @@ export default function OnboardingScreen({ onDone, onLogout }: { onDone: () => v
         {error && (
           <p className="text-xs text-red-400 text-center mb-3 bg-red-950/30 border border-red-800/50 rounded-lg py-2 px-3">{error}</p>
         )}
+
+        <label className="mb-4 block rounded-xl border border-white/10 bg-black/20 p-3">
+          <span className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+            <Languages size={13} /> Idioma do sistema e das notícias
+          </span>
+          <select
+            value={language}
+            onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}
+            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2.5 text-sm outline-none cursor-pointer"
+          >
+            {APP_LANGUAGES.map((item) => <option key={item.code} value={item.code} className="bg-[#0b1019]">{item.flag} {item.label}</option>)}
+          </select>
+        </label>
 
         {mode === "home" ? (
           <div className="space-y-4">
