@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import { ClipboardList, Check, Download, FileSpreadsheet, GripVertical, Link2, PartyPopper, Pencil, Plus, Save, Table as TableIcon, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { MASKS, type MaskId } from "@/lib/mask";
@@ -35,6 +36,9 @@ export default function FormsTab({ profile }: { profile: Profile | null }) {
     setLoading(false);
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
+
+  // Resposta registrada (pelo site ou pela IA no WhatsApp) aparece na lista na hora.
+  useLive(["forms", "form_responses"], companyId, load);
 
   async function createForm() {
     if (!supabase || !companyId) return;

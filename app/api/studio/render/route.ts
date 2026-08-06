@@ -140,11 +140,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Falha ao montar o documento." }, { status: 500 });
   }
 
+  // O PDF é o arquivo com o DESIGN: o mesmo HTML da prévia, impresso por um
+  // Chromium. Se a impressão falhar (binário indisponível, timeout), o .docx
+  // ainda sai — documento sem capricho é melhor que nenhum documento, e o
+  // motivo fica no log e na resposta.
+  let pdfBase64: string | null = null;
+  let pdfErro: string | null = null;
+  try {
+    const { htmlParaPdf } = await import("@/lib/studio-pdf");
+    pdfBase64 = (await htmlParaPdf(html, page)).toString("base64");
+  } catch (err) {
+    pdfErro = err instanceof Error ? err.message : "Falha ao imprimir o PDF.";
+    console.error("studio/render: PDF falhou (o .docx segue):", pdfErro);
+  }
+
   return NextResponse.json({
     nome,
-    // O HTML volta junto para quem quiser gerar o PDF ou mostrar uma prévia.
+    // O HTML volta junto para quem quiser mostrar uma prévia.
     html,
     docx_base64: await toBase64(docx),
     mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pdf_base64: pdfBase64,
+    ...(pdfErro ? { pdf_error: pdfErro } : {}),
   });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import {
   AlertTriangle, ArrowDownLeft, Check, Clock, Eye, EyeOff, Loader2, RefreshCcw, Wallet, Zap,
 } from "lucide-react";
@@ -95,6 +96,12 @@ export default function CarteiraTab({ profile, onOpenMessages }: {
     })();
     return () => { vivo = false; };
   }, [buscar, dias]);
+
+  // Pagamento que baixa (webhook) ou saldo que muda atualiza a tela sozinho —
+  // recarrega quieto, sem passar pelo estado de "carregando".
+  useLive(["contact_credits", "billing_charges"], profile?.company_id, () => {
+    void buscar(dias).then(({ dados }) => { if (dados) setData(dados); });
+  });
 
   async function recarregar() {
     setLoading(true);

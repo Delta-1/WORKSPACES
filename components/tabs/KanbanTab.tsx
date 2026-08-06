@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import { Plus, SquareKanban, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile, Sector, TaskColumn, WorkspaceTask } from "@/lib/types";
@@ -49,6 +50,9 @@ export default function KanbanTab({ profile }: { profile: Profile | null }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectorId, profile?.id, profile?.company_id]);
+
+  // Tarefa criada ou movida por um colega (ou pela IA) atualiza o quadro na hora.
+  useLive(["tasks"], profile?.company_id, load);
 
   useEffect(() => {
     if (isGestor && !sectorId && sectors.length > 0) setSectorId(sectors[0].id);
