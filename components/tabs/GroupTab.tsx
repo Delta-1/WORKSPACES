@@ -5,9 +5,11 @@ import {
   Users2, Plus, LogIn, Copy, Check, Crown, Vote, CalendarPlus,
   Link2, Image as ImageIcon, FileText, Send, Video, Megaphone,
   CalendarDays, ArrowLeft, Paperclip, ShieldCheck, Pencil, Trash2,
+  PenTool, Loader2, Clock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
+import ProjectBoard from "@/components/group/ProjectBoard";
 
 type Group = {
   id: string;
@@ -42,7 +44,9 @@ type Agenda = {
   task_ids?: string[] | null;
 };
 
-type Section = "mural" | "chamada" | "agenda" | "membros";
+type Section = "mural" | "chamada" | "agenda" | "projetos" | "membros";
+
+type Projeto = { id: string; group_id: string; title: string; updated_at: string };
 
 export default function GroupTab({ profile }: { profile: Profile | null }) {
   const me = profile?.id ?? "";
@@ -235,6 +239,7 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
           ["mural", "Mural", Megaphone],
           ["chamada", "Chamada", Video],
           ["agenda", "Agenda", CalendarDays],
+          ["projetos", "Projetos", PenTool],
           ["membros", "Membros", Users2],
         ] as [Section, string, typeof Users2][]).map(([id, label, Icon]) => (
           <button
@@ -252,6 +257,7 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
       {section === "mural" && <Mural group={sel} me={me} />}
       {section === "chamada" && <Chamada group={sel} profile={profile} />}
       {section === "agenda" && <AgendaView group={sel} me={me} />}
+      {section === "projetos" && <ProjetosView group={sel} me={me} />}
       {section === "membros" && <Membros group={sel} me={me} onLeaderChange={loadGroups} />}
     </div>
   );
@@ -687,6 +693,116 @@ function Membros({ group, me, onLeaderChange }: { group: Group; me: string; onLe
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// PROJETOS — a lista de quadros do grupo (as "pastinhas") e a porta para o
+// quadro infinito. Cada projeto é uma tela de desenho independente.
+function ProjetosView({ group, me }: { group: Group; me: string }) {
+  const [projetos, setProjetos] = useState<Projeto[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [aberto, setAberto] = useState<Projeto | null>(null);
+  const [criando, setCriando] = useState(false);
+
+  async function carregar() {
+    if (!supabase) return;
+    const { data } = await supabase
+      .from("group_projects")
+      .select("id, group_id, title, updated_at")
+      .eq("group_id", group.id)
+      .order("updated_at", { ascending: false });
+    setProjetos((data as Projeto[]) ?? []);
+    setCarregando(false);
+  }
+
+  useEffect(() => {
+    setAberto(null);
+    void carregar();
+    // A lista se atualiza sozinha quando alguém cria/renomeia um quadro.
+    const ch = supabase?.channel(`projetos:${group.id}`).on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "group_projects", filter: `group_id=eq.${group.id}` },
+      () => void carregar()
+    ).subscribe();
+    return () => { if (ch) void supabase?.removeChannel(ch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id]);
+
+  async function criar() {
+    if (!supabase) return;
+    setCriando(true);
+    const { data } = await supabase
+      .from("group_projects")
+      .insert({ group_id: group.id, title: "Novo projeto", created_by: me, updated_by: me })
+      .select("id, group_id, title, updated_at")
+      .single();
+    setCriando(false);
+    if (data) setAberto(data as Projeto);
+  }
+
+  async function renomear(p: Projeto) {
+    const novo = prompt("Nome do projeto:", p.title);
+    if (!novo || !novo.trim() || !supabase) return;
+    await supabase.from("group_projects").update({ title: novo.trim() }).eq("id", p.id);
+    void carregar();
+  }
+
+  async function apagar(p: Projeto) {
+    if (!confirm(`Apagar o projeto "${p.title}"? O quadro é perdido.`) || !supabase) return;
+    await supabase.from("group_projects").delete().eq("id", p.id);
+    void carregar();
+  }
+
+  if (aberto) {
+    return (
+      <div className="h-[calc(100vh-260px)] min-h-[420px]">
+        <ProjectBoard projectId={aberto.id} title={aberto.title} meId={me} onBack={() => { setAberto(null); void carregar(); }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-1">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-bold">Projetos do grupo</h3>
+          <p className="text-[11px] text-slate-500">Quadros para desenhar, mapear ideias e montar fluxogramas — juntos, na reunião.</p>
+        </div>
+        <button onClick={criar} disabled={criando} className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50">
+          {criando ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Novo projeto
+        </button>
+      </div>
+
+      {carregando ? (
+        <div className="flex justify-center py-16 text-slate-500"><Loader2 size={20} className="animate-spin" /></div>
+      ) : projetos.length === 0 ? (
+        <div className="text-center py-16">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-950/50 grid place-items-center mx-auto mb-3"><PenTool size={22} className="text-indigo-300" /></div>
+          <p className="text-sm text-slate-300 font-semibold">Nenhum projeto ainda</p>
+          <p className="text-[12px] text-slate-500 mt-1">Crie um quadro em branco e comece a desenhar.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {projetos.map((p) => (
+            <div key={p.id} className="group relative rounded-xl border border-white/10 bg-white/5 hover:border-indigo-500/40 transition overflow-hidden">
+              <button onClick={() => setAberto(p)} className="w-full text-left cursor-pointer">
+                <div className="h-24 bg-[#0c1018] grid place-items-center" style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "16px 16px" }}>
+                  <PenTool size={22} className="text-indigo-400/60" />
+                </div>
+                <div className="p-2.5">
+                  <p className="text-[13px] font-semibold truncate">{p.title}</p>
+                  <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5"><Clock size={10} /> {new Date(p.updated_at).toLocaleDateString("pt-BR")}</p>
+                </div>
+              </button>
+              <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                <button onClick={() => renomear(p)} className="p-1 rounded bg-black/50 hover:bg-black/70 text-slate-300 cursor-pointer" title="Renomear"><Pencil size={12} /></button>
+                <button onClick={() => apagar(p)} className="p-1 rounded bg-black/50 hover:bg-red-600/70 text-slate-300 cursor-pointer" title="Apagar"><Trash2 size={12} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
