@@ -27,6 +27,8 @@ const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 const statusEl = document.getElementById("status");
 const codeEl = document.getElementById("my-code");
 const copyBtn = document.getElementById("copy");
+const transferPanel = document.getElementById("transfer-panel");
+const transferClose = document.getElementById("transfer-close");
 const setStatus = (t) => (statusEl.textContent = t);
 
 let supabase = null;
@@ -55,6 +57,12 @@ copyBtn?.addEventListener("click", () => {
   copyBtn.textContent = "Copiado!";
   setTimeout(() => (copyBtn.textContent = "Copiar código"), 1500);
 });
+
+ipcRenderer.on("transfer-panel-show", () => {
+  transferPanel?.classList.add("visible");
+  setStatus("O suporte abriu o painel de arquivos.");
+});
+transferClose?.addEventListener("click", () => transferPanel?.classList.remove("visible"));
 
 async function registerSelf() {
   setStatus("Registrando este computador…");
@@ -746,6 +754,8 @@ async function startStreaming() {
         if (control.readyState === "open") {
           control.send(JSON.stringify({ kind: "tool-result", id: message.id, result }));
         }
+      } else if (message.kind === "show-transfer-panel") {
+        ipcRenderer.send("transfer-panel-show");
       } else {
         ipcRenderer.send("input", message);
       }

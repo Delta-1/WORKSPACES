@@ -104,7 +104,7 @@ function createWindow(payload, visible) {
     height: 300,
     show: visible,
     resizable: false,
-    title: "Workspace — Acesso Remoto",
+    title: "Workspaces — Acesso Remoto",
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
   win.loadFile(path.join(__dirname, "renderer.html"));
@@ -158,6 +158,10 @@ function createOrbWindow(cfg) {
 ipcMain.on("orb-hide", () => { if (orbWin && !orbWin.isDestroyed()) orbWin.hide(); });
 let orbCfgGlobal = null;
 ipcMain.on("orb-show", () => { if (orbCfgGlobal) createOrbWindow(orbCfgGlobal); });
+ipcMain.on("transfer-panel-show", () => {
+  showWindow();
+  if (win && !win.isDestroyed()) win.webContents.send("transfer-panel-show");
+});
 
 // GUIA VISUAL: desenha um círculo (vermelho/amarelo) na tela, no ponto que a IA
 // indicou, para a pessoa ver ONDE clicar. Janela transparente, clique-atravessa

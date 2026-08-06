@@ -59,8 +59,8 @@ import type { Company, Profile, Role } from "@/lib/types";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 export type DockPosition = "bottom" | "top" | "left" | "right";
-export type OsTheme = "mac" | "windows" | "linux";
-export type AnimStyle = "mac" | "windows" | "linux" | "fun" | "none";
+export type OsTheme = "workspace" | "mac" | "windows" | "linux";
+export type AnimStyle = "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
 
 const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -132,8 +132,9 @@ export default function Home() {
   const [tutorial, setTutorial] = useState<string | null>(null);
   // A barra de apps pode ir para qualquer lado — preferência de cada pessoa.
   const [dockPosition, setDockPosition] = useState<DockPosition>("bottom");
-  const [osTheme, setOsTheme] = useState<OsTheme>("mac");
-  const [animStyle, setAnimStyle] = useState<AnimStyle>("mac");
+  const [osTheme, setOsTheme] = useState<OsTheme>("workspace");
+  const [animStyle, setAnimStyle] = useState<AnimStyle>("workspace");
+  const [remoteDesktopAvailable, setRemoteDesktopAvailable] = useState(true);
   // Janelas flutuantes abertas (abrir Kanban e Calendário ao mesmo tempo).
   const [janelas, setJanelas] = useState<{ id: string; z: number; min: boolean }[]>([]);
   const zTopo = useRef(20);
@@ -450,6 +451,7 @@ export default function Home() {
   // para montar o menu de apps — reaproveitada para liberar/esconder a sub-aba
   // de Automação dentro do Labs, sem duplicar a regra de permissão.
   const canAccessApp = (appId: string): boolean => {
+    if (appId === "remoto" && !remoteDesktopAvailable) return false;
     if (appId === "clientes_ia" && !superAdmin) return false; // exclusivo do Admin Geral
     const ta = profile?.tool_access as Record<string, boolean> | null | undefined;
     const hasOverride = !!(ta && Object.prototype.hasOwnProperty.call(ta, appId));
@@ -473,6 +475,14 @@ export default function Home() {
 
   // Barra de acesso rápido personalizável (salva por navegador).
   useEffect(() => {
+    const media = window.matchMedia("(min-width: 768px) and (pointer: fine)");
+    const sync = () => setRemoteDesktopAvailable(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("dock:quickApps") || "[]");
       // O Cobrador virou uma aba da Carteira; quem o tinha fixado passa a ver a
@@ -488,9 +498,9 @@ export default function Home() {
       const p = localStorage.getItem("dock:pos") as DockPosition | null;
       if (p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
       const os = localStorage.getItem("os:theme") as OsTheme | null;
-      if (os === "mac" || os === "windows" || os === "linux") setOsTheme(os);
+      if (os === "workspace" || os === "mac" || os === "windows" || os === "linux") setOsTheme(os);
       const a = localStorage.getItem("anim:style") as AnimStyle | null;
-      if (a === "mac" || a === "windows" || a === "linux" || a === "fun" || a === "none") setAnimStyle(a);
+      if (a === "workspace" || a === "mac" || a === "windows" || a === "linux" || a === "fun" || a === "none") setAnimStyle(a);
     } catch { /* ignore */ }
   }, []);
 

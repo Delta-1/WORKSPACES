@@ -76,17 +76,33 @@ function FloatingWindow({
   const drag = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
   const resz = useRef<{ mx: number; my: number; ow: number; oh: number } | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const minimizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [closing, setClosing] = useState(false);
+  const [minimizing, setMinimizing] = useState(false);
 
   useEffect(() => () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
+    if (minimizeTimer.current) clearTimeout(minimizeTimer.current);
   }, []);
 
+  useEffect(() => {
+    if (!minimized) setMinimizing(false);
+  }, [minimized]);
+
   function closeAnimated() {
-    if (closing) return;
+    if (closing || minimizing) return;
     setClosing(true);
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     closeTimer.current = setTimeout(onClose, reducedMotion ? 20 : 460);
+  }
+
+  function minimizeAnimated() {
+    if (closing || minimizing) return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const animation = document.documentElement.getAttribute("data-os-theme");
+    const duration = reducedMotion ? 20 : animation === "mac" ? 520 : animation === "workspace" ? 280 : 210;
+    setMinimizing(true);
+    minimizeTimer.current = setTimeout(onMinimize, duration);
   }
 
   function onMove(e: React.PointerEvent) {
@@ -109,7 +125,7 @@ function FloatingWindow({
   return (
     <div
       onPointerDown={onFocus}
-      className={`workspace-window app-anim fixed rounded-xl border border-white/15 bg-[#0b0f16] shadow-2xl flex flex-col overflow-hidden ${closing ? "is-closing" : ""} ${rect.max ? "is-maximized" : ""}`}
+      className={`workspace-window app-anim fixed rounded-xl border border-white/15 bg-[#0b0f16] shadow-2xl flex flex-col overflow-hidden ${closing ? "is-closing" : ""} ${minimizing ? "is-minimizing" : ""} ${rect.max ? "is-maximized" : ""}`}
       style={estilo}
     >
       {/* barra de título — arrasta a janela */}
@@ -122,7 +138,7 @@ function FloatingWindow({
       >
         <span className="workspace-window-title text-[12px] font-semibold truncate flex-1 px-1">{title}</span>
         <div className="workspace-window-controls flex items-center">
-          <button onPointerDown={(e) => e.stopPropagation()} onClick={onMinimize} className="workspace-window-control is-minimize p-1 rounded text-gray-400 cursor-pointer" title="Minimizar" aria-label="Minimizar"><Minus size={13} /></button>
+          <button onPointerDown={(e) => e.stopPropagation()} onClick={minimizeAnimated} className="workspace-window-control is-minimize p-1 rounded text-gray-400 cursor-pointer" title="Minimizar" aria-label="Minimizar"><Minus size={13} /></button>
           <button onPointerDown={(e) => e.stopPropagation()} onClick={() => setRect((r) => ({ ...r, max: !r.max }))} className="workspace-window-control is-maximize p-1 rounded text-gray-400 cursor-pointer" title={rect.max ? "Restaurar" : "Maximizar"} aria-label={rect.max ? "Restaurar" : "Maximizar"}><Square size={12} /></button>
           <button onPointerDown={(e) => e.stopPropagation()} onClick={closeAnimated} className="workspace-window-control is-close p-1 rounded text-gray-400 cursor-pointer" title="Fechar" aria-label="Fechar"><X size={14} /></button>
         </div>

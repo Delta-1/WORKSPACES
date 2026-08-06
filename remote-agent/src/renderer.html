@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Workspace Acesso Remoto</title>
+    <title>Workspaces Acesso Remoto</title>
     <style>
       body { font-family: system-ui, sans-serif; background: #0b0f16; color: #cbd5e1; padding: 22px; text-align: center; }
       h3 { margin: 4px 0 4px; color: #fff; font-size: 17px; }
@@ -18,10 +18,17 @@
       .copy:hover { background: #374151; }
       #status { font-size: 12px; margin-top: 16px; color: #64748b; }
       .hint { font-size: 11px; color: #64748b; margin-top: 14px; line-height: 1.5; }
+      .transfer-panel { display: none; position: fixed; inset: 14px; z-index: 10; padding: 22px; border: 1px solid rgba(52,211,153,.3); border-radius: 16px; background: rgba(8,18,23,.98); box-shadow: 0 20px 70px rgba(0,0,0,.65); text-align: left; }
+      .transfer-panel.visible { display: block; }
+      .transfer-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: rgba(16,185,129,.14); color: #6ee7b7; font-size: 20px; }
+      .transfer-panel h4 { margin: 14px 0 7px; color: white; font-size: 16px; }
+      .transfer-panel p { margin: 0; color: #94a3b8; font-size: 12px; line-height: 1.55; }
+      .transfer-note { margin-top: 14px !important; padding: 10px; border-radius: 9px; background: rgba(255,255,255,.04); color: #cbd5e1 !important; }
+      .transfer-close { position: absolute; right: 14px; top: 12px; border: 0; background: transparent; color: #94a3b8; font-size: 20px; cursor: pointer; }
     </style>
   </head>
   <body>
-    <h3>Workspace — Suporte Remoto</h3>
+    <h3>Workspaces — Suporte Remoto</h3>
     <p class="sub">Este computador está pronto para receber suporte técnico.</p>
 
     <div class="code-label">Seu código de suporte</div>
@@ -35,6 +42,14 @@
       O programa continua rodando na bandeja e sobe junto com o Windows —
       não precisa deixar esta janela aberta.
     </p>
+
+    <section id="transfer-panel" class="transfer-panel" aria-live="polite">
+      <button id="transfer-close" class="transfer-close" aria-label="Fechar painel">×</button>
+      <div class="transfer-icon">⇄</div>
+      <h4>Painel de arquivos aberto pelo suporte</h4>
+      <p>O profissional conectado está navegando somente nas pastas autorizadas para localizar ou transferir arquivos desta sessão.</p>
+      <p class="transfer-note">A sessão continua visível e identificada. Você pode acompanhar o atendimento e encerrá-lo pelo ícone do Workspaces na bandeja.</p>
+    </section>
 
     <script src="./renderer.js"></script>
   </body>

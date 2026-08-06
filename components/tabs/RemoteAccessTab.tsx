@@ -40,6 +40,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
   // de OUTRA empresa (só compartilhadas por código) não — lá é computador comum.
   const ownsAgent = (a: RemoteAgent) => !!companyId && (a.company_id === companyId || a.company_id == null);
   const thumbBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/agent-thumbs`;
+  const desktopAgents = agents.filter((agent) => !/^android/i.test(agent.os || "") && agent.specs?.platform !== "android");
 
   // Atualiza as prévias ao vivo a cada 6s (o agente sobe um print nesse ritmo).
   useEffect(() => {
@@ -166,7 +167,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
     <div className="h-full flex flex-col gap-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-lg font-bold flex items-center gap-2">
-          <MonitorSmartphone className="text-emerald-400" size={20} /> Acesso Remoto
+          <Monitor className="text-emerald-400" size={20} /> Acesso Remoto
         </h3>
         <div className="flex items-center gap-2 flex-wrap">
           {canManage && (
@@ -175,7 +176,7 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
                 onClick={() => setView("maquinas")}
                 className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md cursor-pointer ${view === "maquinas" ? "bg-emerald-600 text-white" : "text-gray-400 hover:text-white"}`}
               >
-                <MonitorSmartphone size={12} /> Máquinas
+                <Monitor size={12} /> Máquinas
               </button>
               <button
                 onClick={() => setView("configuracoes")}
@@ -238,19 +239,18 @@ export default function RemoteAccessTab({ profile }: { profile: Profile | null }
       ) : (
       <>
       <div className="text-[11px] text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
-        O cliente abre o <b>Workspace Acesso Remoto</b> no computador (.exe) ou celular Android (.apk) e informa o{" "}
-        <b>código de suporte</b>. Digite o código acima e clique em <b>Sincronizar</b>. Quando estiver <b>Online</b>, clique
-        em <b>Conectar</b>. No Android, a pessoa confirma cada sessão de tela, vê uma notificação permanente e ativa
-        separadamente o controle por Acessibilidade; os arquivos ficam limitados à pasta escolhida por ela.
+        O cliente abre o <b>Workspaces Acesso Remoto</b> no computador e informa o <b>código de suporte</b>. Digite o código
+        acima e clique em <b>Sincronizar</b>. Quando estiver <b>Online</b>, clique em <b>Conectar</b>. Durante a sessão, cada
+        participante recebe uma cor própria e o painel de arquivos pode ser exibido também na tela do cliente.
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
-        {agents.length === 0 && (
+        {desktopAgents.length === 0 && (
           <p className="text-sm text-gray-500 italic col-span-full text-center py-8">
             Nenhuma máquina sincronizada. Peça o código de suporte ao cliente e sincronize acima.
           </p>
         )}
-        {agents.map((a) => {
+        {desktopAgents.map((a) => {
           const online = isOnline(a);
           return (
             <div key={a.id} className="liquid-glass rounded-2xl p-4 flex flex-col gap-3">

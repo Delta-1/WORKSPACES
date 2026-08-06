@@ -685,6 +685,11 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     if (!dir) listDir("");
   }
 
+  function openClientTransferPanel() {
+    sendInput({ kind: "show-transfer-panel" });
+    openFiles();
+  }
+
   function sendInput(ev: object) {
     const ch = controlRef.current;
     const event = ev as { kind?: string; x?: number; y?: number; dx?: number; dy?: number; text?: string; name?: string; key?: string; down?: boolean; url?: string };
@@ -1061,12 +1066,30 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
     scrubRef.current = null;
   }
 
+  if (isTouch) {
+    return (
+      <div className="fixed inset-0 z-[80] grid place-items-center bg-[#070b11] p-6 text-slate-100">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0b0f16] p-6 text-center shadow-2xl">
+          <MonitorIcon size={34} className="mx-auto text-emerald-400" />
+          <h2 className="mt-4 text-base font-bold">Acesso remoto disponível no computador</h2>
+          <p className="mt-2 text-sm leading-relaxed text-slate-400">A experiência móvel está temporariamente desativada enquanto o controle para Windows, macOS e Linux recebe prioridade.</p>
+          <button onClick={onClose} className="mt-5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Voltar ao Workspaces</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[80] bg-black/90 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 bg-[#0b0f16] border-b border-white/10 shrink-0 gap-2">
-        <p className="text-sm font-bold truncate">Acesso remoto — {agent.name}</p>
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
-          {status && <span className="text-xs text-amber-400">{status}</span>}
+      <div className="flex min-h-14 items-center gap-3 border-b border-white/10 bg-[#0b0f16] px-3 py-2 shrink-0">
+        <div className="min-w-0 shrink-0">
+          <p className="max-w-56 truncate text-sm font-bold">Acesso remoto — {agent.name}</p>
+          <p className={`flex items-center gap-1.5 text-[10px] ${status ? "text-amber-400" : "text-emerald-400"}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${status ? "bg-amber-400 animate-pulse" : "bg-emerald-400"}`} />
+            {status || `Sessão ativa · ${peers.length + 1} participante${peers.length ? "s" : ""}`}
+          </p>
+        </div>
+        <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap pb-0.5 [scrollbar-width:thin]">
           {screens.length > 1 && (
             <div className="flex items-center gap-1.5">
               <MonitorIcon size={14} className="text-gray-400" />
@@ -1107,32 +1130,36 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
             <FolderOpen size={14} /> Arquivos
           </button>
           <button
+            onClick={openClientTransferPanel}
+            title="Abrir o painel de transferência também na tela do cliente"
+            className="flex items-center gap-1.5 rounded bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20"
+          >
+            <Laptop size={14} /> Painel no cliente
+          </button>
+          <button onClick={pasteClipboard} title="Colar o texto do meu computador na máquina remota" className="flex items-center gap-1.5 rounded bg-white/5 px-2.5 py-1.5 text-xs hover:bg-white/10">
+            <ClipboardPaste size={14} /> Colar
+          </button>
+          <button
             onClick={toggleOrb}
             title="Orb — assistente de IA por voz durante o acesso"
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer ${orbOpen || orbModePickerOpen ? "bg-indigo-600 text-white" : "bg-white/5 hover:bg-white/10"}`}
           >
             <Bot size={14} /> Orb
           </button>
-          {/* No DESKTOP essas ferramentas ficavam só no celular — agora também aqui,
-              para enviar/instalar apps registrados e usar tela cheia pelo PC. */}
-          {!isTouch && (
-            <>
-              <button
-                onClick={() => setToolsOpen(true)}
-                title="Enviar/instalar uma ferramenta ou app registrado na máquina do cliente"
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
-              >
-                <Package size={14} /> Ferramentas
-              </button>
-              <button
-                onClick={() => setFs(true)}
-                title="Tela cheia"
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
-              >
-                <Maximize2 size={14} /> Tela cheia
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setToolsOpen(true)}
+            title="Enviar/instalar uma ferramenta ou app registrado na máquina do cliente"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
+          >
+            <Package size={14} /> Ferramentas
+          </button>
+          <button
+            onClick={() => setFs(true)}
+            title="Tela cheia"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded cursor-pointer bg-white/5 hover:bg-white/10"
+          >
+            <Maximize2 size={14} /> Tela cheia
+          </button>
           <div className="relative">
             <button
               onClick={() => setShowSettings((v) => !v)}
@@ -1157,7 +1184,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
                   </div>
                   <input type="range" min={0.4} max={10} step={0.1} value={scrollSens} onChange={(e) => saveScrollSens(Number(e.target.value))} className="w-full accent-emerald-500 cursor-pointer" />
                 </div>
-                <p className="text-[10px] text-gray-500">Vale para o trackpad do celular e a rolagem. Fica salvo no navegador.</p>
+                <p className="text-[10px] text-gray-500">Ajusta a resposta do mouse e da rolagem. Fica salvo neste navegador.</p>
               </div>
             )}
           </div>
@@ -1167,7 +1194,7 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
         <div
           className="flex-1 flex items-center justify-center overflow-hidden relative"
           tabIndex={0}
@@ -1309,15 +1336,18 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
         )}
 
         {showFiles && (
-          <div className="w-80 max-w-[85vw] shrink-0 bg-[#0b0f16] border-l border-white/10 flex flex-col">
+          <div className="absolute inset-y-0 right-0 z-30 flex w-[min(380px,92vw)] flex-col border-l border-white/10 bg-[#0b0f16] shadow-2xl xl:relative xl:inset-auto xl:z-auto xl:w-96 xl:shrink-0 xl:shadow-none">
             <div className="p-3 border-b border-white/10 flex items-center justify-between gap-2">
               <p className="text-xs font-bold flex items-center gap-1.5">
                 <Folder size={14} className="text-emerald-400" /> Arquivos do cliente
               </p>
-              <label className="flex items-center gap-1 text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded cursor-pointer">
-                <Upload size={12} /> Enviar
-                <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && uploadFile(e.target.files[0])} />
-              </label>
+              <div className="flex items-center gap-1">
+                <label className="flex items-center gap-1 text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded cursor-pointer">
+                  <Upload size={12} /> Enviar
+                  <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && uploadFile(e.target.files[0])} />
+                </label>
+                <button onClick={() => setShowFiles(false)} className="rounded p-1 text-gray-400 hover:bg-white/10 hover:text-white" title="Fechar arquivos"><X size={14} /></button>
+              </div>
             </div>
             <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-2">
               <button
@@ -1381,8 +1411,8 @@ export default function RemoteViewer({ agent, profile, onClose, initialGame, tea
                 ))}
               {!busy && entries.length === 0 && <p className="text-[11px] text-gray-600 p-3">Pasta vazia.</p>}
             </div>
-            <p className="text-[10px] text-gray-600 p-2 border-t border-white/5 flex items-center gap-1">
-              <ListTree size={11} /> Navegue nas pastas. O robô <Bot size={10} className="inline" /> cria uma automação pro Drive.
+            <p className="text-[10px] text-gray-500 p-2 border-t border-white/5 flex items-center gap-1">
+              <ListTree size={11} /> Clique em baixar para trazer o arquivo ao seu computador. O cliente acompanha o acesso em sua própria janela.
             </p>
           </div>
         )}
