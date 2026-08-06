@@ -58,6 +58,7 @@ export function setCompany(update: Partial<Db["company"]>) {
 
 export function logWhatsappMessage(entry: Db["whatsappMessages"][number]) {
   const db = ensureDb();
+  if (db.whatsappMessages.some((message) => message.id === entry.id)) return;
   db.whatsappMessages.push(entry);
   db.whatsappMessages = db.whatsappMessages.slice(-200);
   saveDb(db);

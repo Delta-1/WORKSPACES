@@ -29,6 +29,21 @@ const state: WaState = {
 let sock: ReturnType<WaModule["default"]> | null = null;
 let starting = false;
 
+function messageTimestampMs(messageTimestamp: unknown) {
+  const value = messageTimestamp as { toNumber?: () => number; low?: number } | number | null;
+  const seconds =
+    typeof value === "object" && value && typeof value.toNumber === "function"
+      ? value.toNumber()
+      : Number(typeof value === "object" && value ? value.low : value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return Date.now();
+  return seconds > 1e12 ? seconds : seconds * 1000;
+}
+
+function isRecentMessage(messageTimestamp: unknown) {
+  const timestamp = messageTimestampMs(messageTimestamp);
+  return Date.now() - timestamp <= 7 * 24 * 60 * 60 * 1000 && timestamp <= Date.now() + 5 * 60 * 1000;
+}
+
 export function getWaStatus() {
   return { ...state };
 }
@@ -45,12 +60,12 @@ export async function startWhatsappSession() {
     const baileys: WaModule = await import("baileys");
     const {
       default: makeWASocket,
-      useMultiFileAuthState,
+      useMultiFileAuthState: loadMultiFileAuthState,
       DisconnectReason,
     } = baileys;
 
     if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
-    const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state: authState, saveCreds } = await loadMultiFileAuthState(AUTH_DIR);
 
     state.status = "connecting";
     sock = makeWASocket({ auth: authState, printQRInTerminal: false });
@@ -83,15 +98,30 @@ export async function startWhatsappSession() {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
       for (const msg of messages) {
-        if (msg.key.fromMe) continue;
         const from = msg.key.remoteJid;
         const text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
           "";
         if (!from || !text) continue;
+
+        // No modo multidispositivo, mensagens enviadas pelo telefone podem
+        // chegar como "append". Espelha as recentes na aba Mensagens.
+        if (msg.key.fromMe) {
+          if (type === "notify" || (type === "append" && isRecentMessage(msg.messageTimestamp))) {
+            logWhatsappMessage({
+              id: `${msg.key.id}-out`,
+              from,
+              text,
+              direction: "out",
+              at: new Date(messageTimestampMs(msg.messageTimestamp)).toISOString(),
+            });
+          }
+          continue;
+        }
+        // Append de mensagens recebidas é histórico e não deve acionar o bot.
+        if (type !== "notify") continue;
 
         logWhatsappMessage({
           id: `${msg.key.id}-in`,
