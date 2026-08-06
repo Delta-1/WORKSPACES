@@ -18,8 +18,14 @@ export async function POST(request: Request) {
     meta?: Record<string, string>;
     currentText?: string; // texto atual do documento (para editar/continuar)
     mode?: "replace" | "append" | "edit";
+    referenceDecision?: "file" | "none";
+    referenceText?: string;
+    referenceName?: string;
   };
   if (!body?.prompt?.trim()) return NextResponse.json({ error: "Diga o que você quer criar." }, { status: 400 });
+  const referenceTask = /\b(resumo|resumir|resuma|sintetiz|mapa mental)\b/i.test(body.prompt);
+  if (referenceTask && body.referenceDecision !== "file" && body.referenceDecision !== "none") return NextResponse.json({ needsReference: true, error: "A Yumi precisa perguntar primeiro se existe um arquivo de referência." }, { status: 400 });
+  if (referenceTask && body.referenceDecision === "file" && !body.referenceText?.trim()) return NextResponse.json({ needsReference: true, error: "Envie o arquivo de referência antes de continuar." }, { status: 400 });
 
   let override: AiOverride | null = null;
   const { data: { user } } = await client.auth.getUser();
@@ -44,6 +50,7 @@ export async function POST(request: Request) {
 
   const userMsg =
     (body.currentText ? `Documento atual:\n"""${String(body.currentText).slice(0, 8000)}"""\n\n` : "") +
+    (body.referenceDecision === "file" ? `Arquivo de referência "${body.referenceName || "material"}":\n"""${body.referenceText!.slice(0, 50000)}"""\n\nUse-o como fonte principal e não invente informações fora dele.\n\n` : "") +
     `Pedido: ${body.prompt}\n\nResponda com o HTML.`;
 
   let html = "";
