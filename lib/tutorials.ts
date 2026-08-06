@@ -45,11 +45,11 @@ export const TUTORIALS: Record<string, Tutorial> = {
   },
 
   mundo: {
-    titulo: "Mundo — informações essenciais",
+    titulo: "Mundo — notícias por país",
     passos: [
-      { titulo: "Radar global", texto: "Veja no mapa eventos naturais ativos, como tempestades, incêndios, vulcões e inundações, com dados quase em tempo real." },
-      { titulo: "Filtre e investigue", texto: "Escolha o período e a categoria, pesquise eventos e abra as fontes originais para entender cada ocorrência." },
-      { titulo: "Também na tela inicial", texto: "O Pulso do mundo resume os acontecimentos mais recentes na Home e no Modo TV. Novas fontes de notícias poderão entrar nesse mesmo painel." },
+      { titulo: "Um mapa realmente navegável", texto: "Clique em qualquer país para abrir as principais notícias do dia naquele lugar." },
+      { titulo: "Local ou em português", texto: "Alterne entre a imprensa local do país e a cobertura em português. Você também pode pesquisar e filtrar por veículo." },
+      { titulo: "Também na tela inicial", texto: "O Mundo agora resume as manchetes recentes na Home e no Modo TV. As matérias completas sempre abrem no veículo responsável." },
     ],
   },
 
