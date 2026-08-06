@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Building2, FileDown, Loader2, Plus, Printer, Save, Trash2, Wand2 } from "lucide-react";
+import { ArrowLeft, Building2, FileDown, FileUp, Loader2, Plus, Printer, Save, Trash2, Wand2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
+import { extractReferenceFile, type ReferenceMaterial } from "@/lib/reference-file";
 import {
   BUSINESS_PAGE, EMITENTE_FIELDS, EMPTY_CONTRATO, EMPTY_ORCAMENTO, EMPTY_QUESTIONARIO, EMPTY_RESUMO,
   fmtMoney, orcamentoTotais,
@@ -78,6 +79,9 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
   const [zoom, setZoom] = useState(0.72);
   const [prompt, setPrompt] = useState("");
   const [filling, setFilling] = useState(false);
+  const [referenceChoice, setReferenceChoice] = useState<"unknown" | "file" | "none">("unknown");
+  const [reference, setReference] = useState<ReferenceMaterial | null>(null);
+  const [readingReference, setReadingReference] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -128,12 +132,15 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
 
   async function fillWithAi() {
     if (!prompt.trim() || filling) return;
+    const needsReferenceQuestion = model === "resumo" || model === "resumao";
+    if (needsReferenceQuestion && referenceChoice === "unknown") { setErr("Responda primeiro se você tem um arquivo de referência."); return; }
+    if (needsReferenceQuestion && referenceChoice === "file" && !reference) { setErr("Escolha o arquivo de referência antes de continuar."); return; }
     setFilling(true); setErr(null);
     try {
       const headers = await authHeaders();
       const res = await fetch("/api/studio/fill", {
         method: "POST", headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ model, prompt, current: doc }),
+        body: JSON.stringify({ model, prompt, current: doc, referenceDecision: needsReferenceQuestion ? referenceChoice : "none", referenceText: reference?.text, referenceName: reference?.name }),
       });
       const data = await res.json();
       if (data.error) { setErr(data.error); return; }
@@ -145,6 +152,13 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
     } catch {
       setErr("Falha de conexão com a IA.");
     } finally { setFilling(false); }
+  }
+
+  async function readReference(file: File) {
+    setReadingReference(true); setErr(null);
+    try { setReference(await extractReferenceFile(file)); }
+    catch (cause) { setReference(null); setErr(cause instanceof Error ? cause.message : "Não consegui ler o arquivo."); }
+    finally { setReadingReference(false); }
   }
 
   async function exportDocx() {
@@ -186,6 +200,12 @@ export default function BusinessEditor({ row, model, modelLabel, onClose }: { ro
           {/* Preencher com a Yumi */}
           <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-2.5 space-y-2">
             <p className="text-[11px] font-bold text-sky-300 flex items-center gap-1.5"><Wand2 size={12} /> Preencher com a Yumi</p>
+            {(model === "resumo" || model === "resumao") && (
+              <div className="rounded-lg border border-white/10 bg-black/20 p-2 text-[10px] text-gray-300">
+                <p>Antes de resumir: você tem algum arquivo para eu usar como referência?</p>
+                {referenceChoice === "unknown" ? <div className="mt-2 flex gap-1.5"><button onClick={() => setReferenceChoice("file")} className="rounded bg-sky-600 px-2 py-1 text-white">Sim, vou enviar</button><button onClick={() => setReferenceChoice("none")} className="rounded bg-white/10 px-2 py-1">Não tenho</button></div> : referenceChoice === "file" ? <div className="mt-2 flex flex-wrap items-center gap-1.5"><label className="flex cursor-pointer items-center gap-1 rounded bg-white/10 px-2 py-1"><FileUp size={11} /> {readingReference ? "Lendo…" : reference?.name || "Escolher arquivo"}<input type="file" accept=".pdf,.doc,.docx,.txt,.md,.html,.csv" className="hidden" onChange={(event) => event.target.files?.[0] && void readReference(event.target.files[0])} /></label><button onClick={() => { setReferenceChoice("none"); setReference(null); }} className="text-gray-500 hover:text-white">Seguir sem arquivo</button></div> : <button onClick={() => setReferenceChoice("file")} className="mt-2 text-sky-300 hover:text-sky-200">Adicionar um arquivo</button>}
+              </div>
+            )}
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
