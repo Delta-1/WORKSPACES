@@ -426,6 +426,13 @@ html[data-style="paper"] .text-gray-400 {
    ============================================================================ */
 .app-anim { will-change: transform, opacity; }
 
+/* Workspaces: rápido, elegante e com o brilho verde da identidade do produto. */
+html[data-anim="workspace"] .app-anim { animation: anim-workspace .32s cubic-bezier(.2,.8,.2,1); }
+@keyframes anim-workspace {
+  from { opacity: 0; transform: translateY(7px) scale(.992); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
 /* macOS: suave, com uma leve escala — a sensação de "abrir" do Mac. */
 html[data-anim="mac"] .app-anim { animation: anim-mac 0.42s cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes anim-mac { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
@@ -521,6 +528,37 @@ html[data-anim="none"] .app-anim { animation: none; }
   background: var(--os-drawer-bg, rgba(14,18,27,.86));
 }
 
+/* Workspaces — identidade original, produtiva e menos presa a um único SO. */
+html[data-os-theme="workspace"] {
+  --os-font: Inter, ui-sans-serif, system-ui;
+  --os-wallpaper: #07100f;
+  --os-wallpaper-glow: radial-gradient(circle at 16% 14%, rgba(16,185,129,.2), transparent 34%), radial-gradient(circle at 82% 76%, rgba(6,182,212,.12), transparent 38%), linear-gradient(145deg, rgba(4,16,17,.28), rgba(4,9,16,.62));
+  --os-header-bg: rgba(7, 15, 19, .76);
+  --os-header-shadow: 0 1px 0 rgba(110,231,183,.08), 0 12px 34px rgba(0,0,0,.18);
+  --os-window-radius: 15px;
+  --os-window-bg: rgba(9, 18, 22, .95);
+  --os-window-content: rgba(4, 11, 15, .5);
+  --os-window-border: rgba(52,211,153,.17);
+  --os-window-shadow: 0 30px 78px rgba(0,0,0,.54), 0 1px 0 rgba(110,231,183,.07) inset;
+  --os-titlebar-bg: linear-gradient(180deg, rgba(52,211,153,.08), rgba(255,255,255,.025));
+  --os-titlebar-height: 39px;
+  --os-dock-radius: 18px;
+  --os-dock-bg: linear-gradient(145deg, rgba(9,25,25,.9), rgba(8,16,23,.88));
+  --os-dock-border: rgba(52,211,153,.2);
+  --os-drawer-radius: 24px;
+  --os-drawer-bg: rgba(8, 19, 22, .92);
+  --os-blur: 22px;
+}
+html[data-os-theme="workspace"] .workspace-dock-surface { box-shadow: 0 18px 50px rgba(0,0,0,.36), 0 0 0 1px rgba(16,185,129,.04) inset; }
+html[data-os-theme="workspace"] .workspace-dock-item { border-radius: 12px; }
+html[data-os-theme="workspace"] .workspace-dock-item:hover { transform: translateY(-4px) scale(1.06); color: #a7f3d0; background: rgba(16,185,129,.11); }
+html[data-os-theme="workspace"] .workspace-dock-item:active { transform: translateY(-1px) scale(.97); }
+html[data-os-theme="workspace"] .workspace-running-indicator { width: 14px; height: 3px; bottom: -2px; background: #34d399; }
+html[data-os-theme="workspace"] .workspace-window.is-closing { animation: os-workspace-close .26s cubic-bezier(.4,0,.6,1) both !important; pointer-events: none; }
+html[data-os-theme="workspace"] .workspace-window.is-minimizing { animation: os-workspace-minimize .28s cubic-bezier(.4,0,.6,1) both !important; pointer-events: none; transform-origin: 50% 100%; }
+@keyframes os-workspace-close { to { opacity: 0; transform: translateY(10px) scale(.97); filter: blur(3px); } }
+@keyframes os-workspace-minimize { to { opacity: 0; transform: translateY(44vh) scale(.22,.08); filter: blur(3px); border-radius: 28px; } }
+
 /* macOS — transparência profunda, controles à esquerda e dock elástico. */
 html[data-os-theme="mac"] {
   --os-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue";
@@ -559,11 +597,19 @@ html[data-os-theme="mac"] .workspace-dock-item:active { transform: translateY(-3
 html[data-os-theme="mac"] .workspace-drawer-overlay { align-items: center; background: rgba(2,5,12,.28); }
 html[data-os-theme="mac"] .workspace-drawer { margin: 0; max-width: 760px; }
 html[data-os-theme="mac"] .workspace-window.is-closing { animation: os-mac-genie-close .44s cubic-bezier(.55,.02,.82,.38) both !important; pointer-events: none; }
+html[data-os-theme="mac"] .workspace-window.is-minimizing { animation: os-mac-genie-minimize .52s cubic-bezier(.48,.03,.78,.34) both !important; pointer-events: none; transform-origin: 78% 100%; }
 @keyframes os-mac-genie-close {
   0% { opacity: 1; transform: translateY(0) scale(1,1) skewX(0); filter: blur(0); }
   42% { opacity: .94; transform: translateY(12px) scale(.92,.9) skewX(-1deg); border-radius: 22px; }
   72% { opacity: .68; transform: translateY(22vh) scale(.52,.34) skewX(7deg); filter: blur(1px); }
   100% { opacity: 0; transform: translateY(52vh) scale(.12,.025) skewX(18deg); filter: blur(5px); border-radius: 50%; }
+}
+@keyframes os-mac-genie-minimize {
+  0% { opacity: 1; transform: translate(0,0) scale(1,1) skewX(0); filter: blur(0); }
+  32% { opacity: .98; transform: translate(2vw,2vh) scale(.94,.88) skewX(-2deg); border-radius: 20px; }
+  62% { opacity: .82; transform: translate(12vw,17vh) scale(.68,.46) skewX(8deg); filter: blur(.5px); }
+  82% { opacity: .46; transform: translate(24vw,35vh) scale(.34,.16) skewX(16deg); filter: blur(2px); }
+  100% { opacity: 0; transform: translate(34vw,54vh) scale(.08,.018) skewX(24deg); filter: blur(5px); border-radius: 50%; }
 }
 
 /* Windows — Fluent/Mica, cantos precisos e barra com indicador horizontal. */
@@ -596,7 +642,9 @@ html[data-os-theme="windows"] .workspace-running-indicator { width: 18px; height
 html[data-os-theme="windows"] .workspace-drawer-overlay { align-items: flex-end; background: rgba(0,0,0,.22); }
 html[data-os-theme="windows"] .workspace-drawer { margin-bottom: 78px; max-width: 610px; }
 html[data-os-theme="windows"] .workspace-window.is-closing { animation: os-windows-close .18s cubic-bezier(.4,0,1,1) both !important; pointer-events: none; }
+html[data-os-theme="windows"] .workspace-window.is-minimizing { animation: os-windows-minimize .2s ease-in both !important; pointer-events: none; transform-origin: 50% 100%; }
 @keyframes os-windows-close { to { opacity: 0; transform: scale(.965) translateY(8px); filter: blur(2px); } }
+@keyframes os-windows-minimize { to { opacity: 0; transform: translateY(45vh) scale(.16,.05); } }
 
 /* Linux — inspiração Ubuntu/GNOME, aubergine, dock sólido e movimento enxuto. */
 html[data-os-theme="linux"] {
@@ -628,10 +676,13 @@ html[data-os-theme="linux"] .workspace-running-indicator { left: -4px; bottom: 5
 html[data-os-theme="linux"] .workspace-drawer-overlay { align-items: center; justify-content: flex-start; padding-left: 88px; background: rgba(9,4,11,.48); }
 html[data-os-theme="linux"] .workspace-drawer { margin: 0; max-width: 720px; }
 html[data-os-theme="linux"] .workspace-window.is-closing { animation: os-linux-close .23s cubic-bezier(.4,0,.2,1) both !important; pointer-events: none; }
+html[data-os-theme="linux"] .workspace-window.is-minimizing { animation: os-linux-minimize .2s cubic-bezier(.4,0,.2,1) both !important; pointer-events: none; transform-origin: 0 50%; }
 @keyframes os-linux-close { to { opacity: 0; transform: translateX(-18px) scale(.92); filter: blur(2px); } }
+@keyframes os-linux-minimize { to { opacity: 0; transform: translate(-46vw,12vh) scale(.06,.2); filter: blur(2px); } }
 
 /* Miniaturas do seletor de temas. */
 .os-theme-preview { position: relative; display: block; height: 92px; overflow: hidden; border-radius: 11px; background: #101725; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+.os-theme-preview--workspace { background: radial-gradient(circle at 25% 18%, #0d8f70, transparent 40%), linear-gradient(145deg,#071b1b,#08111d); }
 .os-theme-preview--mac { background: radial-gradient(circle at 75% 20%, #7d58d5, transparent 38%), linear-gradient(145deg,#142447,#27152f); }
 .os-theme-preview--windows { background: radial-gradient(circle at 70% 30%, #116cc1, transparent 38%), #071426; border-radius: 5px; }
 .os-theme-preview--linux { background: radial-gradient(circle at 75% 18%, #c84a26, transparent 35%), linear-gradient(145deg,#3b1239,#170c19); }
@@ -657,6 +708,7 @@ html[data-os-theme="linux"] .workspace-window.is-closing { animation: os-linux-c
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-window.is-closing,
+  .workspace-window.is-minimizing,
   .workspace-dock-item,
   .os-theme-card { animation: none !important; transition: none !important; }
 }

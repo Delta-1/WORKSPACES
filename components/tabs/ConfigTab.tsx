@@ -30,6 +30,7 @@ const SITE_STYLES: { id: string; name: string; desc: string; swatch: string }[] 
 ];
 
 const OS_THEMES = [
+  { id: "workspace", name: "Workspaces", desc: "Identidade original, verde e produtiva", icon: Sparkles },
   { id: "mac", name: "macOS", desc: "Vidro, dock e movimentos fluidos", icon: Laptop },
   { id: "windows", name: "Windows", desc: "Mica, barra de tarefas e precisão", icon: PanelsTopLeft },
   { id: "linux", name: "Linux", desc: "Ubuntu, dock lateral e foco", icon: Terminal },
@@ -115,10 +116,10 @@ export default function ConfigTab({
   onReplayTutorials?: () => void;
   dockPosition?: "bottom" | "top" | "left" | "right";
   onDockPosition?: (p: "bottom" | "top" | "left" | "right") => void;
-  osTheme?: "mac" | "windows" | "linux";
-  onOsTheme?: (theme: "mac" | "windows" | "linux") => void;
-  animStyle?: "mac" | "windows" | "linux" | "fun" | "none";
-  onAnimStyle?: (a: "mac" | "windows" | "linux" | "fun" | "none") => void;
+  osTheme?: "workspace" | "mac" | "windows" | "linux";
+  onOsTheme?: (theme: "workspace" | "mac" | "windows" | "linux") => void;
+  animStyle?: "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
+  onAnimStyle?: (a: "workspace" | "mac" | "windows" | "linux" | "fun" | "none") => void;
 }) {
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
@@ -320,7 +321,7 @@ export default function ConfigTab({
                     </div>
                     <span className="text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-1 whitespace-nowrap">Neste dispositivo</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {OS_THEMES.map((item) => {
                       const selected = osTheme === item.id;
                       const Icon = item.icon;
@@ -372,8 +373,8 @@ export default function ConfigTab({
                 <div>
                   <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Animação das janelas</label>
                   <p className="text-[11px] text-gray-500 mb-2">O tema escolhe uma animação recomendada, mas você pode ajustar separadamente.</p>
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                    {([["mac", "Mac", "Fluida"], ["windows", "Windows", "Direta"], ["linux", "Linux", "Ágil"], ["fun", "Divertida", "Molejo"], ["none", "Nenhuma", "Parada"]] as const).map(([id, label, desc]) => (
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    {([["workspace", "Workspaces", "Original"], ["mac", "Mac", "Fluida"], ["windows", "Windows", "Direta"], ["linux", "Linux", "Ágil"], ["fun", "Divertida", "Molejo"], ["none", "Nenhuma", "Parada"]] as const).map(([id, label, desc]) => (
                       <button
                         key={id}
                         onClick={() => onAnimStyle(id)}

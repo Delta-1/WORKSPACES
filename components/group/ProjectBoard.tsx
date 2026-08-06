@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase-client";
 import {
   ArrowLeft, BoxSelect, Check, ChevronDown, Circle, Copy, Diamond,
   Download, Focus, Grid3X3, Hand, Lightbulb, Link2, MousePointer2,
-  Pencil, Plus, Redo2, RotateCcw, Shapes, Sparkles, Square, StickyNote,
+  Maximize2, Minimize2, Pencil, Plus, Redo2, RotateCcw, Shapes, Sparkles, Square, StickyNote,
   Trash2, Type, Undo2, Waypoints, ZoomIn, ZoomOut,
 } from "lucide-react";
 
@@ -63,9 +63,11 @@ export default function ProjectBoard({
   const [shapeMenu, setShapeMenu] = useState(false);
   const [shapeKind, setShapeKind] = useState<NodeKind>("box");
   const [spacePressed, setSpacePressed] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
 
+  const boardRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const gesture = useRef<{ type: "pan" | "node" | "resize"; id?: string; sx: number; sy: number; ox: number; oy: number; w?: number; h?: number } | null>(null);
+  const gesture = useRef<{ type: "pan" | "node" | "resize" | "stroke"; id?: string; sx: number; sy: number; ox: number; oy: number; w?: number; h?: number } | null>(null);
   const currentStroke = useRef<Stroke | null>(null);
   const interacting = useRef(false);
   const history = useRef<Scene[]>([]);
@@ -81,6 +83,17 @@ export default function ProjectBoard({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === boardRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await boardRef.current?.requestFullscreen();
   }, []);
 
   useEffect(() => {
@@ -177,9 +190,16 @@ export default function ProjectBoard({
 
   const duplicateSelected = useCallback(() => {
     const node = sceneRef.current.nodes.find((item) => item.id === selected);
-    if (!node) return;
-    const copy = { ...node, id: uid(), x: node.x + 32, y: node.y + 32 };
-    apply((current) => ({ ...current, nodes: [...current.nodes, copy] }));
+    if (node) {
+      const copy = { ...node, id: uid(), x: node.x + 32, y: node.y + 32 };
+      apply((current) => ({ ...current, nodes: [...current.nodes, copy] }));
+      setSelected(copy.id);
+      return;
+    }
+    const stroke = sceneRef.current.strokes.find((item) => item.id === selected);
+    if (!stroke) return;
+    const copy: Stroke = { ...stroke, id: uid(), pts: stroke.pts.map(([x, y]) => [x + 24, y + 24]) };
+    apply((current) => ({ ...current, strokes: [...current.strokes, copy] }));
     setSelected(copy.id);
   }, [apply, selected]);
 
@@ -188,20 +208,23 @@ export default function ProjectBoard({
     apply((current) => ({
       nodes: current.nodes.filter((node) => node.id !== selected),
       edges: current.edges.filter((edge) => edge.from !== selected && edge.to !== selected),
-      strokes: current.strokes,
+      strokes: current.strokes.filter((stroke) => stroke.id !== selected),
     }));
     setSelected(null);
   }, [apply, selected]);
 
   const fitContent = useCallback(() => {
     const rect = canvasRef.current?.getBoundingClientRect();
-    const nodes = sceneRef.current.nodes;
     if (!rect) return;
-    if (!nodes.length) { setView({ x: rect.width / 2, y: rect.height / 2, k: 1 }); return; }
-    const minX = Math.min(...nodes.map((node) => node.x));
-    const minY = Math.min(...nodes.map((node) => node.y));
-    const maxX = Math.max(...nodes.map((node) => node.x + node.w));
-    const maxY = Math.max(...nodes.map((node) => node.y + node.h));
+    const points = [
+      ...sceneRef.current.nodes.flatMap((node) => [[node.x, node.y], [node.x + node.w, node.y + node.h]]),
+      ...sceneRef.current.strokes.flatMap((stroke) => stroke.pts),
+    ];
+    if (!points.length) { setView({ x: rect.width / 2, y: rect.height / 2, k: 1 }); return; }
+    const minX = Math.min(...points.map(([x]) => x));
+    const minY = Math.min(...points.map(([, y]) => y));
+    const maxX = Math.max(...points.map(([x]) => x));
+    const maxY = Math.max(...points.map(([, y]) => y));
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
     const k = Math.min(1.35, Math.max(0.2, Math.min((rect.width - 180) / width, (rect.height - 180) / height)));
@@ -293,6 +316,15 @@ export default function ProjectBoard({
       setScene((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === active.id ? { ...node, w: Math.max(90, (active.w ?? node.w) + dx), h: Math.max(48, (active.h ?? node.h) + dy) } : node) }));
       return;
     }
+    if (active?.type === "stroke" && active.id) {
+      const point = toWorld(event.clientX, event.clientY);
+      const dx = point.x - active.ox;
+      const dy = point.y - active.oy;
+      setScene((current) => ({ ...current, strokes: current.strokes.map((stroke) => stroke.id === active.id ? { ...stroke, pts: stroke.pts.map(([x, y]) => [x + dx, y + dy]) } : stroke) }));
+      active.ox = point.x;
+      active.oy = point.y;
+      return;
+    }
     if (currentStroke.current) {
       const point = toWorld(event.clientX, event.clientY);
       currentStroke.current.pts.push([point.x, point.y]);
@@ -301,10 +333,21 @@ export default function ProjectBoard({
   }
 
   function onPointerUp() {
-    if (gesture.current?.type === "node" || gesture.current?.type === "resize" || currentStroke.current) save(sceneRef.current);
+    if (gesture.current?.type === "node" || gesture.current?.type === "resize" || gesture.current?.type === "stroke" || currentStroke.current) save(sceneRef.current);
     gesture.current = null;
     currentStroke.current = null;
     interacting.current = false;
+  }
+
+  function onStrokeDown(event: React.PointerEvent<SVGPolylineElement>, stroke: Stroke) {
+    event.stopPropagation();
+    if (tool !== "select") return;
+    const point = toWorld(event.clientX, event.clientY);
+    history.current.push(cloneScene(sceneRef.current)); future.current = [];
+    interacting.current = true;
+    setSelected(stroke.id);
+    gesture.current = { type: "stroke", id: stroke.id, sx: event.clientX, sy: event.clientY, ox: point.x, oy: point.y };
+    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function onNodeDown(event: React.PointerEvent, node: Node) {
@@ -354,6 +397,7 @@ export default function ProjectBoard({
   }, [deleteSelected, duplicateSelected, redo, selected, undo]);
 
   const selectedNode = useMemo(() => scene.nodes.find((node) => node.id === selected) ?? null, [scene.nodes, selected]);
+  const selectedStroke = useMemo(() => scene.strokes.find((stroke) => stroke.id === selected) ?? null, [scene.strokes, selected]);
   const minimap = useMemo(() => {
     if (!scene.nodes.length) return null;
     const minX = Math.min(...scene.nodes.map((node) => node.x));
@@ -376,7 +420,7 @@ export default function ProjectBoard({
   }
 
   return (
-    <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden bg-[#0b0d12] text-slate-100">
+    <div ref={boardRef} className="fixed inset-0 z-[150] flex flex-col overflow-hidden bg-[#0b0d12] text-slate-100">
       <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-white/10 bg-[#12151d]/95 px-2.5 shadow-xl backdrop-blur-xl sm:px-4">
         <button onClick={onBack} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white" title="Voltar aos projetos">
           <ArrowLeft size={18} /><span className="hidden sm:inline">Projetos</span>
@@ -414,6 +458,9 @@ export default function ProjectBoard({
             const blob = new Blob([JSON.stringify(sceneRef.current, null, 2)], { type: "application/json" });
             const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-quadro.json`; anchor.click(); URL.revokeObjectURL(anchor.href);
           }} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Baixar cópia do quadro"><Download size={17} /></button>
+          <button onClick={() => void toggleFullscreen()} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title={fullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"} aria-label={fullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"}>
+            {fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+          </button>
         </div>
       </header>
 
@@ -441,13 +488,13 @@ export default function ProjectBoard({
           ))}
         </aside>
 
-        {selectedNode && (
+        {(selectedNode || selectedStroke) && (
           <div className="absolute left-1/2 top-3 z-20 flex max-w-[calc(100vw-150px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/10 bg-[#171a23]/95 p-1.5 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center gap-1 px-1">
-              {COLORS.map((item) => <button key={item} onClick={() => { setColor(item); apply((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, color: item } : node) })); }} className={`h-5 w-5 shrink-0 rounded-full transition hover:scale-110 ${selectedNode.color === item ? "ring-2 ring-white ring-offset-2 ring-offset-[#171a23]" : ""}`} style={{ background: item }} aria-label={`Usar cor ${item}`} />)}
+              {COLORS.map((item) => <button key={item} onClick={() => { setColor(item); apply((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selected ? { ...node, color: item } : node), strokes: current.strokes.map((stroke) => stroke.id === selected ? { ...stroke, color: item } : stroke) })); }} className={`h-5 w-5 shrink-0 rounded-full transition hover:scale-110 ${(selectedNode?.color ?? selectedStroke?.color) === item ? "ring-2 ring-white ring-offset-2 ring-offset-[#171a23]" : ""}`} style={{ background: item }} aria-label={`Usar cor ${item}`} />)}
             </div>
             <div className="mx-1 h-6 w-px shrink-0 bg-white/10" />
-            <button onClick={() => addBranch(selectedNode.id)} className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:bg-white/10" title="Criar ramificação"><Plus size={14} /> Ramificar</button>
+            {selectedNode && <button onClick={() => addBranch(selectedNode.id)} className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:bg-white/10" title="Criar ramificação"><Plus size={14} /> Ramificar</button>}
             <button onClick={duplicateSelected} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Duplicar (Ctrl+D)"><Copy size={15} /></button>
             <button onClick={deleteSelected} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-500/15 hover:text-red-300" title="Excluir"><Trash2 size={15} /></button>
           </div>
@@ -459,7 +506,7 @@ export default function ProjectBoard({
           className="absolute inset-0 touch-none select-none overflow-hidden bg-[#0d1017]"
           style={{ cursor: spacePressed || tool === "hand" ? "grab" : tool === "pen" || tool === "connect" || tool === "shape" || tool === "sticky" || tool === "text" ? "crosshair" : "default", backgroundImage: grid ? "radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1.2px)" : "none", backgroundSize: `${24 * view.k}px ${24 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}>
           <div data-canvas="1" className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, transformOrigin: "0 0" }}>
-            <svg data-canvas="1" className="pointer-events-none absolute overflow-visible" style={{ width: 1, height: 1 }}>
+            <svg data-canvas="1" className="absolute overflow-visible" style={{ width: 1, height: 1 }}>
               <defs>{COLORS.map((item, index) => <marker key={item} id={`arrow-${index}`} markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill={item} /></marker>)}</defs>
               {scene.edges.map((edge) => {
                 const from = scene.nodes.find((node) => node.id === edge.from);
@@ -467,9 +514,17 @@ export default function ProjectBoard({
                 if (!from || !to) return null;
                 const edgeColor = edge.color ?? from.color ?? COLORS[7];
                 const colorIndex = Math.max(0, COLORS.indexOf(edgeColor));
-                return <path key={edge.id} d={edgePath(from, to)} fill="none" stroke={edgeColor} strokeWidth={2.5} strokeDasharray={edge.dashed ? "8 7" : undefined} opacity={0.8} markerEnd={`url(#arrow-${colorIndex})`} />;
+                return <path key={edge.id} d={edgePath(from, to)} fill="none" stroke={edgeColor} strokeWidth={2.5} strokeDasharray={edge.dashed ? "8 7" : undefined} opacity={0.8} markerEnd={`url(#arrow-${colorIndex})`} pointerEvents="none" />;
               })}
-              {scene.strokes.map((stroke) => <polyline key={stroke.id} points={stroke.pts.map((point) => point.join(",")).join(" ")} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" />)}
+              {scene.strokes.map((stroke) => {
+                const points = stroke.pts.map((point) => point.join(",")).join(" ");
+                const isSelected = selected === stroke.id;
+                return <g key={stroke.id}>
+                  {isSelected && <polyline points={points} fill="none" stroke="white" strokeWidth={stroke.width + 6} strokeLinecap="round" strokeLinejoin="round" opacity={.7} pointerEvents="none" strokeDasharray="8 5" />}
+                  <polyline points={points} fill="none" stroke="transparent" strokeWidth={Math.max(16, stroke.width + 12)} strokeLinecap="round" strokeLinejoin="round" pointerEvents="stroke" onPointerDown={(event) => onStrokeDown(event, stroke)} style={{ cursor: tool === "select" ? "move" : "crosshair" }} />
+                  <polyline points={points} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+                </g>;
+              })}
             </svg>
 
             {scene.nodes.map((node) => {
