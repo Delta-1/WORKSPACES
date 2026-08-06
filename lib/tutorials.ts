@@ -44,6 +44,15 @@ export const TUTORIALS: Record<string, Tutorial> = {
     ],
   },
 
+  mundo: {
+    titulo: "Mundo — informações essenciais",
+    passos: [
+      { titulo: "Radar global", texto: "Veja no mapa eventos naturais ativos, como tempestades, incêndios, vulcões e inundações, com dados quase em tempo real." },
+      { titulo: "Filtre e investigue", texto: "Escolha o período e a categoria, pesquise eventos e abra as fontes originais para entender cada ocorrência." },
+      { titulo: "Também na tela inicial", texto: "O Pulso do mundo resume os acontecimentos mais recentes na Home e no Modo TV. Novas fontes de notícias poderão entrar nesse mesmo painel." },
+    ],
+  },
+
   mensagens: {
     titulo: "Mensagens — o WhatsApp da empresa",
     passos: [
