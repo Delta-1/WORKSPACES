@@ -322,6 +322,34 @@ async function runBrainSync() {
   }
 }
 
+// Links de Group: o banco é apenas intermediário; a cópia durável vira arquivo
+// JSON dentro do servidor, sem usar nenhum bucket do Supabase Storage.
+let shortcutSyncBusy = false;
+async function runWorkspaceShortcutSync() {
+  if (shortcutSyncBusy || !serverRoot || !supabase || !cfg?.agentId) return;
+  shortcutSyncBusy = true;
+  try {
+    const { data, error } = await supabase.rpc("agent_workspace_shortcuts", {
+      p_agent_id: cfg.agentId,
+      p_access_code: cfg.accessCode,
+    });
+    if (error) return;
+    const shortcuts = data || [];
+    const result = await ipcRenderer.invoke("server-shortcuts-sync", { root: serverRoot, shortcuts });
+    if (result?.ok && shortcuts.length) {
+      await supabase.rpc("agent_mark_workspace_shortcuts_synced", {
+        p_agent_id: cfg.agentId,
+        p_access_code: cfg.accessCode,
+        p_ids: shortcuts.map((item) => item.id),
+      });
+    }
+  } catch {
+    /* tenta novamente no próximo ciclo */
+  } finally {
+    shortcutSyncBusy = false;
+  }
+}
+
 // Espelha a árvore de pastas/arquivos do servidor no grafo do site (ao vivo) e
 // sobe o conteúdo dos arquivos ao company-files (para abrir/baixar e a IA usar).
 let graphSyncBusy = false;
@@ -330,7 +358,10 @@ async function runServerGraphSync() {
   if (graphSyncBusy || !serverRoot || !serverGraphFolder || !supabase || !cfg?.agentId) return;
   graphSyncBusy = true;
   try {
-    const entries = await ipcRenderer.invoke("server-tree", serverRoot);
+    const allEntries = await ipcRenderer.invoke("server-tree", serverRoot);
+    // Atalhos já possuem nós próprios e não têm conteúdo para upload. Mantê-los
+    // fora deste sincronizador impede qualquer uso do Supabase Storage.
+    const entries = (allEntries || []).filter((entry) => !String(entry.rel || "").endsWith(".workspace-link.json"));
     for (const e of entries || []) {
       if (e.dir) continue;
       const objectPath = `srv/${cfg.agentId}/${e.rel}`.replace(/[^\w./-]/g, "_");
@@ -487,6 +518,8 @@ async function startAgent() {
   setInterval(runAutomations, 60000); // rotinas de automação (a cada 1 min)
   runBrainSync();
   setInterval(runBrainSync, 180000); // espelha o cérebro da IA (a cada 3 min)
+  runWorkspaceShortcutSync();
+  setInterval(runWorkspaceShortcutSync, 30000); // materializa links de Group no servidor
   runServerGraphSync();
   setInterval(runServerGraphSync, 45000); // espelha as pastas do servidor no grafo
   runServerFsOps();

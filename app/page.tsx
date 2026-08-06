@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -50,13 +50,17 @@ import ContactsTab from "@/components/tabs/ContactsTab";
 import MemoriesTab from "@/components/tabs/MemoriesTab";
 import NewConversationNotifier from "@/components/NewConversationNotifier";
 import AutoDriveSync from "@/components/AutoDriveSync";
+import ShortcutCreator from "@/components/ShortcutCreator";
+import LinksTab from "@/components/tabs/LinksTab";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
+import { openWorkspaceShortcut, type WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from "@/lib/company";
 import type { Company, Profile, Role } from "@/lib/types";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 export type DockPosition = "bottom" | "top" | "left" | "right";
-export type AnimStyle = "mac" | "windows" | "fun" | "none";
+export type OsTheme = "mac" | "windows" | "linux";
+export type AnimStyle = "mac" | "windows" | "linux" | "fun" | "none";
 
 const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -73,6 +77,7 @@ const APPS: AppDef[] = [
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "links", label: "Links", icon: ExternalLink, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mural", label: "Mural", icon: Megaphone, accent: "bg-orange-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "funcionarios", label: "Funcionários", icon: Users, accent: "bg-teal-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "financeiro", label: "Financeiro", icon: Wallet, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -127,6 +132,7 @@ export default function Home() {
   const [tutorial, setTutorial] = useState<string | null>(null);
   // A barra de apps pode ir para qualquer lado — preferência de cada pessoa.
   const [dockPosition, setDockPosition] = useState<DockPosition>("bottom");
+  const [osTheme, setOsTheme] = useState<OsTheme>("mac");
   const [animStyle, setAnimStyle] = useState<AnimStyle>("mac");
   // Janelas flutuantes abertas (abrir Kanban e Calendário ao mesmo tempo).
   const [janelas, setJanelas] = useState<{ id: string; z: number; min: boolean }[]>([]);
@@ -135,6 +141,8 @@ export default function Home() {
   const [appMenu, setAppMenu] = useState<{ id: string; label: string; x: number; y: number; fixado: boolean } | null>(null);
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [shortcutCreatorOpen, setShortcutCreatorOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState<WorkspaceShortcut[]>([]);
   const [copilotPushToTalk, setCopilotPushToTalk] = useState(false);
   const copilotVoiceHeldRef = useRef(false);
   const [editApps, setEditApps] = useState(false); // modo edição (lápis) do menu de apps
@@ -160,6 +168,15 @@ export default function Home() {
     description: null,
     remoteAgentUrl: null,
   });
+
+  useEffect(() => {
+    const openApp = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (id) { setTab(id); setDrawerOpen(false); }
+    };
+    window.addEventListener("workspace-open-app", openApp);
+    return () => window.removeEventListener("workspace-open-app", openApp);
+  }, []);
 
   const role: Role = profile?.role ?? "gestor";
   const isAuthenticated = Boolean(profile) || Boolean(demoUser);
@@ -439,7 +456,7 @@ export default function Home() {
     if (hasOverride && ta![appId] === false) return false; // bloqueado p/ esta pessoa
     const def = APPS.find((a) => a.id === appId);
     const roleOk = !!def && (def.roles.includes(role) || (hasOverride && ta![appId] === true)); // liberado supera o cargo
-    const featOk = superAdmin || appId === "planos" || appEnabled(appId, enabledFeatures); // super admin vê TUDO; empresa precisa ter a ferramenta
+    const featOk = superAdmin || appId === "planos" || appId === "links" || appEnabled(appId, enabledFeatures); // super admin vê TUDO; empresa precisa ter a ferramenta
     return roleOk && featOk;
   };
 
@@ -470,13 +487,31 @@ export default function Home() {
     try {
       const p = localStorage.getItem("dock:pos") as DockPosition | null;
       if (p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
+      const os = localStorage.getItem("os:theme") as OsTheme | null;
+      if (os === "mac" || os === "windows" || os === "linux") setOsTheme(os);
       const a = localStorage.getItem("anim:style") as AnimStyle | null;
-      if (a === "mac" || a === "windows" || a === "fun" || a === "none") setAnimStyle(a);
+      if (a === "mac" || a === "windows" || a === "linux" || a === "fun" || a === "none") setAnimStyle(a);
     } catch { /* ignore */ }
   }, []);
 
+  // Atalhos são metadados leves. Links compartilhados são materializados pelo
+  // agente no servidor; aqui carregamos só o índice necessário para abrir rápido.
+  useEffect(() => {
+    if (!supabase || !profile?.id) { setShortcuts([]); return; }
+    const client = supabase;
+    const loadShortcuts = async () => {
+      const { data } = await client.from("workspace_shortcuts").select("*, groups(name)").order("updated_at", { ascending: false });
+      setShortcuts((data as WorkspaceShortcut[]) ?? []);
+    };
+    void loadShortcuts();
+    const changed = () => void loadShortcuts();
+    window.addEventListener("workspace-shortcuts-changed", changed);
+    return () => window.removeEventListener("workspace-shortcuts-changed", changed);
+  }, [profile?.id, profile?.company_id]);
+
   // Aplica o estilo de animação na raiz — o CSS em globals.css faz o resto.
   useEffect(() => { document.documentElement.setAttribute("data-anim", animStyle); }, [animStyle]);
+  useEffect(() => { document.documentElement.setAttribute("data-os-theme", osTheme); }, [osTheme]);
   const mudarAnim = (a: AnimStyle) => { setAnimStyle(a); try { localStorage.setItem("anim:style", a); } catch {} };
   function saveQuick(ids: string[]) {
     setQuickIds(ids);
@@ -488,6 +523,8 @@ export default function Home() {
   }
   const validQuick = quickIds.filter((id) => visibleApps.some((a) => a.id === id));
   const dockApps = validQuick.length ? (validQuick.map((id) => visibleApps.find((a) => a.id === id)!) ) : visibleApps.slice(0, 5);
+  const pinnedShortcuts = shortcuts.filter((shortcut) => shortcut.pin_to_dock && shortcut.scope !== "group").slice(0, 6);
+  const openShortcut = (shortcut: WorkspaceShortcut) => openWorkspaceShortcut(shortcut, (id) => { setTab(id); setDrawerOpen(false); });
 
   // Fixar/desafixar apps na barra (arrastando do menu pra barra, estilo inventário).
   function pinApp(id: string) {
@@ -518,6 +555,13 @@ export default function Home() {
     setAppMenu({ id, label, x, y, fixado: (validQuick.length ? validQuick : dockApps.map((a) => a.id)).includes(id) });
   };
   const mudarDock = (p: DockPosition) => { setDockPosition(p); try { localStorage.setItem("dock:pos", p); } catch {} };
+  const mudarOsTheme = (next: OsTheme) => {
+    setOsTheme(next);
+    try { localStorage.setItem("os:theme", next); } catch {}
+    // Cada tema já nasce com a disposição que lembra o sistema escolhido.
+    mudarDock(next === "linux" ? "left" : "bottom");
+    mudarAnim(next);
+  };
   const abrirJanela = (id: string) => {
     setJanelas((js) => js.some((j) => j.id === id)
       ? js.map((j) => j.id === id ? { ...j, min: false, z: ++zTopo.current } : j)  // já aberta → traz à frente
@@ -544,7 +588,7 @@ export default function Home() {
       case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
       case "kanban": return <KanbanTab profile={profile} />;
       case "calendario": return <CalendarTab profile={profile} />;
-      case "group": return <GroupTab profile={profile} />;
+      case "group": return <GroupTab profile={profile} onOpenApp={(id) => setTab(id)} />;
       // ids antigos ("academico"/"apresentacoes") ainda caem no Estúdio.
       case "estudio": case "academico": case "apresentacoes": return <StudioTab profile={profile} />;
       case "mensagens": return <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />;
@@ -552,6 +596,7 @@ export default function Home() {
       case "atendimentos": return <AtendimentosTab profile={profile} />;
       case "chat": return <ChatTab />;
       case "arquivos": return <FilesGraphTab profile={profile} />;
+      case "links": return <LinksTab profile={profile} onOpenApp={(id) => setTab(id)} onCreate={() => setShortcutCreatorOpen(true)} />;
       case "mural": return <AnnouncementsTab profile={profile} />;
       case "funcionarios": return <EmployeesTab profile={profile} />;
       case "financeiro": return <FinanceTab profile={profile} />;
@@ -579,6 +624,7 @@ export default function Home() {
           photoUrl={company.photoUrl} autoCloseMinutes={company.autoCloseMinutes} description={company.description}
           remoteAgentUrl={company.remoteAgentUrl} onUpdateCompany={handleUpdateCompany} onReplayTutorials={reverTutoriais}
           dockPosition={dockPosition} onDockPosition={mudarDock}
+          osTheme={osTheme} onOsTheme={mudarOsTheme}
           animStyle={animStyle} onAnimStyle={mudarAnim}
         />
       );
@@ -654,8 +700,8 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
-      <header className="h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
+    <div className="workspace-shell h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
+      <header className="workspace-header h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
         <div className="flex items-center gap-3">
           {company.logoDataUrl ? (
             <img
@@ -696,7 +742,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className={`flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
+      <main className={`workspace-main flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
         {/* key={tab} faz a tela re-animar a cada troca de app, no estilo escolhido. */}
         <div key={tab} className="app-anim h-full">{renderApp(tab)}</div>
       </main>
@@ -736,6 +782,9 @@ export default function Home() {
         onReorder={reorderQuick}
         position={dockPosition}
         onContext={abrirAppMenu}
+        shortcuts={pinnedShortcuts}
+        onShortcut={openShortcut}
+        onAddShortcut={() => setShortcutCreatorOpen(true)}
       />
       <AppDrawer
         apps={visibleApps}
@@ -746,7 +795,11 @@ export default function Home() {
         onSelect={setTab}
         quickIds={dockApps.map((a) => a.id)}
         onContext={abrirAppMenu}
+        shortcuts={shortcuts}
+        onShortcut={openShortcut}
+        onAddShortcut={() => { setDrawerOpen(false); setShortcutCreatorOpen(true); }}
       />
+      <ShortcutCreator open={shortcutCreatorOpen} onClose={() => setShortcutCreatorOpen(false)} profile={profile} />
     </div>
   );
 }

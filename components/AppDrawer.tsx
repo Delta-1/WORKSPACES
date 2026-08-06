@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LucideIcon, Pencil, Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { LucideIcon, Pencil, Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import ShortcutIcon from "@/components/ShortcutIcon";
+import type { WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 
 export type AppDef = { id: string; label: string; icon: LucideIcon; accent: string };
 
@@ -14,6 +16,9 @@ export default function AppDrawer({
   onSelect,
   quickIds,
   onContext,
+  shortcuts = [],
+  onShortcut,
+  onAddShortcut,
 }: {
   apps: AppDef[];
   open: boolean;
@@ -23,6 +28,9 @@ export default function AppDrawer({
   onSelect: (id: string) => void;
   quickIds: string[];
   onContext?: (id: string, x: number, y: number) => void;
+  shortcuts?: WorkspaceShortcut[];
+  onShortcut?: (shortcut: WorkspaceShortcut) => void;
+  onAddShortcut?: () => void;
 }) {
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState(20);
@@ -87,19 +95,22 @@ export default function AppDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center backdrop-blur-2xl bg-black/40" onClick={onClose}>
-      <div className="drawer-anim liquid-glass w-full max-w-2xl mb-28 sm:mb-32 rounded-3xl p-5 sm:p-8" onClick={(e) => e.stopPropagation()}>
+    <div className="workspace-drawer-overlay fixed inset-0 z-40 flex items-end justify-center backdrop-blur-2xl bg-black/40" onClick={onClose}>
+      <div className="workspace-drawer drawer-anim liquid-glass w-full max-w-2xl mb-28 sm:mb-32 rounded-3xl p-5 sm:p-8" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-bold text-gray-300">Menu de aplicativos</h3>
-          <button
-            onClick={onToggleEdit}
-            title={editMode ? "Concluir edição" : "Editar barra de atalho"}
-            className={`flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer transition-colors ${
-              editMode ? "bg-emerald-600 text-white" : "bg-white/5 text-gray-300 hover:bg-white/10"
-            }`}
-          >
-            {editMode ? <><Check size={12} /> Concluir</> : <><Pencil size={12} /> Editar</>}
-          </button>
+          <div className="flex items-center gap-2">
+            {onAddShortcut && <button onClick={onAddShortcut} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"><Plus size={12} /> Atalho</button>}
+            <button
+              onClick={onToggleEdit}
+              title={editMode ? "Concluir edição" : "Editar barra de atalho"}
+              className={`flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer transition-colors ${
+                editMode ? "bg-emerald-600 text-white" : "bg-white/5 text-gray-300 hover:bg-white/10"
+              }`}
+            >
+              {editMode ? <><Check size={12} /> Concluir</> : <><Pencil size={12} /> Editar</>}
+            </button>
+          </div>
         </div>
         <p className="text-[11px] text-gray-500 mb-4">
           {editMode ? (
@@ -110,6 +121,17 @@ export default function AppDrawer({
             <>Toque num app para abrir. Toque no <span className="text-emerald-400">lápis</span> para personalizar a barra.</>
           )}
         </p>
+
+        {!editMode && shortcuts.length > 0 && (
+          <div className="mb-4 grid grid-cols-4 gap-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 sm:grid-cols-6">
+            {shortcuts.slice(0, 6).map((shortcut) => (
+              <button key={shortcut.id} onClick={() => { onShortcut?.(shortcut); onClose(); }} className="flex min-w-0 flex-col items-center gap-1.5 rounded-xl p-1.5 hover:bg-white/5" title={shortcut.name}>
+                <ShortcutIcon provider={shortcut.provider} size={20} className="h-10 w-10" />
+                <span className="w-full truncate text-center text-[10px] text-slate-300">{shortcut.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="relative">
           {multi && !editMode && (

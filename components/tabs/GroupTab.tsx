@@ -10,6 +10,9 @@ import {
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import ProjectBoard from "@/components/group/ProjectBoard";
+import ShortcutCreator from "@/components/ShortcutCreator";
+import ShortcutIcon from "@/components/ShortcutIcon";
+import { openWorkspaceShortcut, shortcutChanged, type WorkspaceShortcut } from "@/lib/workspace-shortcuts";
 
 type Group = {
   id: string;
@@ -44,11 +47,11 @@ type Agenda = {
   task_ids?: string[] | null;
 };
 
-type Section = "mural" | "chamada" | "agenda" | "projetos" | "membros";
+type Section = "mural" | "chamada" | "agenda" | "projetos" | "links" | "membros";
 
 type Projeto = { id: string; group_id: string; title: string; updated_at: string };
 
-export default function GroupTab({ profile }: { profile: Profile | null }) {
+export default function GroupTab({ profile, onOpenApp }: { profile: Profile | null; onOpenApp: (id: string) => void }) {
   const me = profile?.id ?? "";
   const [groups, setGroups] = useState<Group[]>([]);
   const [sel, setSel] = useState<Group | null>(null);
@@ -234,18 +237,19 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
         {sel.purpose && <p className="mt-1 text-sm text-slate-400">{sel.purpose}</p>}
       </div>
 
-      <div className="mb-4 flex gap-1 rounded-lg bg-slate-900 p-1">
+      <div className="mb-4 flex gap-1 overflow-x-auto rounded-lg bg-slate-900 p-1 custom-scroll">
         {([
           ["mural", "Mural", Megaphone],
           ["chamada", "Chamada", Video],
           ["agenda", "Agenda", CalendarDays],
           ["projetos", "Projetos", PenTool],
+          ["links", "Links", Link2],
           ["membros", "Membros", Users2],
         ] as [Section, string, typeof Users2][]).map(([id, label, Icon]) => (
           <button
             key={id}
             onClick={() => setSection(id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition ${
+            className={`flex flex-1 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition ${
               section === id ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
             }`}
           >
@@ -258,6 +262,7 @@ export default function GroupTab({ profile }: { profile: Profile | null }) {
       {section === "chamada" && <Chamada group={sel} profile={profile} />}
       {section === "agenda" && <AgendaView group={sel} me={me} />}
       {section === "projetos" && <ProjetosView group={sel} me={me} />}
+      {section === "links" && <GroupLinksView group={sel} profile={profile} onOpenApp={onOpenApp} />}
       {section === "membros" && <Membros group={sel} me={me} onLeaderChange={loadGroups} />}
     </div>
   );
@@ -621,12 +626,17 @@ function Membros({ group, me, onLeaderChange }: { group: Group; me: string; onLe
 
   async function load() {
     if (!supabase) return;
-    const { data } = await supabase
-      .from("group_members")
-      .select("user_id, joined_at, profiles(full_name, email)")
-      .eq("group_id", group.id);
-    const list: Member[] = ((data as unknown as { user_id: string; joined_at: string; profiles: { full_name: string | null; email: string } | null }[]) || [])
-      .map((r) => ({ user_id: r.user_id, joined_at: r.joined_at, full_name: r.profiles?.full_name ?? null, email: r.profiles?.email ?? "" }));
+    const { data, error } = await supabase.rpc("group_member_directory", { p_group_id: group.id });
+    // Compatibilidade enquanto a migração nova ainda não chegou ao banco.
+    let list: Member[] = (data as Member[] | null) ?? [];
+    if (error) {
+      const fallback = await supabase.from("group_members").select("user_id, joined_at").eq("group_id", group.id);
+      const base = (fallback.data as { user_id: string; joined_at: string }[] | null) ?? [];
+      const ids = base.map((item) => item.user_id);
+      const profiles = ids.length ? await supabase.from("profiles").select("id, full_name, email").in("id", ids) : { data: [] };
+      const names = new Map(((profiles.data as { id: string; full_name: string | null; email: string }[] | null) ?? []).map((item) => [item.id, item]));
+      list = base.map((item) => ({ ...item, full_name: names.get(item.user_id)?.full_name ?? null, email: names.get(item.user_id)?.email ?? "Membro do Group" }));
+    }
     setMembers(list);
 
     const { data: votes } = await supabase
@@ -693,6 +703,77 @@ function Membros({ group, me, onLeaderChange }: { group: Group; me: string; onLe
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// LINKS DO GROUP — gerenciados pelo criador/líder e visíveis para todo membro.
+function GroupLinksView({ group, profile, onOpenApp }: { group: Group; profile: Profile | null; onOpenApp: (id: string) => void }) {
+  const [items, setItems] = useState<WorkspaceShortcut[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const canManage = group.created_by === profile?.id || group.leader_id === profile?.id;
+
+  async function load() {
+    if (!supabase) return;
+    const { data } = await supabase.from("workspace_shortcuts").select("*").eq("group_id", group.id).order("updated_at", { ascending: false });
+    setItems((data as WorkspaceShortcut[]) ?? []);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    void load();
+    const changed = () => void load();
+    window.addEventListener("workspace-shortcuts-changed", changed);
+    const channel = supabase?.channel(`group-links:${group.id}`).on("postgres_changes", { event: "*", schema: "public", table: "workspace_shortcuts", filter: `group_id=eq.${group.id}` }, changed).subscribe();
+    return () => { window.removeEventListener("workspace-shortcuts-changed", changed); if (channel) void supabase?.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id]);
+
+  async function remove(item: WorkspaceShortcut) {
+    if (!supabase || !canManage || !confirm(`Remover "${item.name}" deste Group?`)) return;
+    const { error } = await supabase.from("workspace_shortcuts").delete().eq("id", item.id);
+    if (error) { alert(error.message); return; }
+    shortcutChanged();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-bold"><Link2 size={16} className="text-cyan-300" /> Links compartilhados</h3>
+          <p className="mt-1 text-[11px] text-slate-500">Bibliotecas, nuvens e ferramentas disponíveis para todos deste Group.</p>
+        </div>
+        {canManage && <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"><Plus size={14} /> Adicionar link</button>}
+      </div>
+
+      {!canManage && <p className="rounded-xl border border-white/8 bg-white/[0.025] px-3 py-2 text-[11px] text-slate-400"><ShieldCheck size={13} className="mr-1 inline" /> O dono ou líder organiza os links; todos os membros podem abrir.</p>}
+
+      {loading ? <div className="grid place-items-center py-16 text-slate-500"><Loader2 size={20} className="animate-spin" /></div> : items.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/12 py-14 text-center">
+          <Link2 className="mx-auto mb-2 text-slate-600" size={28} />
+          <p className="text-sm font-semibold text-slate-300">Nenhum link compartilhado</p>
+          <p className="mt-1 text-xs text-slate-500">{canManage ? "Adicione uma pasta do Drive, ferramenta ou aplicativo." : "O líder ainda não adicionou nenhum atalho."}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {items.map((item) => (
+            <div key={item.id} className="group relative rounded-2xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-cyan-500/35 hover:bg-white/[0.055]">
+              <button onClick={() => openWorkspaceShortcut(item, onOpenApp)} className="w-full text-left">
+                <ShortcutIcon provider={item.provider} size={22} className="mb-3 h-11 w-11" />
+                <p className="truncate text-sm font-semibold text-white">{item.name}</p>
+                <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-slate-500">{item.description || item.target}</p>
+                <span className={`mt-3 inline-flex rounded-full px-2 py-0.5 text-[9px] ${item.server_status === "synced" ? "bg-emerald-500/10 text-emerald-300" : item.server_status === "waiting_server" ? "bg-amber-500/10 text-amber-300" : "bg-sky-500/10 text-sky-300"}`}>
+                  {item.server_status === "synced" ? "No servidor" : item.server_status === "waiting_server" ? "Aguardando servidor" : "Sincronizando"}
+                </span>
+              </button>
+              {canManage && <button onClick={() => remove(item)} className="absolute right-2 top-2 rounded-lg bg-black/40 p-1.5 text-slate-500 opacity-0 transition hover:bg-red-500/25 hover:text-red-300 group-hover:opacity-100" title="Remover"><Trash2 size={12} /></button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ShortcutCreator open={creating} onClose={() => setCreating(false)} profile={profile} group={{ id: group.id, name: group.name, canManage }} />
     </div>
   );
 }

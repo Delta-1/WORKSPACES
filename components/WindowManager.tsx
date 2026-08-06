@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Minus, Square, X } from "lucide-react";
 
 // GERENCIADOR DE JANELAS — o "desktop" do Workspace.
@@ -43,12 +43,12 @@ export default function WindowManager({
       ))}
 
       {/* barra de tarefas das janelas abertas */}
-      <div className="fixed bottom-2 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 liquid-glass rounded-xl px-2 py-1 max-w-[92vw] overflow-x-auto">
+      <div className="workspace-window-taskbar fixed bottom-2 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 liquid-glass rounded-xl px-2 py-1 max-w-[92vw] overflow-x-auto">
         {windows.map((w) => (
           <button
             key={w.id}
             onClick={() => (w.min ? onMinimize(w.id) : onFocus(w.id))}
-            className={`text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap cursor-pointer ${w.min ? "text-gray-400 hover:bg-white/10" : "bg-white/10 text-white"}`}
+            className={`workspace-window-task text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap cursor-pointer ${w.min ? "text-gray-400 hover:bg-white/10" : "is-active bg-white/10 text-white"}`}
           >
             {titleOf(w.id)}
           </button>
@@ -75,6 +75,19 @@ function FloatingWindow({
   }));
   const drag = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
   const resz = useRef<{ mx: number; my: number; ow: number; oh: number } | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
+
+  function closeAnimated() {
+    if (closing) return;
+    setClosing(true);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    closeTimer.current = setTimeout(onClose, reducedMotion ? 20 : 460);
+  }
 
   function onMove(e: React.PointerEvent) {
     if (drag.current) {
@@ -96,7 +109,7 @@ function FloatingWindow({
   return (
     <div
       onPointerDown={onFocus}
-      className="app-anim fixed rounded-xl border border-white/15 bg-[#0b0f16] shadow-2xl flex flex-col overflow-hidden"
+      className={`workspace-window app-anim fixed rounded-xl border border-white/15 bg-[#0b0f16] shadow-2xl flex flex-col overflow-hidden ${closing ? "is-closing" : ""} ${rect.max ? "is-maximized" : ""}`}
       style={estilo}
     >
       {/* barra de título — arrasta a janela */}
@@ -105,16 +118,18 @@ function FloatingWindow({
         onPointerMove={onMove}
         onPointerUp={soltar}
         onDoubleClick={() => setRect((r) => ({ ...r, max: !r.max }))}
-        className="h-9 shrink-0 flex items-center gap-2 px-2 bg-white/5 border-b border-white/10 cursor-move select-none"
+        className="workspace-window-titlebar h-9 shrink-0 flex items-center gap-2 px-2 bg-white/5 border-b border-white/10 cursor-move select-none"
       >
-        <span className="text-[12px] font-semibold truncate flex-1 px-1">{title}</span>
-        <button onClick={onMinimize} className="p-1 rounded hover:bg-white/10 text-gray-400 cursor-pointer" title="Minimizar"><Minus size={13} /></button>
-        <button onClick={() => setRect((r) => ({ ...r, max: !r.max }))} className="p-1 rounded hover:bg-white/10 text-gray-400 cursor-pointer" title="Maximizar"><Square size={12} /></button>
-        <button onClick={onClose} className="p-1 rounded hover:bg-red-500/70 text-gray-400 hover:text-white cursor-pointer" title="Fechar"><X size={14} /></button>
+        <span className="workspace-window-title text-[12px] font-semibold truncate flex-1 px-1">{title}</span>
+        <div className="workspace-window-controls flex items-center">
+          <button onPointerDown={(e) => e.stopPropagation()} onClick={onMinimize} className="workspace-window-control is-minimize p-1 rounded text-gray-400 cursor-pointer" title="Minimizar" aria-label="Minimizar"><Minus size={13} /></button>
+          <button onPointerDown={(e) => e.stopPropagation()} onClick={() => setRect((r) => ({ ...r, max: !r.max }))} className="workspace-window-control is-maximize p-1 rounded text-gray-400 cursor-pointer" title={rect.max ? "Restaurar" : "Maximizar"} aria-label={rect.max ? "Restaurar" : "Maximizar"}><Square size={12} /></button>
+          <button onPointerDown={(e) => e.stopPropagation()} onClick={closeAnimated} className="workspace-window-control is-close p-1 rounded text-gray-400 cursor-pointer" title="Fechar" aria-label="Fechar"><X size={14} /></button>
+        </div>
       </div>
 
       {/* conteúdo do app */}
-      <div className="flex-1 overflow-auto p-3">{children}</div>
+      <div className="workspace-window-content flex-1 overflow-auto p-3">{children}</div>
 
       {/* alça de redimensionar */}
       {!rect.max && (

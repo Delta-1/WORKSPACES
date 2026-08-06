@@ -479,6 +479,44 @@ ipcMain.handle("server-init", (_e, root) => {
   return base;
 });
 
+// Materializa os atalhos compartilhados dos Groups no disco. O Supabase entrega
+// somente os metadados; estes JSONs locais são a cópia persistente do servidor.
+ipcMain.handle("server-shortcuts-sync", (_e, { root, shortcuts }) => {
+  const safe = (value, fallback) => String(value || fallback).replace(/[\\/:*?"<>|]/g, "_").trim() || fallback;
+  const groupsRoot = path.join(serverBase(root), "Arquivos", "Groups");
+  fs.mkdirSync(groupsRoot, { recursive: true });
+  const expected = new Set();
+  for (const item of shortcuts || []) {
+    const groupDir = path.join(groupsRoot, safe(item.group_name, "Group"));
+    fs.mkdirSync(groupDir, { recursive: true });
+    const dest = path.join(groupDir, `${safe(item.name, "Atalho")}.workspace-link.json`);
+    const payload = {
+      version: 1,
+      id: item.id,
+      name: item.name,
+      description: item.description || null,
+      kind: item.target_kind,
+      target: item.target,
+      provider: item.provider || "link",
+      group: item.group_name || "Group",
+      updated_at: item.updated_at,
+    };
+    fs.writeFileSync(dest, JSON.stringify(payload, null, 2), "utf8");
+    expected.add(path.normalize(dest).toLowerCase());
+  }
+  // Remove apenas atalhos gerenciados pelo Workspaces que deixaram de existir.
+  const prune = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const current = path.join(dir, entry.name);
+      if (entry.isDirectory()) prune(current);
+      else if (entry.name.endsWith(".workspace-link.json") && !expected.has(path.normalize(current).toLowerCase())) fs.unlinkSync(current);
+    }
+  };
+  prune(groupsRoot);
+  return { ok: true, count: expected.size };
+});
+
 // Escreve/atualiza um item do "cérebro" da IA na pasta Cerebro do servidor.
 // O conteúdo textual da base de conhecimento vira um .txt local, para o
 // servidor virar também o banco de dados do cérebro do robô.
