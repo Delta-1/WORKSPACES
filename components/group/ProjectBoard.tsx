@@ -1,317 +1,533 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase-client";
 import {
-  ArrowLeft, Hand, MousePointer2, Pencil, Redo2, Square, Trash2, Type, Undo2, Waypoints, ZoomIn, ZoomOut,
+  ArrowLeft, BoxSelect, Check, ChevronDown, Circle, Copy, Diamond,
+  Download, Focus, Grid3X3, Hand, Lightbulb, Link2, MousePointer2,
+  Pencil, Plus, Redo2, RotateCcw, Shapes, Sparkles, Square, StickyNote,
+  Trash2, Type, Undo2, Waypoints, ZoomIn, ZoomOut,
 } from "lucide-react";
 
-// QUADRO DE PROJETO — a tela infinita, estilo Miro, dentro do Group.
-//
-// Feito para desenhar durante a reunião: caixas de mapa mental, setas de
-// fluxograma, texto e caneta livre, numa tela que dá para arrastar e dar zoom
-// sem fim. Tudo é guardado como um JSON só (a "cena") e sincronizado em tempo
-// real — quando um colega mexe, aparece na sua tela.
-//
-// Como a coordenada funciona: cada elemento tem posição no MUNDO (infinito). O
-// que a gente vê é o mundo transladado (pan) e escalado (zoom). Converter tela
-// → mundo é `(tela - pan) / zoom`; é isso que faz o desenho cair no lugar certo
-// independimente de onde a tela está.
-
-type Node = { id: string; x: number; y: number; w: number; h: number; text: string; color: string; kind: "box" | "text" };
-type Edge = { id: string; from: string; to: string };
+type NodeKind = "box" | "text" | "sticky" | "ellipse" | "diamond";
+type Node = { id: string; x: number; y: number; w: number; h: number; text: string; color: string; kind: NodeKind };
+type Edge = { id: string; from: string; to: string; color?: string; dashed?: boolean };
 type Stroke = { id: string; color: string; width: number; pts: number[][] };
 type Scene = { nodes: Node[]; edges: Edge[]; strokes: Stroke[] };
+type Tool = "select" | "hand" | "pen" | "sticky" | "shape" | "text" | "connect";
+type View = { x: number; y: number; k: number };
 
-type Tool = "select" | "hand" | "pen" | "box" | "text" | "connect";
-
-const CORES = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#38bdf8", "#f43f5e", "#a855f7", "#64748b"];
+const COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#f43f5e", "#f59e0b", "#10b981", "#06b6d4", "#64748b"];
 const uid = () => Math.random().toString(36).slice(2, 10);
-const cenaVazia = (): Scene => ({ nodes: [], edges: [], strokes: [] });
+const emptyScene = (): Scene => ({ nodes: [], edges: [], strokes: [] });
 
-function normalizar(s: unknown): Scene {
-  const o = (s ?? {}) as Partial<Scene>;
+function normalizeScene(raw: unknown): Scene {
+  const value = (raw ?? {}) as Partial<Scene>;
   return {
-    nodes: Array.isArray(o.nodes) ? o.nodes : [],
-    edges: Array.isArray(o.edges) ? o.edges : [],
-    strokes: Array.isArray(o.strokes) ? o.strokes : [],
+    nodes: Array.isArray(value.nodes) ? value.nodes.map((node) => ({ ...node, kind: node.kind ?? "box" })) : [],
+    edges: Array.isArray(value.edges) ? value.edges : [],
+    strokes: Array.isArray(value.strokes) ? value.strokes : [],
   };
+}
+
+function cloneScene(scene: Scene): Scene {
+  return JSON.parse(JSON.stringify(scene)) as Scene;
+}
+
+function nodeCenter(node: Node) {
+  return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+}
+
+function edgePath(from: Node, to: Node) {
+  const a = nodeCenter(from);
+  const b = nodeCenter(to);
+  const bend = Math.max(70, Math.abs(b.x - a.x) * 0.48);
+  const direction = b.x >= a.x ? 1 : -1;
+  return `M ${a.x} ${a.y} C ${a.x + bend * direction} ${a.y}, ${b.x - bend * direction} ${b.y}, ${b.x} ${b.y}`;
 }
 
 export default function ProjectBoard({
   projectId, title, meId, onBack,
 }: { projectId: string; title: string; meId: string; onBack: () => void }) {
-  const [scene, setScene] = useState<Scene>(cenaVazia);
-  const [view, setView] = useState({ x: 0, y: 0, k: 1 }); // pan x/y e zoom k
+  const [scene, setScene] = useState<Scene>(emptyScene);
+  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [tool, setTool] = useState<Tool>("select");
-  const [cor, setCor] = useState(CORES[0]);
-  const [sel, setSel] = useState<string | null>(null);
-  const [conectDe, setConectDe] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
+  const [color, setColor] = useState(COLORS[0]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [grid, setGrid] = useState(true);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [shapeMenu, setShapeMenu] = useState(false);
+  const [shapeKind, setShapeKind] = useState<NodeKind>("box");
+  const [spacePressed, setSpacePressed] = useState(false);
 
-  const wrapRef = useRef<HTMLDivElement>(null);
-  // Refs para o que muda a cada frame de arraste — sem re-render no meio do gesto.
-  const gesto = useRef<{ tipo: string; id?: string; ox: number; oy: number; nx: number; ny: number } | null>(null);
-  const strokeAtual = useRef<Stroke | null>(null);
-  const interagindo = useRef(false); // trava o merge do tempo real enquanto desenho
-  const historico = useRef<Scene[]>([]);
-  const futuro = useRef<Scene[]>([]);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{ type: "pan" | "node" | "resize"; id?: string; sx: number; sy: number; ox: number; oy: number; w?: number; h?: number } | null>(null);
+  const currentStroke = useRef<Stroke | null>(null);
+  const interacting = useRef(false);
+  const history = useRef<Scene[]>([]);
+  const future = useRef<Scene[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Espelho da cena para os handlers de ponteiro lerem o estado atual sem virar
-  // dependência (senão cada traço recriaria os callbacks). Sincronizado por
-  // efeito — escrever ref no corpo do render é o que o compilador proíbe.
   const sceneRef = useRef(scene);
-  useEffect(() => { sceneRef.current = scene; }, [scene]);
+  const viewRef = useRef(view);
 
-  // ── carregar + tempo real ────────────────────────────────────────────────
+  useEffect(() => { sceneRef.current = scene; }, [scene]);
+  useEffect(() => { viewRef.current = view; }, [view]);
+
   useEffect(() => {
-    let vivo = true;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
     void supabase?.from("group_projects").select("scene").eq("id", projectId).maybeSingle().then(({ data }) => {
-      if (vivo && data) setScene(normalizar(data.scene));
+      if (alive && data) setScene(normalizeScene(data.scene));
     });
-    const ch = supabase?.channel(`board:${projectId}`).on(
+    const channel = supabase?.channel(`board:${projectId}`).on(
       "postgres_changes",
       { event: "UPDATE", schema: "public", table: "group_projects", filter: `id=eq.${projectId}` },
       (payload) => {
-        // Não sobrescreve enquanto a pessoa está desenhando — senão o traço some
-        // no meio. Quando ela solta, o próximo evento reconcilia.
-        if (interagindo.current) return;
-        const nova = normalizar((payload.new as { scene: unknown }).scene);
-        setScene(nova);
-      }
+        if (!interacting.current) setScene(normalizeScene((payload.new as { scene: unknown }).scene));
+      },
     ).subscribe();
-    return () => { vivo = false; if (ch) void supabase?.removeChannel(ch); };
+    return () => { alive = false; if (channel) void supabase?.removeChannel(channel); };
   }, [projectId]);
 
-  // ── salvar (debounce) ──────────────────────────────────────────────────────
-  const salvar = useCallback((s: Scene) => {
+  const save = useCallback((next: Scene) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaved(false);
     saveTimer.current = setTimeout(async () => {
-      setSalvando(true);
-      await supabase?.from("group_projects").update({ scene: s, updated_by: meId, updated_at: new Date().toISOString() }).eq("id", projectId);
-      setSalvando(false);
-    }, 500);
-  }, [projectId, meId]);
+      setSaving(true);
+      await supabase?.from("group_projects").update({
+        scene: next, updated_by: meId, updated_at: new Date().toISOString(),
+      }).eq("id", projectId);
+      setSaving(false);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1200);
+    }, 450);
+  }, [meId, projectId]);
 
-  // Aplica uma mudança: empilha no histórico (para desfazer), atualiza e agenda o save.
-  const aplicar = useCallback((mut: (s: Scene) => Scene, registra = true) => {
-    setScene((atual) => {
-      if (registra) { historico.current.push(atual); if (historico.current.length > 60) historico.current.shift(); futuro.current = []; }
-      const nova = mut(atual);
-      salvar(nova);
-      return nova;
+  const apply = useCallback((mutate: (current: Scene) => Scene, register = true) => {
+    setScene((current) => {
+      if (register) {
+        history.current.push(cloneScene(current));
+        if (history.current.length > 80) history.current.shift();
+        future.current = [];
+      }
+      const next = mutate(current);
+      save(next);
+      return next;
     });
-  }, [salvar]);
+  }, [save]);
 
-  const desfazer = () => {
-    const ant = historico.current.pop();
-    if (!ant) return;
-    futuro.current.push(sceneRef.current);
-    setScene(ant); salvar(ant);
-  };
-  const refazer = () => {
-    const prox = futuro.current.pop();
-    if (!prox) return;
-    historico.current.push(sceneRef.current);
-    setScene(prox); salvar(prox);
-  };
+  const undo = useCallback(() => {
+    const previous = history.current.pop();
+    if (!previous) return;
+    future.current.push(cloneScene(sceneRef.current));
+    setScene(previous); save(previous); setSelected(null);
+  }, [save]);
 
-  // ── coordenadas ────────────────────────────────────────────────────────────
-  const paraMundo = (cx: number, cy: number) => {
-    const r = wrapRef.current!.getBoundingClientRect();
-    return { x: (cx - r.left - view.x) / view.k, y: (cy - r.top - view.y) / view.k };
-  };
+  const redo = useCallback(() => {
+    const next = future.current.pop();
+    if (!next) return;
+    history.current.push(cloneScene(sceneRef.current));
+    setScene(next); save(next); setSelected(null);
+  }, [save]);
 
-  // ── zoom na direção do cursor ────────────────────────────────────────────────
-  function onWheel(e: React.WheelEvent) {
-    e.preventDefault();
-    const r = wrapRef.current!.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const fator = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const k = Math.min(3, Math.max(0.2, view.k * fator));
-    // Mantém o ponto sob o cursor fixo ao dar zoom.
-    setView((v) => ({ k, x: mx - (mx - v.x) * (k / v.k), y: my - (my - v.y) * (k / v.k) }));
+  const toWorld = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const currentView = viewRef.current;
+    return {
+      x: (clientX - rect.left - currentView.x) / currentView.k,
+      y: (clientY - rect.top - currentView.y) / currentView.k,
+    };
+  }, []);
+
+  const createNode = useCallback((kind: NodeKind, x: number, y: number, text?: string, nodeColor = color) => {
+    const sizes: Record<NodeKind, [number, number]> = {
+      box: [180, 86], text: [180, 56], sticky: [170, 150], ellipse: [170, 100], diamond: [150, 120],
+    };
+    const [w, h] = sizes[kind];
+    const defaults: Record<NodeKind, string> = {
+      box: "Nova ideia", text: "Digite um texto", sticky: "Nota", ellipse: "Tópico", diamond: "Decisão",
+    };
+    const node: Node = { id: uid(), x: x - w / 2, y: y - h / 2, w, h, text: text ?? defaults[kind], color: nodeColor, kind };
+    apply((current) => ({ ...current, nodes: [...current.nodes, node] }));
+    setSelected(node.id);
+    return node;
+  }, [apply, color]);
+
+  const addBranch = useCallback((sourceId: string) => {
+    const source = sceneRef.current.nodes.find((node) => node.id === sourceId);
+    if (!source) return;
+    const siblings = sceneRef.current.edges.filter((edge) => edge.from === sourceId).length;
+    const node: Node = {
+      id: uid(), x: source.x + source.w + 150, y: source.y + siblings * 115 - Math.max(0, siblings - 1) * 35,
+      w: 180, h: 86, text: "Novo tópico", color: COLORS[(siblings + 1) % COLORS.length], kind: "box",
+    };
+    const edge: Edge = { id: uid(), from: source.id, to: node.id, color: source.color };
+    apply((current) => ({ ...current, nodes: [...current.nodes, node], edges: [...current.edges, edge] }));
+    setSelected(node.id);
+  }, [apply]);
+
+  const duplicateSelected = useCallback(() => {
+    const node = sceneRef.current.nodes.find((item) => item.id === selected);
+    if (!node) return;
+    const copy = { ...node, id: uid(), x: node.x + 32, y: node.y + 32 };
+    apply((current) => ({ ...current, nodes: [...current.nodes, copy] }));
+    setSelected(copy.id);
+  }, [apply, selected]);
+
+  const deleteSelected = useCallback(() => {
+    if (!selected) return;
+    apply((current) => ({
+      nodes: current.nodes.filter((node) => node.id !== selected),
+      edges: current.edges.filter((edge) => edge.from !== selected && edge.to !== selected),
+      strokes: current.strokes,
+    }));
+    setSelected(null);
+  }, [apply, selected]);
+
+  const fitContent = useCallback(() => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const nodes = sceneRef.current.nodes;
+    if (!rect) return;
+    if (!nodes.length) { setView({ x: rect.width / 2, y: rect.height / 2, k: 1 }); return; }
+    const minX = Math.min(...nodes.map((node) => node.x));
+    const minY = Math.min(...nodes.map((node) => node.y));
+    const maxX = Math.max(...nodes.map((node) => node.x + node.w));
+    const maxY = Math.max(...nodes.map((node) => node.y + node.h));
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const k = Math.min(1.35, Math.max(0.2, Math.min((rect.width - 180) / width, (rect.height - 180) / height)));
+    setView({ x: rect.width / 2 - (minX + width / 2) * k, y: rect.height / 2 - (minY + height / 2) * k, k });
+  }, []);
+
+  const addTemplate = useCallback((template: "mind" | "flow" | "retro") => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const center = toWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    let nodes: Node[] = [];
+    let edges: Edge[] = [];
+    if (template === "mind") {
+      const root: Node = { id: uid(), x: center.x - 100, y: center.y - 48, w: 200, h: 96, text: "Tema central", color: COLORS[0], kind: "ellipse" };
+      const labels = ["Objetivos", "Ideias", "Recursos", "Próximos passos"];
+      nodes = [root, ...labels.map((label, index) => ({ id: uid(), x: center.x + (index % 2 ? 270 : -450), y: center.y + (Math.floor(index / 2) * 180 - 120), w: 180, h: 86, text: label, color: COLORS[index + 2], kind: "box" as const }))];
+      edges = nodes.slice(1).map((node) => ({ id: uid(), from: root.id, to: node.id, color: node.color }));
+    } else if (template === "flow") {
+      const labels: [string, NodeKind][] = [["Início", "ellipse"], ["Etapa do processo", "box"], ["Decisão?", "diamond"], ["Resultado", "ellipse"]];
+      nodes = labels.map(([label, kind], index) => ({ id: uid(), x: center.x - 360 + index * 250, y: center.y - 55, w: kind === "diamond" ? 150 : 175, h: kind === "diamond" ? 120 : 90, text: label, color: COLORS[index], kind }));
+      edges = nodes.slice(0, -1).map((node, index) => ({ id: uid(), from: node.id, to: nodes[index + 1].id, color: COLORS[index] }));
+    } else {
+      const labels = ["Funcionou bem", "Pode melhorar", "Novas ideias"];
+      nodes = labels.flatMap((label, column) => {
+        const header: Node = { id: uid(), x: center.x - 360 + column * 250, y: center.y - 150, w: 220, h: 64, text: label, color: COLORS[[5, 4, 0][column]], kind: "box" };
+        const note: Node = { id: uid(), x: header.x + 25, y: center.y - 50, w: 170, h: 150, text: "Adicione uma nota", color: header.color, kind: "sticky" };
+        return [header, note];
+      });
+    }
+    apply((current) => ({ ...current, nodes: [...current.nodes, ...nodes], edges: [...current.edges, ...edges] }));
+    setTemplatesOpen(false);
+    window.setTimeout(fitContent, 60);
+  }, [apply, fitContent, toWorld]);
+
+  function onWheel(event: React.WheelEvent) {
+    event.preventDefault();
+    const rect = canvasRef.current!.getBoundingClientRect();
+    if (event.ctrlKey || event.metaKey || Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const factor = Math.exp(-event.deltaY * 0.0013);
+      setView((current) => {
+        const k = Math.min(4, Math.max(0.15, current.k * factor));
+        return { k, x: mx - (mx - current.x) * (k / current.k), y: my - (my - current.y) * (k / current.k) };
+      });
+    } else {
+      setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
+    }
   }
 
-  // ── pointer ──────────────────────────────────────────────────────────────────
-  function onDownCanvas(e: React.PointerEvent) {
-    if (e.button === 1 || tool === "hand" || (tool === "select" && e.button === 0 && (e.target === e.currentTarget || (e.target as HTMLElement).dataset.canvas))) {
-      if (tool !== "hand" && tool !== "select") return;
-    }
-    const alvoVazio = (e.target as HTMLElement).dataset.canvas === "1";
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-
-    // Pan: mão, botão do meio, ou clique no vazio com a seta.
-    if (tool === "hand" || e.button === 1 || (tool === "select" && alvoVazio)) {
-      gesto.current = { tipo: "pan", ox: e.clientX, oy: e.clientY, nx: view.x, ny: view.y };
+  function onCanvasDown(event: React.PointerEvent) {
+    const target = event.target as HTMLElement;
+    const blank = target.dataset.canvas === "1";
+    if (!blank) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    if (tool === "hand" || spacePressed || event.button === 1 || (tool === "select" && event.button === 0)) {
+      gesture.current = { type: "pan", sx: event.clientX, sy: event.clientY, ox: viewRef.current.x, oy: viewRef.current.y };
+      setSelected(null);
       return;
     }
-    if (!alvoVazio) return;
-    const p = paraMundo(e.clientX, e.clientY);
-
+    const point = toWorld(event.clientX, event.clientY);
     if (tool === "pen") {
-      interagindo.current = true;
-      strokeAtual.current = { id: uid(), color: cor, width: 3, pts: [[p.x, p.y]] };
-      aplicar((s) => ({ ...s, strokes: [...s.strokes, strokeAtual.current!] }));
-      return;
-    }
-    if (tool === "box" || tool === "text") {
-      const n: Node = {
-        id: uid(), x: p.x - 70, y: p.y - 30, w: 140, h: 60, text: tool === "text" ? "Texto" : "Ideia",
-        color: cor, kind: tool === "text" ? "text" : "box",
-      };
-      aplicar((s) => ({ ...s, nodes: [...s.nodes, n] }));
-      setSel(n.id); setTool("select");
-      return;
-    }
-    if (tool === "select") setSel(null);
-  }
-
-  function onMove(e: React.PointerEvent) {
-    const g = gesto.current;
-    if (g?.tipo === "pan") { setView((v) => ({ ...v, x: g.nx + (e.clientX - g.ox), y: g.ny + (e.clientY - g.oy) })); return; }
-    if (g?.tipo === "node") {
-      const p = paraMundo(e.clientX, e.clientY);
-      setScene((s) => ({ ...s, nodes: s.nodes.map((n) => n.id === g.id ? { ...n, x: p.x - g.ox, y: p.y - g.oy } : n) }));
-      return;
-    }
-    if (strokeAtual.current && tool === "pen") {
-      const p = paraMundo(e.clientX, e.clientY);
-      strokeAtual.current.pts.push([p.x, p.y]);
-      setScene((s) => ({ ...s, strokes: s.strokes.map((st) => st.id === strokeAtual.current!.id ? { ...st, pts: [...strokeAtual.current!.pts] } : st) }));
+      interacting.current = true;
+      const stroke = { id: uid(), color, width: 3, pts: [[point.x, point.y]] };
+      currentStroke.current = stroke;
+      apply((current) => ({ ...current, strokes: [...current.strokes, stroke] }));
+    } else if (tool === "sticky") {
+      createNode("sticky", point.x, point.y); setTool("select");
+    } else if (tool === "shape") {
+      createNode(shapeKind, point.x, point.y); setTool("select");
+    } else if (tool === "text") {
+      const node = createNode("text", point.x, point.y); setEditing(node.id); setTool("select");
     }
   }
 
-  function onUp() {
-    if (gesto.current?.tipo === "node") salvar(sceneRef.current);
-    if (strokeAtual.current) { salvar(sceneRef.current); strokeAtual.current = null; }
-    gesto.current = null;
-    interagindo.current = false;
+  function onPointerMove(event: React.PointerEvent) {
+    const active = gesture.current;
+    if (active?.type === "pan") {
+      setView((current) => ({ ...current, x: active.ox + event.clientX - active.sx, y: active.oy + event.clientY - active.sy }));
+      return;
+    }
+    if (active?.type === "node" && active.id) {
+      const point = toWorld(event.clientX, event.clientY);
+      setScene((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === active.id ? { ...node, x: point.x - active.ox, y: point.y - active.oy } : node) }));
+      return;
+    }
+    if (active?.type === "resize" && active.id) {
+      const dx = (event.clientX - active.sx) / viewRef.current.k;
+      const dy = (event.clientY - active.sy) / viewRef.current.k;
+      setScene((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === active.id ? { ...node, w: Math.max(90, (active.w ?? node.w) + dx), h: Math.max(48, (active.h ?? node.h) + dy) } : node) }));
+      return;
+    }
+    if (currentStroke.current) {
+      const point = toWorld(event.clientX, event.clientY);
+      currentStroke.current.pts.push([point.x, point.y]);
+      setScene((current) => ({ ...current, strokes: current.strokes.map((stroke) => stroke.id === currentStroke.current!.id ? { ...stroke, pts: [...currentStroke.current!.pts] } : stroke) }));
+    }
   }
 
-  function onDownNode(e: React.PointerEvent, n: Node) {
-    e.stopPropagation();
+  function onPointerUp() {
+    if (gesture.current?.type === "node" || gesture.current?.type === "resize" || currentStroke.current) save(sceneRef.current);
+    gesture.current = null;
+    currentStroke.current = null;
+    interacting.current = false;
+  }
+
+  function onNodeDown(event: React.PointerEvent, node: Node) {
+    event.stopPropagation();
     if (tool === "connect") {
-      if (!conectDe) { setConectDe(n.id); return; }
-      if (conectDe !== n.id) aplicar((s) => ({ ...s, edges: [...s.edges, { id: uid(), from: conectDe, to: n.id }] }));
-      setConectDe(null); return;
+      if (!connectFrom) { setConnectFrom(node.id); setSelected(node.id); return; }
+      if (connectFrom !== node.id && !sceneRef.current.edges.some((edge) => edge.from === connectFrom && edge.to === node.id)) {
+        const source = sceneRef.current.nodes.find((item) => item.id === connectFrom);
+        apply((current) => ({ ...current, edges: [...current.edges, { id: uid(), from: connectFrom, to: node.id, color: source?.color }] }));
+      }
+      setConnectFrom(null); setTool("select"); setSelected(node.id); return;
     }
-    setSel(n.id);
-    if (tool !== "select") return;
-    const p = paraMundo(e.clientX, e.clientY);
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    gesto.current = { tipo: "node", id: n.id, ox: p.x - n.x, oy: p.y - n.y, nx: 0, ny: 0 };
+    setSelected(node.id);
+    if (tool !== "select" || editing === node.id) return;
+    const point = toWorld(event.clientX, event.clientY);
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    history.current.push(cloneScene(sceneRef.current)); future.current = [];
+    gesture.current = { type: "node", id: node.id, sx: event.clientX, sy: event.clientY, ox: point.x - node.x, oy: point.y - node.y };
   }
 
-  function editarNode(id: string, text: string) {
-    aplicar((s) => ({ ...s, nodes: s.nodes.map((n) => n.id === id ? { ...n, text } : n) }), false);
-  }
-  function apagarSel() {
-    if (!sel) return;
-    aplicar((s) => ({ nodes: s.nodes.filter((n) => n.id !== sel), edges: s.edges.filter((ed) => ed.from !== sel && ed.to !== sel), strokes: s.strokes }));
-    setSel(null);
+  function startResize(event: React.PointerEvent, node: Node) {
+    event.stopPropagation();
+    history.current.push(cloneScene(sceneRef.current)); future.current = [];
+    gesture.current = { type: "resize", id: node.id, sx: event.clientX, sy: event.clientY, ox: 0, oy: 0, w: node.w, h: node.h };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.isContentEditable) return;
-      if (e.key === "Delete" || e.key === "Backspace") apagarSel();
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); desfazer(); }
-      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.shiftKey && e.key === "z"))) { e.preventDefault(); refazer(); }
+    const keyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      if (event.code === "Space") { event.preventDefault(); setSpacePressed(true); }
+      if ((event.key === "Delete" || event.key === "Backspace") && selected) deleteSelected();
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo(); else undo();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") { event.preventDefault(); duplicateSelected(); }
+      const shortcuts: Record<string, Tool> = { v: "select", h: "hand", p: "pen", n: "sticky", t: "text", l: "connect" };
+      if (!event.ctrlKey && !event.metaKey && shortcuts[event.key.toLowerCase()]) setTool(shortcuts[event.key.toLowerCase()]);
+      if (event.key === "Escape") { setEditing(null); setConnectFrom(null); setSelected(null); setTool("select"); }
     };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel]);
+    const keyUp = (event: KeyboardEvent) => { if (event.code === "Space") setSpacePressed(false); };
+    window.addEventListener("keydown", keyDown); window.addEventListener("keyup", keyUp);
+    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); };
+  }, [deleteSelected, duplicateSelected, redo, selected, undo]);
 
-  const centro = (n: Node) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
-  const cursor = tool === "hand" ? "grab" : tool === "pen" ? "crosshair" : tool === "connect" ? "crosshair" : "default";
+  const selectedNode = useMemo(() => scene.nodes.find((node) => node.id === selected) ?? null, [scene.nodes, selected]);
+  const minimap = useMemo(() => {
+    if (!scene.nodes.length) return null;
+    const minX = Math.min(...scene.nodes.map((node) => node.x));
+    const minY = Math.min(...scene.nodes.map((node) => node.y));
+    const maxX = Math.max(...scene.nodes.map((node) => node.x + node.w));
+    const maxY = Math.max(...scene.nodes.map((node) => node.y + node.h));
+    return { minX, minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+  }, [scene.nodes]);
 
-  const ferramentas: [Tool, string, typeof MousePointer2][] = [
-    ["select", "Selecionar", MousePointer2], ["hand", "Mover a tela", Hand], ["pen", "Caneta", Pencil],
-    ["box", "Caixa (mapa mental)", Square], ["text", "Texto", Type], ["connect", "Ligar (fluxograma)", Waypoints],
+  const toolbar: [Tool, string, typeof MousePointer2, string][] = [
+    ["select", "Selecionar", MousePointer2, "V"], ["hand", "Mover", Hand, "H"], ["pen", "Caneta", Pencil, "P"],
+    ["sticky", "Nota adesiva", StickyNote, "N"], ["text", "Texto", Type, "T"], ["connect", "Conectar", Waypoints, "L"],
   ];
 
+  function nodeStyle(node: Node): React.CSSProperties {
+    const common: React.CSSProperties = { left: node.x, top: node.y, width: node.w, height: node.h, borderColor: node.color };
+    if (node.kind === "sticky") return { ...common, background: node.color, color: "#10131c", borderColor: "rgba(255,255,255,.26)" };
+    if (node.kind === "text") return { ...common, background: "transparent", color: node.color, borderColor: "transparent" };
+    return { ...common, background: `${node.color}1c`, color: "#f8fafc" };
+  }
+
   return (
-    <div className="flex flex-col h-full">
-      {/* barra */}
-      <div className="flex items-center gap-2 px-2 py-2 border-b border-white/10 flex-wrap">
-        <button onClick={onBack} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer" title="Voltar aos projetos"><ArrowLeft size={17} /></button>
-        <span className="text-sm font-semibold truncate max-w-[30%]">{title}</span>
-        <div className="flex items-center gap-0.5 bg-black/20 rounded-lg p-0.5">
-          {ferramentas.map(([id, label, Icon]) => (
-            <button key={id} onClick={() => { setTool(id); setConectDe(null); }} title={label}
-              className={`p-1.5 rounded-md cursor-pointer ${tool === id ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}>
-              <Icon size={16} />
+    <div className="fixed inset-0 z-[150] flex flex-col overflow-hidden bg-[#0b0d12] text-slate-100">
+      <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-white/10 bg-[#12151d]/95 px-2.5 shadow-xl backdrop-blur-xl sm:px-4">
+        <button onClick={onBack} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white" title="Voltar aos projetos">
+          <ArrowLeft size={18} /><span className="hidden sm:inline">Projetos</span>
+        </button>
+        <div className="h-6 w-px bg-white/10" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-white sm:max-w-[300px]">{title}</p>
+          <p className="hidden items-center gap-1 text-[10px] text-slate-500 sm:flex">
+            {saving ? <><RotateCcw size={10} className="animate-spin" /> Salvando alterações</> : saved ? <><Check size={10} className="text-emerald-400" /> Tudo salvo</> : "Quadro colaborativo"}
+          </p>
+        </div>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <button onClick={() => setTemplatesOpen((open) => !open)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-950/40 transition hover:bg-indigo-500">
+              <Sparkles size={15} /><span className="hidden sm:inline">Modelos</span><ChevronDown size={13} />
             </button>
+            {templatesOpen && (
+              <div className="absolute right-0 top-11 w-64 overflow-hidden rounded-xl border border-white/10 bg-[#191d28] p-2 shadow-2xl">
+                <p className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[.16em] text-slate-500">Começar rapidamente</p>
+                {([
+                  ["mind", "Mapa mental", "Tema central com quatro ramificações", Lightbulb],
+                  ["flow", "Fluxograma", "Processo completo com decisão", Waypoints],
+                  ["retro", "Retrospectiva", "Colunas para organizar feedback", BoxSelect],
+                ] as const).map(([id, label, description, Icon]) => (
+                  <button key={id} onClick={() => addTemplate(id)} className="flex w-full items-start gap-3 rounded-lg p-2.5 text-left transition hover:bg-white/7">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-indigo-500/15 text-indigo-300"><Icon size={17} /></span>
+                    <span><span className="block text-xs font-semibold text-white">{label}</span><span className="text-[10px] leading-tight text-slate-500">{description}</span></span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={() => {
+            const blob = new Blob([JSON.stringify(sceneRef.current, null, 2)], { type: "application/json" });
+            const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-quadro.json`; anchor.click(); URL.revokeObjectURL(anchor.href);
+          }} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Baixar cópia do quadro"><Download size={17} /></button>
+        </div>
+      </header>
+
+      <div className="relative min-h-0 flex-1">
+        <aside className="absolute left-3 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-2xl border border-white/10 bg-[#171a23]/95 p-1.5 shadow-2xl backdrop-blur-xl">
+          {toolbar.slice(0, 3).map(([id, label, Icon, shortcut]) => (
+            <button key={id} onClick={() => { setTool(id); setConnectFrom(null); }} className={`group relative grid h-9 w-9 place-items-center rounded-xl transition ${tool === id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/50" : "text-slate-400 hover:bg-white/10 hover:text-white"}`} title={`${label} (${shortcut})`}><Icon size={17} /></button>
           ))}
-        </div>
-        <div className="flex items-center gap-1">
-          {CORES.map((c) => (
-            <button key={c} onClick={() => { setCor(c); if (sel) aplicar((s) => ({ ...s, nodes: s.nodes.map((n) => n.id === sel ? { ...n, color: c } : n) })); }}
-              className={`w-5 h-5 rounded-full cursor-pointer ${cor === c ? "ring-2 ring-white" : ""}`} style={{ background: c }} />
+          <div className="my-0.5 h-px bg-white/10" />
+          {toolbar.slice(3, 4).map(([id, label, Icon, shortcut]) => (
+            <button key={id} onClick={() => { setTool(id); setConnectFrom(null); }} className={`grid h-9 w-9 place-items-center rounded-xl transition ${tool === id ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-white/10 hover:text-white"}`} title={`${label} (${shortcut})`}><Icon size={17} /></button>
           ))}
-        </div>
-        <div className="flex items-center gap-0.5 ml-auto">
-          <button onClick={desfazer} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer" title="Desfazer"><Undo2 size={16} /></button>
-          <button onClick={refazer} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer" title="Refazer"><Redo2 size={16} /></button>
-          <button onClick={apagarSel} disabled={!sel} className="p-1.5 rounded-lg hover:bg-red-500/20 text-slate-400 hover:text-red-300 disabled:opacity-30 cursor-pointer" title="Apagar selecionado"><Trash2 size={16} /></button>
-          <button onClick={() => setView((v) => ({ ...v, k: Math.min(3, v.k * 1.1) }))} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"><ZoomIn size={16} /></button>
-          <button onClick={() => setView((v) => ({ ...v, k: Math.max(0.2, v.k / 1.1) }))} className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"><ZoomOut size={16} /></button>
-          <span className="text-[10px] text-slate-500 w-10 text-center">{salvando ? "salvando…" : `${Math.round(view.k * 100)}%`}</span>
-        </div>
-      </div>
+          <div className="relative">
+            <button onClick={() => setShapeMenu((open) => !open)} className={`grid h-9 w-9 place-items-center rounded-xl transition ${tool === "shape" ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-white/10 hover:text-white"}`} title="Formas"><Shapes size={17} /></button>
+            {shapeMenu && (
+              <div className="absolute left-12 top-0 flex gap-1 rounded-xl border border-white/10 bg-[#171a23] p-1.5 shadow-2xl">
+                {([["box", Square], ["ellipse", Circle], ["diamond", Diamond]] as [NodeKind, typeof Square][]).map(([kind, Icon]) => (
+                  <button key={kind} onClick={() => { setShapeKind(kind); setTool("shape"); setShapeMenu(false); }} className={`grid h-8 w-8 place-items-center rounded-lg ${shapeKind === kind ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-white/10"}`}><Icon size={16} /></button>
+                ))}
+              </div>
+            )}
+          </div>
+          {toolbar.slice(4).map(([id, label, Icon, shortcut]) => (
+            <button key={id} onClick={() => { setTool(id); setConnectFrom(null); }} className={`grid h-9 w-9 place-items-center rounded-xl transition ${tool === id ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-white/10 hover:text-white"}`} title={`${label} (${shortcut})`}><Icon size={17} /></button>
+          ))}
+        </aside>
 
-      {conectDe && <div className="text-[11px] text-indigo-300 bg-indigo-950/40 px-3 py-1">Clique em outra caixa para ligar — ou troque de ferramenta para cancelar.</div>}
-
-      {/* tela infinita */}
-      <div
-        ref={wrapRef}
-        data-canvas="1"
-        onPointerDown={onDownCanvas}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onWheel={onWheel}
-        className="relative flex-1 overflow-hidden bg-[#0c1018] touch-none select-none"
-        style={{ cursor, backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: `${24 * view.k}px ${24 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
-      >
-        <div data-canvas="1" className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, transformOrigin: "0 0" }}>
-          {/* setas + traços num SVG grande o suficiente para o mundo visível */}
-          <svg data-canvas="1" className="absolute overflow-visible pointer-events-none" style={{ left: 0, top: 0, width: 1, height: 1 }}>
-            <defs>
-              <marker id="seta" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8" /></marker>
-            </defs>
-            {scene.edges.map((ed) => {
-              const a = scene.nodes.find((n) => n.id === ed.from); const b = scene.nodes.find((n) => n.id === ed.to);
-              if (!a || !b) return null;
-              const p1 = centro(a), p2 = centro(b);
-              return <line key={ed.id} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#94a3b8" strokeWidth={2} markerEnd="url(#seta)" />;
-            })}
-            {scene.strokes.map((st) => (
-              <polyline key={st.id} points={st.pts.map((p) => p.join(",")).join(" ")} fill="none" stroke={st.color} strokeWidth={st.width} strokeLinecap="round" strokeLinejoin="round" />
-            ))}
-          </svg>
-
-          {/* caixas / textos */}
-          {scene.nodes.map((n) => (
-            <div
-              key={n.id}
-              onPointerDown={(e) => onDownNode(e, n)}
-              className={`absolute rounded-xl ${n.kind === "box" ? "border-2 shadow-lg" : ""} ${sel === n.id ? "ring-2 ring-white" : ""} ${conectDe === n.id ? "ring-2 ring-indigo-400" : ""}`}
-              style={{ left: n.x, top: n.y, width: n.w, height: n.h, background: n.kind === "box" ? `${n.color}22` : "transparent", borderColor: n.color, cursor: tool === "select" ? "move" : "pointer" }}
-            >
-              <div
-                contentEditable suppressContentEditableWarning
-                onBlur={(e) => editarNode(n.id, e.currentTarget.textContent || "")}
-                onPointerDown={(e) => { if (tool === "select") e.stopPropagation(); }}
-                className="w-full h-full grid place-items-center text-center text-[13px] font-medium outline-none px-2 break-words"
-                style={{ color: n.kind === "text" ? n.color : "#e2e8f0" }}
-              >{n.text}</div>
+        {selectedNode && (
+          <div className="absolute left-1/2 top-3 z-20 flex max-w-[calc(100vw-150px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/10 bg-[#171a23]/95 p-1.5 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center gap-1 px-1">
+              {COLORS.map((item) => <button key={item} onClick={() => { setColor(item); apply((current) => ({ ...current, nodes: current.nodes.map((node) => node.id === selectedNode.id ? { ...node, color: item } : node) })); }} className={`h-5 w-5 shrink-0 rounded-full transition hover:scale-110 ${selectedNode.color === item ? "ring-2 ring-white ring-offset-2 ring-offset-[#171a23]" : ""}`} style={{ background: item }} aria-label={`Usar cor ${item}`} />)}
             </div>
-          ))}
+            <div className="mx-1 h-6 w-px shrink-0 bg-white/10" />
+            <button onClick={() => addBranch(selectedNode.id)} className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:bg-white/10" title="Criar ramificação"><Plus size={14} /> Ramificar</button>
+            <button onClick={duplicateSelected} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Duplicar (Ctrl+D)"><Copy size={15} /></button>
+            <button onClick={deleteSelected} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-500/15 hover:text-red-300" title="Excluir"><Trash2 size={15} /></button>
+          </div>
+        )}
+
+        {connectFrom && <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-indigo-400/30 bg-indigo-950/90 px-4 py-2 text-xs text-indigo-200 shadow-xl">Agora clique na forma de destino · Esc para cancelar</div>}
+
+        <div ref={canvasRef} data-canvas="1" onPointerDown={onCanvasDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onWheel={onWheel}
+          className="absolute inset-0 touch-none select-none overflow-hidden bg-[#0d1017]"
+          style={{ cursor: spacePressed || tool === "hand" ? "grab" : tool === "pen" || tool === "connect" || tool === "shape" || tool === "sticky" || tool === "text" ? "crosshair" : "default", backgroundImage: grid ? "radial-gradient(circle, rgba(148,163,184,.18) 1px, transparent 1.2px)" : "none", backgroundSize: `${24 * view.k}px ${24 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}>
+          <div data-canvas="1" className="absolute inset-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, transformOrigin: "0 0" }}>
+            <svg data-canvas="1" className="pointer-events-none absolute overflow-visible" style={{ width: 1, height: 1 }}>
+              <defs>{COLORS.map((item, index) => <marker key={item} id={`arrow-${index}`} markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill={item} /></marker>)}</defs>
+              {scene.edges.map((edge) => {
+                const from = scene.nodes.find((node) => node.id === edge.from);
+                const to = scene.nodes.find((node) => node.id === edge.to);
+                if (!from || !to) return null;
+                const edgeColor = edge.color ?? from.color ?? COLORS[7];
+                const colorIndex = Math.max(0, COLORS.indexOf(edgeColor));
+                return <path key={edge.id} d={edgePath(from, to)} fill="none" stroke={edgeColor} strokeWidth={2.5} strokeDasharray={edge.dashed ? "8 7" : undefined} opacity={0.8} markerEnd={`url(#arrow-${colorIndex})`} />;
+              })}
+              {scene.strokes.map((stroke) => <polyline key={stroke.id} points={stroke.pts.map((point) => point.join(",")).join(" ")} fill="none" stroke={stroke.color} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" />)}
+            </svg>
+
+            {scene.nodes.map((node) => {
+              const isSelected = selected === node.id;
+              const isDiamond = node.kind === "diamond";
+              return (
+                <div key={node.id} onPointerDown={(event) => onNodeDown(event, node)} onDoubleClick={(event) => { event.stopPropagation(); setEditing(node.id); setSelected(node.id); }}
+                  className={`absolute border-2 shadow-xl transition-shadow ${node.kind === "ellipse" ? "rounded-[999px]" : node.kind === "sticky" ? "rounded-md shadow-black/30" : node.kind === "text" ? "border-transparent shadow-none" : "rounded-2xl"} ${isSelected ? "ring-[3px] ring-white/90 ring-offset-2 ring-offset-[#0d1017]" : ""} ${connectFrom === node.id ? "ring-[3px] ring-indigo-300" : ""}`}
+                  style={{ ...nodeStyle(node), transform: isDiamond ? "rotate(45deg) scale(.78)" : undefined, cursor: tool === "select" ? "move" : "pointer" }}>
+                  <div contentEditable={editing === node.id} suppressContentEditableWarning autoFocus={editing === node.id}
+                    onBlur={(event) => { const text = event.currentTarget.textContent?.trim() || "Sem título"; apply((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, text } : item) }), false); setEditing(null); }}
+                    onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.blur(); } }}
+                    onPointerDown={(event) => { if (editing === node.id) event.stopPropagation(); }}
+                    className="grid h-full w-full place-items-center overflow-hidden whitespace-pre-wrap break-words px-4 text-center text-[13px] font-semibold leading-snug outline-none"
+                    style={{ transform: isDiamond ? "rotate(-45deg) scale(1.22)" : undefined, cursor: editing === node.id ? "text" : "inherit", pointerEvents: editing === node.id ? "auto" : "none" }}>
+                    {node.text}
+                  </div>
+                  {isSelected && tool === "select" && editing !== node.id && <button onPointerDown={(event) => startResize(event, node)} className="absolute -bottom-2 -right-2 h-4 w-4 rounded-full border-2 border-[#0d1017] bg-white shadow-lg" style={{ transform: isDiamond ? "rotate(-45deg)" : undefined, cursor: "nwse-resize" }} aria-label="Redimensionar" />}
+                  {isSelected && tool === "select" && editing !== node.id && <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setConnectFrom(node.id); setTool("connect"); }} className="absolute -right-4 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-indigo-300/50 bg-indigo-600 text-white shadow-lg" style={{ transform: isDiamond ? "translateY(-50%) rotate(-45deg)" : undefined }} title="Criar conexão"><Link2 size={13} /></button>}
+                </div>
+              );
+            })}
+          </div>
+
+          {!scene.nodes.length && !scene.strokes.length && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center p-8">
+              <div className="max-w-sm text-center">
+                <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-indigo-400/20 bg-indigo-500/10 text-indigo-300"><Lightbulb size={28} /></div>
+                <h2 className="text-lg font-semibold text-white">Transforme ideias em planos</h2>
+                <p className="mt-1 text-sm leading-relaxed text-slate-500">Escolha um modelo no topo ou use a barra lateral para adicionar notas, formas, textos e conexões.</p>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="absolute bottom-2 left-2 text-[10px] text-slate-600 pointer-events-none">Role para dar zoom · arraste no vazio para mover a tela</div>
+        <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-white/10 bg-[#171a23]/95 p-1.5 shadow-2xl backdrop-blur-xl">
+          <button onClick={() => setView((current) => ({ ...current, k: Math.max(.15, current.k / 1.15) }))} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><ZoomOut size={16} /></button>
+          <button onClick={fitContent} className="min-w-14 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-white/10" title="Enquadrar conteúdo">{Math.round(view.k * 100)}%</button>
+          <button onClick={() => setView((current) => ({ ...current, k: Math.min(4, current.k * 1.15) }))} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><ZoomIn size={16} /></button>
+          <div className="mx-0.5 h-5 w-px bg-white/10" />
+          <button onClick={fitContent} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Mostrar tudo"><Focus size={16} /></button>
+          <button onClick={() => setGrid((visible) => !visible)} className={`rounded-lg p-1.5 hover:bg-white/10 ${grid ? "text-indigo-300" : "text-slate-500"}`} title="Grade"><Grid3X3 size={16} /></button>
+          <div className="mx-0.5 h-5 w-px bg-white/10" />
+          <button onClick={undo} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Desfazer"><Undo2 size={16} /></button>
+          <button onClick={redo} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Refazer"><Redo2 size={16} /></button>
+        </div>
+
+        {minimap && (
+          <button onClick={fitContent} className="absolute bottom-4 right-4 z-20 hidden h-24 w-36 overflow-hidden rounded-xl border border-white/10 bg-[#171a23]/90 shadow-2xl sm:block" title="Enquadrar todo o quadro">
+            {scene.nodes.map((node) => {
+              const scale = Math.min(116 / minimap.width, 68 / minimap.height);
+              return <span key={node.id} className="absolute rounded-sm opacity-75" style={{ left: 10 + (node.x - minimap.minX) * scale, top: 10 + (node.y - minimap.minY) * scale, width: Math.max(3, node.w * scale), height: Math.max(3, node.h * scale), background: node.color }} />;
+            })}
+            <span className="absolute bottom-1.5 left-2 text-[8px] font-semibold uppercase tracking-wider text-slate-500">Mapa</span>
+          </button>
+        )}
+
+        <div className="pointer-events-none absolute bottom-5 left-4 z-10 hidden text-[10px] text-slate-600 lg:block">Espaço + arrastar para mover · roda para zoom · duplo clique para editar</div>
       </div>
     </div>
   );
