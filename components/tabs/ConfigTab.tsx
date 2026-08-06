@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Download, FolderTree, Image as ImageIcon, MonitorDown, Package, Palette, Server, Sliders, Sparkles } from "lucide-react";
+import { Bell, Bot, Building2, Download, FolderTree, GraduationCap, Image as ImageIcon, MonitorDown, Package, Palette, Server, Sliders, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
@@ -60,6 +60,7 @@ export default function ConfigTab({
   description,
   remoteAgentUrl,
   onUpdateCompany,
+  onReplayTutorials,
 }: {
   companyName: string;
   companyCode?: string | null;
@@ -99,6 +100,7 @@ export default function ConfigTab({
     logoSize?: number;
     themeStyle?: string;
   }) => void;
+  onReplayTutorials?: () => void;
 }) {
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
@@ -433,6 +435,21 @@ export default function ConfigTab({
                 <input type="checkbox" checked={!notifMuted} onChange={(e) => toggleNotif(!e.target.checked)} className="accent-emerald-600 w-4 h-4" />
               </label>
               <p className="text-[11px] text-gray-500">Toca um som e mostra uma notificação sempre que um contato entra na fila <b>Aguardando atendimento</b> (cliente novo ou mensagem sem resposta). Desmarque para silenciar.</p>
+
+              {onReplayTutorials && (
+                <div className="pt-3 mt-2 border-t border-white/10">
+                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2 mb-1">
+                    <GraduationCap size={14} /> Tutoriais
+                  </span>
+                  <p className="text-[11px] text-gray-500 mb-2">Os guias aparecem uma vez, na primeira vez que você abre cada app. Quer revê-los? Isto liga todos de novo, começando pelas boas-vindas.</p>
+                  <button
+                    onClick={onReplayTutorials}
+                    className="text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer"
+                  >
+                    Rever tutoriais
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

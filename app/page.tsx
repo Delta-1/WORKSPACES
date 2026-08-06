@@ -5,6 +5,8 @@ import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, FileSpreadshee
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
+import TutorialOverlay from "@/components/TutorialOverlay";
+import { hasTutorial, WELCOME } from "@/lib/tutorials";
 import BlockedScreen from "@/components/BlockedScreen";
 import SplashScreen from "@/components/SplashScreen";
 import Dock from "@/components/Dock";
@@ -116,6 +118,9 @@ export default function Home() {
   const [showAgent, setShowAgent] = useState(false);
   const agentModeActiveRef = useRef(false);
   const [tab, setTab] = useState("inicio");
+  // Qual tutorial mostrar agora (null = nenhum). O WELCOME abre uma vez logo
+  // após entrar; os de app abrem na primeira vez que a pessoa abre aquele app.
+  const [tutorial, setTutorial] = useState<string | null>(null);
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copilotPushToTalk, setCopilotPushToTalk] = useState(false);
@@ -250,6 +255,38 @@ export default function Home() {
     const { data } = await supabase.from("companies").select("*").eq("id", companyId).maybeSingle();
     setMyCompany((data as Company | null) ?? null);
   }
+
+  // Marca um tutorial como visto — no estado local (para sumir na hora) e no
+  // banco (para não voltar no próximo acesso, nem em outro aparelho).
+  async function marcarTutorial(id: string) {
+    setTutorial(null);
+    setProfile((p) => (p ? { ...p, tutorials_done: { ...(p.tutorials_done ?? {}), [id]: true } } : p));
+    if (supabase && profile?.id) {
+      const novo = { ...(profile.tutorials_done ?? {}), [id]: true };
+      await supabase.from("profiles").update({ tutorials_done: novo }).eq("id", profile.id);
+    }
+  }
+
+  // Reabre todos os tutoriais (Configurações → Rever tutoriais). Zera o mapa e
+  // mostra o de boas-vindas de novo.
+  async function reverTutoriais() {
+    setProfile((p) => (p ? { ...p, tutorials_done: {} } : p));
+    if (supabase && profile?.id) await supabase.from("profiles").update({ tutorials_done: {} }).eq("id", profile.id);
+    setTab("inicio");
+    setTutorial(WELCOME);
+  }
+
+  // Decide o tutorial a mostrar: boas-vindas uma vez, depois o guia da aba
+  // aberta na primeira visita. Só roda com perfil já carregado e nenhum
+  // overlay aberto — não empilha guias nem interrompe quem já está lendo um.
+  useEffect(() => {
+    if (!profile || tutorial) return;
+    const vistos = profile.tutorials_done ?? {};
+    const alvo = !vistos[WELCOME] ? WELCOME : hasTutorial(tab) && !vistos[tab] ? tab : null;
+    // Fora do corpo do efeito (microtask) para não disparar setState síncrono
+    // no meio do render — o que o compilador do React reclama com razão.
+    if (alvo) queueMicrotask(() => setTutorial(alvo));
+  }, [profile, tab, tutorial]);
 
   // Recarrega perfil + empresa após onboarding / escolha de plano.
   async function refreshIdentity() {
@@ -614,12 +651,14 @@ export default function Home() {
             description={company.description}
             remoteAgentUrl={company.remoteAgentUrl}
             onUpdateCompany={handleUpdateCompany}
+            onReplayTutorials={reverTutoriais}
           />
         )}
       </main>
 
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
+      {tutorial && <TutorialOverlay appId={tutorial} onClose={() => marcarTutorial(tutorial)} />}
 
       <Dock
         apps={dockApps}

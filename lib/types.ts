@@ -11,6 +11,7 @@ export type Profile = {
   whatsapp_number: string | null;
   finance_access: boolean | null;
   tool_access: Record<string, boolean> | null; // permissão por ferramenta (null = padrão do cargo)
+  tutorials_done: Record<string, boolean> | null; // tutoriais já vistos, por app id
   created_at: string;
 };
 
