@@ -664,6 +664,18 @@ function historyPreview(m) {
   );
 }
 
+function whatsappMessageTime(msg) {
+  const raw = msg?.messageTimestamp;
+  const seconds = typeof raw?.toNumber === "function" ? raw.toNumber() : Number(raw?.low ?? raw ?? 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(seconds > 1e12 ? seconds : seconds * 1000);
+}
+
+function isRecentWhatsappMessage(msg, maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+  const at = whatsappMessageTime(msg);
+  return !!at && Date.now() - at.getTime() <= maxAgeMs && at.getTime() <= Date.now() + 5 * 60 * 1000;
+}
+
 async function ingestHistory(messages, numberId, companyId, sectorId) {
   if (!supabase || !Array.isArray(messages) || messages.length === 0) return;
   // Agrupa TODAS as mensagens por chat 1:1 (para carregar o histórico completo,
@@ -755,7 +767,7 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
@@ -764,27 +776,46 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     sender_id: senderId,
     company_id: companyId,
   };
+  if (messageAt) row.at = messageAt;
   if (media) {
     row.media_type = media.type;
     row.media_url = media.url;
     row.media_name = media.name || null;
     row.media_mime = media.mime || null;
   }
+  let insertedId = null;
   if (waId) {
     // wa_id dedup: evita registrar duas vezes a mesma mensagem (envio pelo site
     // + eco do messages.upsert, ou a mesma mensagem chegando por vários eventos).
     row.wa_id = waId;
-    const { data: inserted, error: upErr } = await supabase
-      .from("whatsapp_messages")
-      .upsert(row, { onConflict: "wa_id", ignoreDuplicates: true })
-      .select("id");
-    // IMPORTANTE: erros aqui eram engolidos em silêncio — a mensagem do bot era
-    // enviada no WhatsApp mas NÃO aparecia no app Mensagens. Agora o erro é logado
-    // (visível no Railway) para não haver mais "resposta que some".
-    if (upErr) console.error("logMessage upsert(wa_id) falhou:", upErr.message || upErr);
-    if (!inserted || inserted.length === 0) return; // já existia (ou erro) → não duplica
+    // Não depende de constraint UNIQUE: instalações antigas tinham a coluna sem
+    // índice e o upsert falhava antes mesmo de tentar gravar.
+    const { data: existingWa, error: lookupError } = await supabase
+      .from("whatsapp_messages").select("id").eq("wa_id", waId).limit(1).maybeSingle();
+    if (existingWa?.id) return existingWa.id;
+    let writeError = lookupError;
+    if (!lookupError) {
+      const { data: inserted, error: insertError } = await supabase.from("whatsapp_messages").insert(row).select("id").maybeSingle();
+      insertedId = inserted?.id ?? null;
+      writeError = insertError;
+    }
+    if (writeError) {
+      console.error("logMessage wa_id indisponível; usando fallback compatível:", writeError.message || writeError);
+      // Bancos antigos podem ainda não ter a coluna/índice wa_id. A mensagem não
+      // pode desaparecer por isso: deduplicamos por conversa/texto/horário e
+      // gravamos sem wa_id até a migration ser aplicada.
+      const fallback = { ...row };
+      delete fallback.wa_id;
+      const since = new Date((messageAt ? new Date(messageAt).getTime() : Date.now()) - 2 * 60 * 1000).toISOString();
+      let recentQuery = supabase.from("whatsapp_messages").select("id,text,at").eq("conversation_id", conversationId).eq("direction", direction).gte("at", since).order("at", { ascending: false }).limit(10);
+      recentQuery = row.text == null ? recentQuery.is("text", null) : recentQuery.eq("text", row.text);
+      const { data: recent } = await recentQuery;
+      if (recent?.length) return recent[0].id;
+      const { data: fallbackInserted, error: fallbackError } = await supabase.from("whatsapp_messages").insert(fallback).select("id").maybeSingle();
+      if (fallbackError) console.error("logMessage fallback insert falhou:", fallbackError.message || fallbackError);
+      insertedId = fallbackInserted?.id ?? null;
+    }
   }
-  let insertedId = null;
   if (!waId) {
     const { data: ins, error: insErr } = await supabase
       .from("whatsapp_messages")
@@ -795,7 +826,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     insertedId = ins?.id ?? null;
   }
   // Mantém a conversa "no topo" (mais recente) e com a última mensagem/hora.
-  const now = new Date().toISOString();
+  const now = messageAt || new Date().toISOString();
   await supabase
     .from("conversations")
     .update({ last_message: row.text ?? "", last_message_at: now, updated_at: now })
@@ -3036,13 +3067,14 @@ async function startSession(numberId) {
 
     sock.ev.on("creds.update", saveCreds);
 
-    // Ao conectar, sincroniza SÓ a AGENDA DE CONTATOS do WhatsApp (para a aba de
-    // Contatos). NÃO importamos o histórico antigo de mensagens de propósito: a
-    // conversa começa do zero a partir do momento em que o QR foi lido — só as
-    // mensagens novas (messages.upsert) entram no histórico.
-    sock.ev.on("messaging-history.set", async ({ contacts }) => {
+    // Sincroniza a agenda e recupera apenas mensagens PRÓPRIAS recentes. Isso
+    // cobre o que foi enviado pelo telefone enquanto este serviço reconectava,
+    // sem importar todo o histórico antigo nem transformar mensagens recebidas
+    // antigas em novos atendimentos.
+    sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
       const { number } = await getNumberConfig(numberId);
       await syncContacts(contacts, number?.company_id ?? null);
+      await syncRecentOutgoingHistory(sock, numberId, messages);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
@@ -3092,7 +3124,6 @@ async function startSession(numberId) {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
       for (const msg of messages) {
         const jid = msg.key.remoteJid;
         // Status e newsletter nunca interessam.
@@ -3102,10 +3133,15 @@ async function startSession(numberId) {
         const grupo = jid.endsWith("@g.us") ? await getGroupConfig(numberId, jid) : null;
         if (jid.endsWith("@g.us") && !grupo?.ai_enabled) continue;
         // Mensagem que VOCÊ enviou pelo app oficial do WhatsApp → espelha no site.
+        // No multidispositivo ela pode chegar como "append", e não só "notify".
         if (msg.key.fromMe) {
-          await logOutgoingEcho(sock, numberId, msg, jid);
+          if (type === "notify" || (type === "append" && isRecentWhatsappMessage(msg))) {
+            await logOutgoingEcho(sock, numberId, msg, jid);
+          }
           continue;
         }
+        // Eventos append recebidos são histórico, não mensagem nova de cliente.
+        if (type !== "notify") continue;
         // Marca como visualizada (tique azul) só quando o BOT for de fato
         // responder — não assim que a mensagem chega. Evita o "visualizou e
         // sumiu": só aparece o tique azul quando a resposta está a caminho.
@@ -3543,6 +3579,21 @@ async function disconnectSession(numberId) {
 // outra linha — a web já salvou e o /send atualiza o wa_id nessa linha.
 const webSentWaIds = new Set();
 
+async function syncRecentOutgoingHistory(sock, numberId, messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return;
+  const recent = messages
+    .filter((msg) => msg?.key?.fromMe && isRecentWhatsappMessage(msg))
+    .sort((a, b) => (whatsappMessageTime(a)?.getTime() || 0) - (whatsappMessageTime(b)?.getTime() || 0))
+    .slice(-250);
+  for (const msg of recent) {
+    const jid = msg?.key?.remoteJid;
+    if (!jid || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
+    if (jid.endsWith("@g.us") && !(await getGroupConfig(numberId, jid))?.ai_enabled) continue;
+    await logOutgoingEcho(sock, numberId, msg, jid);
+  }
+  if (recent.length) console.log(`Sincronizadas ${recent.length} mensagens próprias recentes do WhatsApp`);
+}
+
 async function logOutgoingEcho(sock, numberId, msg, jid) {
   try {
     if (msg?.key?.id && webSentWaIds.has(msg.key.id)) return; // já salvo pela web
@@ -3608,7 +3659,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     }
     if (!conversationId) return;
     // waId = key.id → dedup contra o envio feito pelo próprio site.
-    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id);
+    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null);
   } catch (err) {
     console.error("logOutgoingEcho failed:", err);
   }
