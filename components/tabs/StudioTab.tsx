@@ -5,14 +5,16 @@ import {
   FileText, Trash2, ArrowLeft, Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Image as ImageIcon,
   Table as TableIcon, Undo2, Redo2, RemoveFormatting, SeparatorHorizontal, Sparkles,
-  Loader2, FileDown, Printer, Save, Heading1, Heading2, Heading3, Wand2, Baseline, Highlighter,
-  Presentation, GraduationCap, User, FileSignature, Receipt, ListChecks, BookOpen, Layers, Lock,
+  Loader2, FileDown, FileUp, Printer, Save, Heading1, Heading2, Heading3, Wand2, Baseline, Highlighter,
+  Presentation, GraduationCap, User, FileSignature, Receipt, ListChecks, BookOpen, Layers, Lock, Network,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import SlidesTab from "@/components/tabs/SlidesTab";
 import ResumeEditor from "@/components/studio/ResumeEditor";
 import AcademicEditor from "@/components/studio/AcademicEditor";
 import BusinessEditor, { type BusinessModelId } from "@/components/studio/BusinessEditor";
+import PlanTool from "@/components/studio/PlanTool";
+import { extractReferenceFile, type ReferenceMaterial } from "@/lib/reference-file";
 import { DOC_MODELS, GROUP_LABEL, isAcademicModel, modelById, type DocGroup } from "@/lib/doc-templates";
 import type { Profile } from "@/lib/types";
 
@@ -47,7 +49,7 @@ const BUSINESS_MODELS: BusinessModelId[] = ["contrato", "orcamento", "questionar
 
 export default function StudioTab({ profile }: { profile: Profile | null }) {
   // O Estúdio agora é um hub: escolhe-se Documentos ou Apresentações.
-  const [view, setView] = useState<"hub" | "documentos" | "apresentacoes">("hub");
+  const [view, setView] = useState<"hub" | "documentos" | "apresentacoes" | "plano">("hub");
   const [docs, setDocs] = useState<Doc[]>([]);
   const [open, setOpen] = useState<Doc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -136,7 +138,7 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
           <h3 className="text-lg font-bold flex items-center gap-2"><Sparkles className="text-blue-400" size={20} /> Estúdio</h3>
           <p className="text-[11px] text-gray-500 mt-0.5">Tudo que a empresa escreve e apresenta, num lugar só.</p>
         </div>
-        <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 gap-4 content-start">
+        <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 content-start">
           <button onClick={() => setView("documentos")} className="text-left rounded-2xl border border-white/10 bg-gradient-to-br from-blue-950/40 to-transparent hover:border-blue-500/50 p-5 cursor-pointer transition group">
             <div className="w-11 h-11 rounded-xl bg-blue-500/20 text-blue-300 grid place-items-center mb-3 group-hover:scale-105 transition"><FileText size={22} /></div>
             <p className="text-base font-bold">Documentos</p>
@@ -156,6 +158,14 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
               Slides criados com a Yumi, editáveis um a um, com temas prontos e exportação em PowerPoint e PDF.
             </p>
           </button>
+          <button onClick={() => setView("plano")} className="text-left rounded-2xl border border-white/10 bg-gradient-to-br from-violet-950/45 to-transparent hover:border-violet-500/50 p-5 cursor-pointer transition group">
+            <div className="w-11 h-11 rounded-xl bg-violet-500/20 text-violet-300 grid place-items-center mb-3 group-hover:scale-105 transition"><Network size={22} /></div>
+            <p className="text-base font-bold">Plano</p>
+            <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+              Mapas mentais e fluxos criados com a Yumi, totalmente editáveis e exportáveis em PNG, PDF ou GIF animado.
+            </p>
+            <div className="mt-3 flex gap-1"><span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] text-gray-300">Mapa mental</span><span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] text-gray-300">Fluxograma</span></div>
+          </button>
         </div>
       </div>
     );
@@ -170,6 +180,8 @@ export default function StudioTab({ profile }: { profile: Profile | null }) {
       </div>
     );
   }
+
+  if (view === "plano") return <PlanTool profile={profile} onBack={() => setView("hub")} />;
 
   // ── Documentos ────────────────────────────────────────────────────────────
   return (
@@ -399,24 +411,44 @@ function YumiPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<{ prompt: string; mode: "replace" | "append" | "edit" } | null>(null);
+  const [reference, setReference] = useState<ReferenceMaterial | null>(null);
+  const [readingReference, setReadingReference] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })); }, [msgs, busy]);
 
   async function send(mode: "replace" | "append" | "edit") {
     const prompt = input.trim();
     if (!prompt || busy) return;
-    setMsgs((m) => [...m, { role: "user", text: prompt }]); setInput(""); setBusy(true);
+    setMsgs((m) => [...m, { role: "user", text: prompt }]); setInput("");
+    if (/\b(resumo|resumir|resuma|sintetiz|mapa mental)\b/i.test(prompt)) {
+      setPending({ prompt, mode });
+      setMsgs((m) => [...m, { role: "yumi", text: "Antes de criar: você tem algum arquivo para eu usar como referência?" }]);
+      return;
+    }
+    await requestYumi(prompt, mode, "none", null);
+  }
+
+  async function requestYumi(prompt: string, mode: "replace" | "append" | "edit", decision: "file" | "none", material: ReferenceMaterial | null) {
+    setBusy(true); setPending(null);
     try {
       const headers = await authHeaders();
       const res = await fetch("/api/studio/compose", {
         method: "POST", headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ prompt, template: doc.template, meta: doc.meta || {}, mode, currentText: editorRef.current?.innerText?.slice(0, 8000) }),
+        body: JSON.stringify({ prompt, template: doc.template, meta: doc.meta || {}, mode, currentText: editorRef.current?.innerText?.slice(0, 8000), referenceDecision: decision, referenceText: material?.text, referenceName: material?.name }),
       });
       const data = await res.json();
       if (data.error) { setMsgs((m) => [...m, { role: "yumi", text: `Não consegui: ${data.error}` }]); return; }
       setMsgs((m) => [...m, { role: "yumi", text: "Prontinho! Confira e clique em Aplicar.", html: data.html }]);
     } catch { setMsgs((m) => [...m, { role: "yumi", text: "Tive um problema. Tenta de novo?" }]); }
     finally { setBusy(false); }
+  }
+
+  async function useReferenceFile(file: File) {
+    if (!pending) return; setReadingReference(true);
+    try { const material = await extractReferenceFile(file); setReference(material); await requestYumi(pending.prompt, pending.mode, "file", material); }
+    catch (cause) { setMsgs((m) => [...m, { role: "yumi", text: cause instanceof Error ? cause.message : "Não consegui ler esse arquivo." }]); }
+    finally { setReadingReference(false); }
   }
 
   function apply(html: string, append: boolean) {
@@ -441,6 +473,7 @@ function YumiPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
           </div>
         ))}
         {busy && <p className="text-[11px] text-gray-500 italic px-1">Yumi está escrevendo…</p>}
+        {pending && !busy && <div className="rounded-xl border border-blue-500/25 bg-blue-950/20 p-2"><div className="flex flex-wrap gap-1.5"><label className="flex cursor-pointer items-center gap-1 rounded-lg bg-blue-600 px-2 py-1.5 text-[11px] text-white"><FileUp size={11} /> {readingReference ? "Lendo…" : reference?.name || "Enviar arquivo"}<input type="file" accept=".pdf,.doc,.docx,.txt,.md,.html,.csv" className="hidden" onChange={(event) => event.target.files?.[0] && void useReferenceFile(event.target.files[0])} /></label><button onClick={() => void requestYumi(pending.prompt, pending.mode, "none", null)} className="rounded-lg bg-white/10 px-2 py-1.5 text-[11px] hover:bg-white/15">Não tenho arquivo</button></div></div>}
       </div>
       <div className="p-2 border-t border-white/10 space-y-1.5">
         <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send("append"); } }} rows={2} placeholder="Peça algo à Yumi…" className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none resize-none" />

@@ -2,6 +2,7 @@
 
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase-client";
+import { exportMindMap, type MindMapExportFormat } from "@/lib/mindmap-export";
 import {
   ArrowLeft, BoxSelect, Check, ChevronDown, Circle, Copy, Diamond,
   Download, Focus, Grid3X3, Hand, Lightbulb, Link2, MousePointer2,
@@ -16,7 +17,10 @@ type Stroke = { id: string; color: string; width: number; pts: number[][] };
 type Scene = { nodes: Node[]; edges: Edge[]; strokes: Stroke[] };
 type Tool = "select" | "hand" | "pen" | "sticky" | "shape" | "text" | "connect";
 type View = { x: number; y: number; k: number };
-type ProjectBoardProps = { projectId: string; title: string; meId: string; onBack: () => void };
+type ProjectBoardProps = {
+  projectId: string; title: string; meId: string; onBack: () => void;
+  storage?: "group" | "studio"; initialScene?: unknown;
+};
 
 const COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#f43f5e", "#f59e0b", "#10b981", "#06b6d4", "#64748b"];
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -95,7 +99,7 @@ export default function ProjectBoard(props: ProjectBoardProps) {
 }
 
 function ProjectBoardCanvas({
-  projectId, title, meId, onBack,
+  projectId, title, meId, onBack, storage = "group", initialScene,
 }: ProjectBoardProps) {
   const [scene, setScene] = useState<Scene>(emptyScene);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
@@ -108,6 +112,8 @@ function ProjectBoardCanvas({
   const [saved, setSaved] = useState(false);
   const [grid, setGrid] = useState(true);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<MindMapExportFormat | null>(null);
   const [shapeMenu, setShapeMenu] = useState(false);
   const [shapeKind, setShapeKind] = useState<NodeKind>("box");
   const [spacePressed, setSpacePressed] = useState(false);
@@ -166,6 +172,10 @@ function ProjectBoardCanvas({
   }, []);
 
   useEffect(() => {
+    if (storage === "studio") {
+      setScene(normalizeScene(initialScene));
+      return;
+    }
     let alive = true;
     void supabase?.from("group_projects").select("scene").eq("id", projectId).maybeSingle().then(({ data }) => {
       if (alive && data) setScene(normalizeScene(data.scene));
@@ -178,21 +188,35 @@ function ProjectBoardCanvas({
       },
     ).subscribe();
     return () => { alive = false; if (channel) void supabase?.removeChannel(channel); };
-  }, [projectId]);
+  }, [initialScene, projectId, storage]);
 
   const save = useCallback((next: Scene) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSaved(false);
     saveTimer.current = setTimeout(async () => {
       setSaving(true);
-      await supabase?.from("group_projects").update({
-        scene: next, updated_by: meId, updated_at: new Date().toISOString(),
-      }).eq("id", projectId);
+      if (storage === "studio") {
+        await supabase?.from("studio_documents").update({
+          content: JSON.stringify(next), updated_at: new Date().toISOString(),
+        }).eq("id", projectId);
+      } else {
+        await supabase?.from("group_projects").update({
+          scene: next, updated_by: meId, updated_at: new Date().toISOString(),
+        }).eq("id", projectId);
+      }
       setSaving(false);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1200);
     }, 450);
-  }, [meId, projectId]);
+  }, [meId, projectId, storage]);
+
+  async function runExport(format: MindMapExportFormat) {
+    if (exporting) return;
+    setExportOpen(false); setExporting(format);
+    try { await exportMindMap(sceneRef.current, title, format); }
+    catch (error) { alert(error instanceof Error ? error.message : "Não consegui exportar o mapa."); }
+    finally { setExporting(null); }
+  }
 
   const apply = useCallback((mutate: (current: Scene) => Scene, register = true) => {
     setScene((current) => {
@@ -299,6 +323,12 @@ function ProjectBoardCanvas({
     const k = Math.min(1.35, Math.max(0.2, Math.min((rect.width - 180) / width, (rect.height - 180) / height)));
     setView({ x: rect.width / 2 - (minX + width / 2) * k, y: rect.height / 2 - (minY + height / 2) * k, k });
   }, []);
+
+  useEffect(() => {
+    if (storage !== "studio") return;
+    const timer = window.setTimeout(fitContent, 120);
+    return () => window.clearTimeout(timer);
+  }, [fitContent, projectId, storage]);
 
   const addTemplate = useCallback((template: "mind" | "flow" | "retro") => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -498,7 +528,7 @@ function ProjectBoardCanvas({
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-white sm:max-w-[300px]">{title}</p>
           <p className="hidden items-center gap-1 text-[10px] text-slate-500 sm:flex">
-            {saving ? <><RotateCcw size={10} className="animate-spin" /> Salvando alterações</> : saved ? <><Check size={10} className="text-emerald-400" /> Tudo salvo</> : "Quadro colaborativo"}
+            {saving ? <><RotateCcw size={10} className="animate-spin" /> Salvando alterações</> : saved ? <><Check size={10} className="text-emerald-400" /> Tudo salvo</> : storage === "studio" ? "Plano editável do Estúdio" : "Quadro colaborativo"}
           </p>
         </div>
 
@@ -523,10 +553,26 @@ function ProjectBoardCanvas({
               </div>
             )}
           </div>
-          <button onClick={() => {
-            const blob = new Blob([JSON.stringify(sceneRef.current, null, 2)], { type: "application/json" });
-            const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-quadro.json`; anchor.click(); URL.revokeObjectURL(anchor.href);
-          }} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Baixar cópia do quadro"><Download size={17} /></button>
+          <div className="relative">
+            <button onClick={() => setExportOpen((open) => !open)} disabled={!!exporting} className="flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs text-slate-300 transition hover:bg-white/10 hover:text-white disabled:opacity-60" title="Exportar mapa">
+              {exporting ? <RotateCcw size={17} className="animate-spin" /> : <Download size={17} />}<span className="hidden md:inline">Exportar</span><ChevronDown size={12} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-11 w-52 overflow-hidden rounded-xl border border-white/10 bg-[#191d28] p-1.5 shadow-2xl">
+                {([[
+                  "png", "Imagem PNG", "Imagem estática em alta qualidade",
+                ], ["pdf", "Documento PDF", "Pronto para imprimir e compartilhar"], ["gif", "GIF animado", "Setas em movimento mostrando o fluxo"]] as [MindMapExportFormat, string, string][]).map(([format, label, description]) => (
+                  <button key={format} onClick={() => void runExport(format)} className="w-full rounded-lg px-2.5 py-2 text-left transition hover:bg-white/10">
+                    <span className="block text-xs font-semibold text-white">{label}</span><span className="text-[10px] text-slate-500">{description}</span>
+                  </button>
+                ))}
+                <button onClick={() => {
+                  const blob = new Blob([JSON.stringify(sceneRef.current, null, 2)], { type: "application/json" });
+                  const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-quadro.json`; anchor.click(); URL.revokeObjectURL(anchor.href); setExportOpen(false);
+                }} className="mt-1 w-full border-t border-white/10 px-2.5 py-2 text-left text-[10px] text-slate-500 hover:text-slate-300">Baixar cópia editável (.json)</button>
+              </div>
+            )}
+          </div>
           <button onClick={() => void toggleFullscreen()} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white" title={fullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"} aria-label={fullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"}>
             {fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
           </button>
