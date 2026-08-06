@@ -756,9 +756,7 @@ function ProjetosView({ group, me }: { group: Group; me: string }) {
 
   if (aberto) {
     return (
-      <div className="h-[calc(100vh-260px)] min-h-[420px]">
-        <ProjectBoard projectId={aberto.id} title={aberto.title} meId={me} onBack={() => { setAberto(null); void carregar(); }} />
-      </div>
+      <ProjectBoard projectId={aberto.id} title={aberto.title} meId={me} onBack={() => { setAberto(null); void carregar(); }} />
     );
   }
 
