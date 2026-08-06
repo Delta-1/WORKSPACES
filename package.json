@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
+    "@sparticuz/chromium": "^149.0.0",
     "@supabase/supabase-js": "^2.110.1",
     "@types/leaflet": "^1.9.21",
     "baileys": "^7.0.0-rc13",
@@ -21,6 +22,7 @@
     "mammoth": "^1.12.0",
     "next": "16.2.10",
     "pdf-parse": "^2.4.5",
+    "playwright-core": "^1.62.1",
     "pptxgenjs": "^4.0.1",
     "qrcode": "^1.5.4",
     "react": "19.2.4",

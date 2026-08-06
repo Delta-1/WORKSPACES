@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import { AtSign, MessageCircle, Plus, Power, QrCode, RefreshCcw, Shield, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Chatbot, Profile, Sector, WhatsappGroup, WhatsappNumber, WhatsappNumberAccess } from "@/lib/types";
@@ -57,6 +58,10 @@ export default function WhatsappTab({ profile }: { profile: Profile | null }) {
     if (g.data) setGroups(g.data as WhatsappGroup[]);
     if (cs.data?.wa_number_limit != null) setNumberLimit(cs.data.wa_number_limit as number);
   }, []);
+
+  // Número registrado/derrubado ou grupo sincronizado em outra aba (ou pelo
+  // serviço) aparece aqui na hora.
+  useLive(["whatsapp_numbers", "whatsapp_groups"], profile?.company_id, loadAll);
 
   useEffect(() => {
     loadAll();

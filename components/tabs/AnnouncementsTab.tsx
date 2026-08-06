@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import { Megaphone, Pin, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Announcement, Profile } from "@/lib/types";
@@ -34,6 +35,9 @@ export default function AnnouncementsTab({ profile }: { profile: Profile | null 
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.company_id]);
+
+  // Aviso novo no mural chega sem F5 — inclusive o publicado pela IA.
+  useLive(["announcements"], profile?.company_id, load);
 
   async function publish() {
     if (!supabase || !profile?.company_id || !title.trim() || !body.trim()) return;

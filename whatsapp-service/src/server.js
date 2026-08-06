@@ -1166,12 +1166,17 @@ function modeGuidance(mode) {
 const SYSTEM_RULES =
   "\n\n=== REGRAS GERAIS (SEMPRE seguir) ===\n" +
   "1. NUNCA escreva nem fale a palavra \"áudio\" como rótulo (nada de começar com \"Áudio:\"). Vá direto à resposta.\n" +
-  "2. NÃO repita saudação. Cumprimente UMA vez por conversa; se já cumprimentou (ex.: \"olá, tudo bem\"), NÃO cumprimente de novo — continue de onde parou.\n" +
+  "2. NÃO repita saudação. Cumprimente UMA vez por conversa; se já cumprimentou, NÃO cumprimente de novo — continue de onde parou.\n" +
   "3. Nunca repita a mesma frase/resposta que você já mandou antes na conversa. Varie e avance.\n" +
   "4. Use o histórico: não peça de novo dados que a pessoa já deu (nome, empresa, tema, etc.).\n" +
-  "5. Seja objetivo, natural e humano — como uma pessoa real no WhatsApp.\n" +
+  "5. Seja objetivo, natural e humano — como uma pessoa real no WhatsApp. Espelhe o tom de quem fala com você (formal ou informal) e responda no MESMO idioma da pessoa.\n" +
   "6. Listas/opções vão em TEXTO organizado (a pessoa lê com calma), não em áudio.\n" +
-  "7. Seja proativo: quando fizer sentido, ANTECIPE o que a pessoa precisa e ofereça 1–2 sugestões úteis do que você pode fazer.";
+  "7. Seja proativo: quando fizer sentido, ANTECIPE o que a pessoa precisa e ofereça 1–2 sugestões úteis do que você pode fazer.\n" +
+  "8. NUNCA invente informação — preço, prazo, disponibilidade, saldo, dado de cliente. Se existe uma ferramenta para consultar, use-a; se não sabe e não tem como saber, diga que vai verificar em vez de chutar. Um erro dito com confiança é pior que uma dúvida honesta.\n" +
+  "9. Faça UMA pergunta por vez. Um questionário inteiro de uma vez trava a pessoa; conduza a conversa passo a passo.\n" +
+  "10. Antes de uma ação que não dá para desfazer (cobrar, agendar, cadastrar, enviar), diga em uma linha o que vai fazer e o valor/detalhe — e só então faça. A pessoa nunca deve ser surpreendida.\n" +
+  "11. Quando uma ferramenta falhar ou vier vazia, seja honesto e ofereça o próximo passo — não finja que deu certo nem invente o resultado.\n" +
+  "12. Não prometa o que você não pode cumprir agora. Se algo depende de outra pessoa ou de um prazo, deixe isso claro.";
 
 async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null) {
   const name = await companyName(companyId);
@@ -2300,12 +2305,25 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         });
         const out = await resp.json();
         if (!resp.ok || out.error) return { ok: false, message: out.error || "Não consegui montar o documento." };
+        const nomeBase = studioFileName(out.nome || input.titulo || "documento");
+        // O PDF vai PRIMEIRO: é o arquivo com o design, o que a pessoa abre
+        // para ver bonito. O .docx vai junto como o editável. Mandar só o
+        // .docx era o motivo de "chegar sem design" — a conversão para docx
+        // aproxima o visual; a impressão em PDF não.
+        if (out.pdf_base64) {
+          files.push({ name: `${nomeBase}.pdf`, mime: "application/pdf", buffer: Buffer.from(out.pdf_base64, "base64") });
+        }
         files.push({
-          name: `${studioFileName(out.nome || input.titulo || "documento")}.docx`,
+          name: `${nomeBase}.docx`,
           mime: out.mime || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           buffer: Buffer.from(out.docx_base64, "base64"),
         });
-        return { ok: true, message: `Documento "${out.nome}" pronto — enviei o .docx (editável). Diga o que quer ajustar que eu refaço.` };
+        return {
+          ok: true,
+          message: out.pdf_base64
+            ? `Documento "${out.nome}" pronto — enviei o PDF (com o visual) e o .docx (editável). Diga o que quer ajustar que eu refaço.`
+            : `Documento "${out.nome}" pronto — enviei o .docx (editável). O PDF não saiu desta vez; se quiser, tento de novo.`,
+        };
       } catch (e) {
         console.error("documento_criar falhou:", e?.message || e);
         return { ok: false, message: "Tive um problema ao montar o documento. Tenta de novo?" };

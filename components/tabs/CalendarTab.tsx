@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLive } from "@/lib/use-live";
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Plus, SquareKanban, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CalendarEvent, Profile, WorkspaceTask } from "@/lib/types";
@@ -57,6 +58,10 @@ export default function CalendarTab({ profile }: { profile: Profile | null }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Evento criado, movido ou apagado (por qualquer pessoa, ou pela IA no
+  // WhatsApp) aparece aqui na hora — sem F5.
+  useLive(["events"], profile?.company_id, load);
 
   useEffect(() => {
     // detecta retorno do OAuth do Google Agenda
