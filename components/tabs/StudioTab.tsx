@@ -394,8 +394,8 @@ function Editor({ doc, onClose }: { doc: Doc; onClose: () => void }) {
 
 // Painel lateral da Yumi: conversa e aplica o conteúdo no documento.
 function YumiPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.RefObject<HTMLDivElement | null>; onApplied: () => void }) {
-  const [msgs, setMsgs] = useState<{ role: "user" | "nina"; text: string; html?: string }[]>([
-    { role: "nina", text: "Oi! Sou a Yumi 💙 Me diga o que criar ou ajustar neste documento (ex.: “faça uma introdução sobre energia solar”). Eu escrevo e você aplica na página." },
+  const [msgs, setMsgs] = useState<{ role: "user" | "yumi"; text: string; html?: string }[]>([
+    { role: "yumi", text: "Oi! Sou a Yumi 💙 Me diga o que criar ou ajustar neste documento (ex.: “faça uma introdução sobre energia solar”). Eu escrevo e você aplica na página." },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -413,9 +413,9 @@ function YumiPanel({ doc, editorRef, onApplied }: { doc: Doc; editorRef: React.R
         body: JSON.stringify({ prompt, template: doc.template, meta: doc.meta || {}, mode, currentText: editorRef.current?.innerText?.slice(0, 8000) }),
       });
       const data = await res.json();
-      if (data.error) { setMsgs((m) => [...m, { role: "nina", text: `Não consegui: ${data.error}` }]); return; }
-      setMsgs((m) => [...m, { role: "nina", text: "Prontinho! Confira e clique em Aplicar.", html: data.html }]);
-    } catch { setMsgs((m) => [...m, { role: "nina", text: "Tive um problema. Tenta de novo?" }]); }
+      if (data.error) { setMsgs((m) => [...m, { role: "yumi", text: `Não consegui: ${data.error}` }]); return; }
+      setMsgs((m) => [...m, { role: "yumi", text: "Prontinho! Confira e clique em Aplicar.", html: data.html }]);
+    } catch { setMsgs((m) => [...m, { role: "yumi", text: "Tive um problema. Tenta de novo?" }]); }
     finally { setBusy(false); }
   }
 

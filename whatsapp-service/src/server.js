@@ -19,7 +19,6 @@ import makeWASocket, {
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { generateWork, buildDocx, buildPdf, generateDeck, buildPptx, extractNorm, fileName as studioFileName } from "./studio.js";
-import { buscarLivros, acharLivro } from "./catalogos.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
@@ -1975,32 +1974,6 @@ const COPILOT_TOOLS = [
       required: ["nome"],
     },
   },
-  // ---- BIBLIOPEN (a bibliotecária Nina) ----
-  {
-    name: "biblioteca_buscar",
-    description:
-      "Procura livros em catálogos abertos (Project Gutenberg, Internet Archive, Wikisource, Open Library). Use SEMPRE que pedirem um livro — nunca responda de cabeça se uma obra existe ou onde achar. " +
-      "Devolve título, autor, fonte e licença de cada um. Se vier mais de um parecido (mesma obra em edições ou traduções diferentes), LISTE numerado e PERGUNTE qual a pessoa quer, em vez de escolher por ela.",
-    input_schema: {
-      type: "object",
-      properties: {
-        busca: { type: "string", description: "título, autor ou assunto (ex.: 'Machado de Assis Dom Casmurro', 'anatomia')" },
-      },
-      required: ["busca"],
-    },
-  },
-  {
-    name: "biblioteca_entregar",
-    description:
-      "Entrega o link de um livro, pelo id que veio de biblioteca_buscar. Chame DEPOIS que a pessoa escolher qual quer. " +
-      "Quando existe arquivo (domínio público do Gutenberg), devolve também o endereço para BAIXAR o texto. " +
-      "Mande o link e explique em uma linha o que a pessoa vai encontrar lá.",
-    input_schema: {
-      type: "object",
-      properties: { livro_id: { type: "string", description: "id do livro vindo de biblioteca_buscar (ex.: 'gutenberg:1342')" } },
-      required: ["livro_id"],
-    },
-  },
   // ---- SALDO E COBRANÇA (tudo em reais) ----
   {
     name: "tabela_precos",
@@ -2196,62 +2169,6 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         message: input.corrigir && !semNome ? `Troquei de "${atual.name}" para "${nome}".` : `Salvei o contato como "${nome}".`,
         nome,
       };
-    }
-
-    // ---- BIBLIOPEN ----
-    // A Nina não tem acervo próprio: ela pergunta na hora aos mesmos catálogos
-    // abertos que o site do BibliOpen usa. Sem banco no meio, as duas pontas
-    // dão a mesma resposta — e não existe "livro que a Nina indica e o site
-    // não tem".
-    if (name === "biblioteca_buscar") {
-      try {
-        const livros = await buscarLivros(String(input.busca || ""), 12);
-        if (!livros.length) {
-          return {
-            ok: true, total: 0,
-            message: "Não achei nada com esse termo nos catálogos abertos. Sugira outra grafia, o nome do autor, ou o título no idioma original.",
-          };
-        }
-        return {
-          ok: true,
-          total: livros.length,
-          livros: livros.map((l) => ({
-            id: l.id, titulo: l.titulo, autor: l.autor, idioma: l.idioma,
-            fonte: l.fonte, licenca: l.licenca, tem_arquivo: !!l.arquivo,
-          })),
-          instrucao:
-            livros.length > 1
-              ? "Vieram vários. LISTE numerado (título, autor e fonte) e PERGUNTE qual ela quer. Não escolha por ela e não entregue antes da resposta."
-              : "Veio um só. Confirme se é esse mesmo e então use biblioteca_entregar.",
-        };
-      } catch (e) {
-        console.error("biblioteca_buscar falhou:", e?.message || e);
-        return { ok: false, message: "Não consegui falar com os catálogos agora." };
-      }
-    }
-    if (name === "biblioteca_entregar") {
-      try {
-        const l = await acharLivro(String(input.livro_id || ""));
-        if (!l) return { ok: false, message: "Não achei esse livro. Busque de novo com biblioteca_buscar." };
-        return {
-          ok: true,
-          titulo: l.titulo,
-          autor: l.autor,
-          fonte: l.fonte,
-          licenca: l.licenca,
-          link: l.pagina,
-          // Só o Gutenberg entrega arquivo. Nos outros, quem serve é a própria
-          // biblioteca de origem — mandar um "baixe aqui" que não existe seria
-          // prometer porta que ninguém abriu.
-          baixar: l.arquivo || null,
-          instrucao: l.arquivo
-            ? "Mande o link da página E o link de baixar, em mensagens de TEXTO (link em áudio não dá para copiar). Diga em uma linha que é domínio público, de graça, e que dá para guardar o arquivo."
-            : "Mande o link em TEXTO. Explique em uma linha que a leitura é gratuita e acontece na própria biblioteca de origem — o BibliOpen só faz a ponte.",
-        };
-      } catch (e) {
-        console.error("biblioteca_entregar falhou:", e?.message || e);
-        return { ok: false, message: "Não consegui montar o link agora." };
-      }
     }
 
     // ---- SALDO E COBRANÇA (em reais) ----
@@ -2884,7 +2801,6 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     creditos: ["tabela_precos", "saldo_consultar", "saldo_recarregar", "pagamento_conferir", "cobrar_servico", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
-    biblioteca: ["biblioteca_buscar", "biblioteca_entregar"],
   };
   // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
   // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
@@ -2903,7 +2819,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
       "list_forms", "save_to_form", "list_tasks", "lookup_client", "list_sectors", "list_employees",
       "cobranca_pendentes", "cobranca_status_cliente",
       "documento_modelos", "documento_previa", "documento_criar", "ler_arquivo_enviado", "documento_norma_do_arquivo",
-      "tabela_precos", "saldo_consultar", "biblioteca_buscar", "biblioteca_entregar", ...SEMPRE,
+      "tabela_precos", "saldo_consultar", ...SEMPRE,
       "logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento",
     ]);
     allowedNames = allowedNames ? new Set([...allowedNames].filter((n) => SAFE.has(n))) : new Set(SAFE);
