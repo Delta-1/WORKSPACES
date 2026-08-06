@@ -1,9 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Command, Mic, Sparkles, X } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { Command, Mic, Radio, Sparkles, X } from "lucide-react";
 import Orb from "@/components/Orb";
 import { supabase } from "@/lib/supabase-client";
+
+const WAKE_WORD_KEY = "copilot:wake-word";
+const WAKE_WORD_EVENT = "copilot-wake-word-change";
+
+function subscribeWakeWord(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(WAKE_WORD_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(WAKE_WORD_EVENT, onStoreChange);
+  };
+}
+
+function getWakeWordSnapshot() {
+  return window.localStorage.getItem(WAKE_WORD_KEY) === "true";
+}
+
+function getWakeWordServerSnapshot() {
+  return false;
+}
 
 export default function AgentModeOverlay({
   companyName,
@@ -18,6 +38,12 @@ export default function AgentModeOverlay({
 }) {
   const [agentName, setAgentName] = useState("Copilot");
   const [accent, setAccent] = useState("#10b981");
+  const wakeWordEnabled = useSyncExternalStore(subscribeWakeWord, getWakeWordSnapshot, getWakeWordServerSnapshot);
+
+  function toggleWakeWord() {
+    window.localStorage.setItem(WAKE_WORD_KEY, String(!wakeWordEnabled));
+    window.dispatchEvent(new Event(WAKE_WORD_EVENT));
+  }
 
   useEffect(() => {
     const client = supabase;
@@ -72,22 +98,34 @@ export default function AgentModeOverlay({
             </p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/55 transition hover:bg-white/10 hover:text-white"
-          aria-label="Sair do Modo Agente"
-          title="Sair do Modo Agente (Esc)"
-        >
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleWakeWord}
+            className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition ${wakeWordEnabled ? "border-emerald-400/35 bg-emerald-400/15 text-emerald-200" : "border-white/10 bg-white/5 text-white/55 hover:bg-white/10 hover:text-white"}`}
+            aria-pressed={wakeWordEnabled}
+            title={wakeWordEnabled ? "Desativar chamada por voz" : "Ativar chamada por voz"}
+          >
+            <Radio size={15} className={wakeWordEnabled ? "animate-pulse" : ""} />
+            <span className="hidden sm:inline">{wakeWordEnabled ? "Chamada ativa" : "Chamar por voz"}</span>
+          </button>
+          <button
+            onClick={onClose}
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/55 transition hover:bg-white/10 hover:text-white"
+            aria-label="Sair do Modo Agente"
+            title="Sair do Modo Agente (Esc)"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </header>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-5 z-[110] flex justify-center px-4">
         <div className="flex max-w-full items-center gap-4 rounded-2xl border border-white/10 bg-black/35 px-4 py-2.5 text-[11px] text-white/55 backdrop-blur-xl">
           <span className="flex items-center gap-1.5">
             <Mic size={13} style={{ color: accent }} />
-            <span className="sm:hidden">Toque no núcleo para falar</span>
-            <span className="hidden sm:inline">O microfone fica desligado até você usar o atalho</span>
+            <span className="sm:hidden">{wakeWordEnabled ? `Diga “Ei, ${agentName}”` : "Toque no núcleo para falar"}</span>
+            <span className="hidden sm:inline">{wakeWordEnabled ? `Diga “Ei, ${agentName}” ou “Ei, Copiloto”` : "O microfone fica desligado até você usar o atalho"}</span>
           </span>
           <span className="h-4 w-px bg-white/10" />
           <span className="hidden items-center gap-1.5 sm:flex">
@@ -102,6 +140,8 @@ export default function AgentModeOverlay({
         title={agentName}
         variant="agent"
         pushToTalkActive={pushToTalkActive}
+        alwaysListening={wakeWordEnabled}
+        requireWakeWord={wakeWordEnabled}
         voicePrompt="Estou ouvindo"
         onClose={onClose}
       />
