@@ -6,6 +6,8 @@ import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
 import TutorialOverlay from "@/components/TutorialOverlay";
+import WindowManager from "@/components/WindowManager";
+import AppContextMenu from "@/components/AppContextMenu";
 import { hasTutorial, WELCOME } from "@/lib/tutorials";
 import BlockedScreen from "@/components/BlockedScreen";
 import SplashScreen from "@/components/SplashScreen";
@@ -53,6 +55,8 @@ import { fetchCompany, updateCompany as persistCompany, type CompanyInfo } from 
 import type { Company, Profile, Role } from "@/lib/types";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
+export type DockPosition = "bottom" | "top" | "left" | "right";
+export type AnimStyle = "mac" | "windows" | "fun" | "none";
 
 const APPS: AppDef[] = [
   { id: "inicio", label: "Início", icon: LayoutGrid, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -121,6 +125,14 @@ export default function Home() {
   // Qual tutorial mostrar agora (null = nenhum). O WELCOME abre uma vez logo
   // após entrar; os de app abrem na primeira vez que a pessoa abre aquele app.
   const [tutorial, setTutorial] = useState<string | null>(null);
+  // A barra de apps pode ir para qualquer lado — preferência de cada pessoa.
+  const [dockPosition, setDockPosition] = useState<DockPosition>("bottom");
+  const [animStyle, setAnimStyle] = useState<AnimStyle>("mac");
+  // Janelas flutuantes abertas (abrir Kanban e Calendário ao mesmo tempo).
+  const [janelas, setJanelas] = useState<{ id: string; z: number; min: boolean }[]>([]);
+  const zTopo = useRef(20);
+  // Menu do botão direito num ícone de app (abrir em janela, fixar/desafixar).
+  const [appMenu, setAppMenu] = useState<{ id: string; label: string; x: number; y: number; fixado: boolean } | null>(null);
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [copilotPushToTalk, setCopilotPushToTalk] = useState(false);
@@ -455,7 +467,17 @@ export default function Home() {
     } catch {
       /* ignore */
     }
+    try {
+      const p = localStorage.getItem("dock:pos") as DockPosition | null;
+      if (p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
+      const a = localStorage.getItem("anim:style") as AnimStyle | null;
+      if (a === "mac" || a === "windows" || a === "fun" || a === "none") setAnimStyle(a);
+    } catch { /* ignore */ }
   }, []);
+
+  // Aplica o estilo de animação na raiz — o CSS em globals.css faz o resto.
+  useEffect(() => { document.documentElement.setAttribute("data-anim", animStyle); }, [animStyle]);
+  const mudarAnim = (a: AnimStyle) => { setAnimStyle(a); try { localStorage.setItem("anim:style", a); } catch {} };
   function saveQuick(ids: string[]) {
     setQuickIds(ids);
     try {
@@ -487,6 +509,82 @@ export default function Home() {
     base.splice(to === -1 ? base.length : to, 0, id);
     saveQuick(base);
   }
+
+  // ── barra + janelas ────────────────────────────────────────────────────────
+  const abrirNaTela = (id: string) => { setTab(id); setDrawerOpen(false); };
+  // Abre o menu do botão direito para um app, na posição do clique.
+  const abrirAppMenu = (id: string, x: number, y: number) => {
+    const label = APPS.find((a) => a.id === id)?.label ?? id;
+    setAppMenu({ id, label, x, y, fixado: (validQuick.length ? validQuick : dockApps.map((a) => a.id)).includes(id) });
+  };
+  const mudarDock = (p: DockPosition) => { setDockPosition(p); try { localStorage.setItem("dock:pos", p); } catch {} };
+  const abrirJanela = (id: string) => {
+    setJanelas((js) => js.some((j) => j.id === id)
+      ? js.map((j) => j.id === id ? { ...j, min: false, z: ++zTopo.current } : j)  // já aberta → traz à frente
+      : [...js, { id, z: ++zTopo.current, min: false }]);
+  };
+  const fecharJanela = (id: string) => setJanelas((js) => js.filter((j) => j.id !== id));
+  const focarJanela = (id: string) => setJanelas((js) => js.map((j) => j.id === id ? { ...j, z: ++zTopo.current } : j));
+  const minimizarJanela = (id: string) => setJanelas((js) => js.map((j) => j.id === id ? { ...j, min: !j.min } : j));
+
+  // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
+  const mainPad =
+    dockPosition === "top" ? "pt-24 sm:pt-28" :
+    dockPosition === "left" ? "pl-20 sm:pl-24" :
+    dockPosition === "right" ? "pr-20 sm:pr-24" :
+    "pb-24 sm:pb-28";
+
+  // O "roteador de apps": dado um id, devolve o app montado. Existe como função
+  // (não como JSX solto dentro do <main>) porque agora o mesmo app é desenhado
+  // em DOIS lugares — na tela principal e dentro de uma janela flutuante. Uma
+  // fonte só evita as duas versões divergirem.
+  const renderApp = (appId: string): React.ReactNode => {
+    switch (appId) {
+      case "inicio": return <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} />;
+      case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
+      case "kanban": return <KanbanTab profile={profile} />;
+      case "calendario": return <CalendarTab profile={profile} />;
+      case "group": return <GroupTab profile={profile} />;
+      // ids antigos ("academico"/"apresentacoes") ainda caem no Estúdio.
+      case "estudio": case "academico": case "apresentacoes": return <StudioTab profile={profile} />;
+      case "mensagens": return <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />;
+      case "contatos": return <ContactsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />;
+      case "atendimentos": return <AtendimentosTab profile={profile} />;
+      case "chat": return <ChatTab />;
+      case "arquivos": return <FilesGraphTab profile={profile} />;
+      case "mural": return <AnnouncementsTab profile={profile} />;
+      case "funcionarios": return <EmployeesTab profile={profile} />;
+      case "financeiro": return <FinanceTab profile={profile} />;
+      case "clientes": return <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />;
+      case "formularios": return <FormsTab profile={profile} />;
+      case "logistica": return <LogisticsTab profile={profile} />;
+      case "carteira": return <CarteiraTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />;
+      case "apphub": return <AppHubTab profile={profile} superAdmin={superAdmin} />;
+      case "clientes_ia": return superAdmin ? <ClientsIaTab profile={profile} /> : null;
+      case "visaoadm": return superAdmin ? <VisaoAdmTab /> : null;
+      case "godseye": return superAdmin ? <GodsEyeTab /> : null;
+      case "game": return showGame ? <GameTab profile={profile} /> : null;
+      case "planos": return <PlansTab />;
+      case "remoto": return <RemoteAccessTab profile={profile} />;
+      case "automacao": return <AutomationTab profile={profile} />;
+      case "labs": return <LabsTab profile={profile} canUseAutomation={canAccessApp("automacao")} />;
+      case "memorias": return <MemoriesTab profile={profile} />;
+      case "log": return <LogTab profile={profile} />;
+      case "config": return (
+        <ConfigTab
+          companyName={company.name} companyCode={myCompany?.company_code} tvLogoCorner={company.tvLogoCorner}
+          googleDriveEnabled={company.googleDriveEnabled} themeColor={company.themeColor} iconColor={company.iconColor}
+          logoSize={company.logoSize} themeStyle={company.themeStyle} address={company.address} addressLink={company.addressLink}
+          phone={company.phone} email={company.email} website={company.website} reviewLink={company.reviewLink}
+          photoUrl={company.photoUrl} autoCloseMinutes={company.autoCloseMinutes} description={company.description}
+          remoteAgentUrl={company.remoteAgentUrl} onUpdateCompany={handleUpdateCompany} onReplayTutorials={reverTutoriais}
+          dockPosition={dockPosition} onDockPosition={mudarDock}
+          animStyle={animStyle} onAnimStyle={mudarAnim}
+        />
+      );
+      default: return null;
+    }
+  };
 
   if (checkingSession) {
     return <div className="fixed inset-0 bg-[#060a12]" />;
@@ -598,63 +696,28 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden p-3 sm:p-6 pb-24 sm:pb-28">
-        {tab === "inicio" && <HomeTab companyName={company.name} profile={profile} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} />}
-        {tab === "organograma" && <OrgChartTab canEdit={role === "gestor"} profile={profile} />}
-        {tab === "kanban" && <KanbanTab profile={profile} />}
-        {tab === "calendario" && <CalendarTab profile={profile} />}
-        {tab === "group" && <GroupTab profile={profile} />}
-        {/* "academico" e "apresentacoes" ainda caem aqui: são ids antigos que
-            podem estar salvos na barra de acesso rápido de quem já usava. */}
-        {(tab === "estudio" || tab === "academico" || tab === "apresentacoes") && <StudioTab profile={profile} />}
-        {tab === "mensagens" && <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />}
-        {tab === "contatos" && <ContactsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
-        {tab === "atendimentos" && <AtendimentosTab profile={profile} />}
-        {tab === "chat" && <ChatTab />}
-        {tab === "arquivos" && <FilesGraphTab profile={profile} />}
-        {tab === "mural" && <AnnouncementsTab profile={profile} />}
-        {tab === "funcionarios" && <EmployeesTab profile={profile} />}
-        {tab === "financeiro" && <FinanceTab profile={profile} />}
-        {tab === "clientes" && <ClientsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
-        {tab === "formularios" && <FormsTab profile={profile} />}
-        {tab === "logistica" && <LogisticsTab profile={profile} />}
-        {tab === "carteira" && <CarteiraTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />}
-        {tab === "apphub" && <AppHubTab profile={profile} superAdmin={superAdmin} />}
-        {tab === "clientes_ia" && superAdmin && <ClientsIaTab profile={profile} />}
-        {tab === "visaoadm" && superAdmin && <VisaoAdmTab />}
-        {tab === "godseye" && superAdmin && <GodsEyeTab />}
-        {tab === "game" && showGame && <GameTab profile={profile} />}
-        {tab === "planos" && <PlansTab />}
-        {tab === "remoto" && <RemoteAccessTab profile={profile} />}
-        {tab === "automacao" && <AutomationTab profile={profile} />}
-        {tab === "labs" && <LabsTab profile={profile} canUseAutomation={canAccessApp("automacao")} />}
-        {tab === "memorias" && <MemoriesTab profile={profile} />}
-        {tab === "log" && <LogTab profile={profile} />}
-        {tab === "config" && (
-          <ConfigTab
-            companyName={company.name}
-            companyCode={myCompany?.company_code}
-            tvLogoCorner={company.tvLogoCorner}
-            googleDriveEnabled={company.googleDriveEnabled}
-            themeColor={company.themeColor}
-            iconColor={company.iconColor}
-            logoSize={company.logoSize}
-            themeStyle={company.themeStyle}
-            address={company.address}
-            addressLink={company.addressLink}
-            phone={company.phone}
-            email={company.email}
-            website={company.website}
-            reviewLink={company.reviewLink}
-            photoUrl={company.photoUrl}
-            autoCloseMinutes={company.autoCloseMinutes}
-            description={company.description}
-            remoteAgentUrl={company.remoteAgentUrl}
-            onUpdateCompany={handleUpdateCompany}
-            onReplayTutorials={reverTutoriais}
-          />
-        )}
+      <main className={`flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
+        {/* key={tab} faz a tela re-animar a cada troca de app, no estilo escolhido. */}
+        <div key={tab} className="app-anim h-full">{renderApp(tab)}</div>
       </main>
+
+      {/* Janelas flutuantes: abrir vários apps ao mesmo tempo, como no desktop. */}
+      <WindowManager
+        windows={janelas}
+        titleOf={(id) => APPS.find((a) => a.id === id)?.label ?? id}
+        render={renderApp}
+        onClose={fecharJanela}
+        onFocus={focarJanela}
+        onMinimize={minimizarJanela}
+      />
+      <AppContextMenu
+        alvo={appMenu}
+        onAbrirJanela={abrirJanela}
+        onAbrirTela={abrirNaTela}
+        onFixar={pinApp}
+        onDesafixar={unpinApp}
+        onClose={() => setAppMenu(null)}
+      />
 
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
@@ -671,6 +734,8 @@ export default function Home() {
         onPin={pinApp}
         onUnpin={unpinApp}
         onReorder={reorderQuick}
+        position={dockPosition}
+        onContext={abrirAppMenu}
       />
       <AppDrawer
         apps={visibleApps}
@@ -680,6 +745,7 @@ export default function Home() {
         onClose={() => { setDrawerOpen(false); setEditApps(false); }}
         onSelect={setTab}
         quickIds={dockApps.map((a) => a.id)}
+        onContext={abrirAppMenu}
       />
     </div>
   );

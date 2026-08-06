@@ -417,3 +417,33 @@ html[data-style="paper"] .text-gray-400 {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ============================================================================
+   ESTILOS DE ANIMAÇÃO — escolhidos em Configurações → Aparência.
+   Aplicados por data-anim na <html>. Cada app novo entra com a classe
+   .app-anim; a animação em si vem do estilo escolhido. "none" respeita quem
+   prefere tela parada (e quem tem prefers-reduced-motion).
+   ============================================================================ */
+.app-anim { will-change: transform, opacity; }
+
+/* macOS: suave, com uma leve escala — a sensação de "abrir" do Mac. */
+html[data-anim="mac"] .app-anim { animation: anim-mac 0.42s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes anim-mac { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+html[data-anim="mac"] .liquid-glass { transition: transform 0.3s cubic-bezier(0.22,1,0.36,1), box-shadow 0.3s; }
+
+/* Windows: entra deslizando de baixo, mais "seco" e rápido. */
+html[data-anim="windows"] .app-anim { animation: anim-win 0.28s ease-out; }
+@keyframes anim-win { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Divertido: uma entrada com molejo (bounce). */
+html[data-anim="fun"] .app-anim { animation: anim-fun 0.6s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes anim-fun { 0% { opacity: 0; transform: scale(0.8) rotate(-2deg); } 60% { transform: scale(1.04) rotate(1deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
+
+/* Sem animação: nada se mexe. */
+html[data-anim="none"] .app-anim { animation: none; }
+
+/* Acessibilidade: quem pede menos movimento no sistema não recebe as animações,
+   independentemente do estilo escolhido. */
+@media (prefers-reduced-motion: reduce) {
+  .app-anim { animation: none !important; }
+}
