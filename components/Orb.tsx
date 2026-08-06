@@ -69,6 +69,8 @@ export default function Orb({
   const pushInterimRef = useRef("");
   const pushSubmittedRef = useRef(false);
   const pushSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pushRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pushSessionRef = useRef(0);
   const nameRef = useRef(title);
   const alwaysListeningRef = useRef(alwaysListening);
   const wakeArmedUntilRef = useRef(0);
@@ -429,19 +431,22 @@ export default function Orb({
   // Palavra de acordar tolerante a erro de reconhecimento: "orb" e o que costuma
   // ser ouvido errado (orbe, órbi, orbi, orbis, orbiz, barbie, hobby, robie…).
   const WAKE = /\b(orbe?s?|[óo]rb[ie]s?|orbiz|orbes|barb(?:ie|i)|hobb?y|rob(?:ie|y)|orv[ei])\b/gi;
-  function dynamicWakeRegex() {
-    const aliases = [nameRef.current, ...(slot === "internal" ? ["Copilot", "Copiloto"] : ["Orb", "Orbe"])]
+  function dynamicWakeRegex(global = false) {
+    const aliases = [nameRef.current]
       .map((value) => value.trim())
       .filter(Boolean)
       .filter((value, index, values) => values.findIndex((item) => item.toLocaleLowerCase("pt-BR") === value.toLocaleLowerCase("pt-BR")) === index)
       .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    return new RegExp(`(?:^|[\\s,.:!?-])(?:${aliases.join("|")})(?=$|[\\s,.:!?-])`, "iu");
+    if (slot === "internal") aliases.push("copilot(?:o)?", "copi\\s*lot(?:o)?", "copiloti");
+    else aliases.push("orbe?", "[óo]rbi");
+    return new RegExp(`(?:^|[\\s,.:!?-])(?:${aliases.join("|")})(?=$|[\\s,.:!?-])`, global ? "giu" : "iu");
   }
   function handleTranscript(raw: string, bypassWakeWord = false) {
     const t = raw.trim();
     if (!t) return;
 
     const dynamicWake = dynamicWakeRegex();
+    const wakeLead = /^(?:(?:ei|oi|olá|ola|hey|alô|alo|escuta|ouve|por favor)\b[\s,.:!?-]*)+/iu;
     let stripped = t;
     if (requireWakeWord && !bypassWakeWord) {
       const now = Date.now();
@@ -449,12 +454,12 @@ export default function Orb({
       if (!wasCalled && now > wakeArmedUntilRef.current) return;
       if (wasCalled) {
         wakeArmedUntilRef.current = now + 8000;
-        stripped = stripped.replace(dynamicWake, " ");
+        stripped = stripped.replace(dynamicWakeRegex(true), " ");
       }
     } else {
-      stripped = stripped.replace(dynamicWake, " ");
+      stripped = stripped.replace(dynamicWakeRegex(true), " ");
     }
-    stripped = stripped.replace(WAKE, " ").replace(/^[\s,.:!?-]+/, "").replace(/\s+/g, " ").trim();
+    stripped = stripped.replace(wakeLead, " ").replace(WAKE, " ").replace(wakeLead, " ").replace(/^[\s,.:!?-]+/, "").replace(/\s+/g, " ").trim();
     showFloat(stripped || t);
 
     // Fechar por voz: "tchau", "bye", "bye bye" (com ou sem "orb").
@@ -510,7 +515,7 @@ export default function Orb({
       }
     };
     rec.onend = () => {
-      setListening(false);
+      if (!pushHeldRef.current) setListening(false);
       // Mãos-livres: religa sozinho (o Chrome encerra a sessão sozinho de tempos em
       // tempos). Não religa enquanto o Orb está FALANDO (pra não se ouvir).
       if (auto && activeRef.current && !speakingRef.current) {
@@ -668,7 +673,9 @@ export default function Orb({
     if (pushSubmittedRef.current) return;
     pushSubmittedRef.current = true;
     if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    if (pushRestartTimerRef.current) clearTimeout(pushRestartTimerRef.current);
     pushSubmitTimerRef.current = null;
+    pushRestartTimerRef.current = null;
     const transcript = `${pushTextRef.current} ${pushInterimRef.current}`.replace(/\s+/g, " ").trim();
     pushTextRef.current = "";
     pushInterimRef.current = "";
@@ -688,6 +695,70 @@ export default function Orb({
       return;
     }
     handleTranscript(transcript, true);
+  }
+
+  function startPushRecognition(session: number) {
+    if (!pushHeldRef.current || session !== pushSessionRef.current) return;
+    const w = window as unknown as { webkitSpeechRecognition?: new () => Rec; SpeechRecognition?: new () => Rec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) return;
+
+    const rec = new Ctor();
+    rec.lang = "pt-BR";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (e) => {
+      if (session !== pushSessionRef.current) return;
+      let interim = "";
+      const from = typeof e.resultIndex === "number" ? e.resultIndex : 0;
+      for (let i = from; i < e.results.length; i++) {
+        const result = e.results[i];
+        const text = result?.[0]?.transcript?.trim();
+        if (!text) continue;
+        if (result.isFinal ?? true) pushTextRef.current = `${pushTextRef.current} ${text}`.trim();
+        else interim = `${interim} ${text}`.trim();
+      }
+      pushInterimRef.current = interim;
+      const preview = `${pushTextRef.current} ${interim}`.replace(/\s+/g, " ").trim();
+      showFloat(preview || `${voicePrompt} · solte V para enviar`);
+    };
+    rec.onend = () => {
+      if (session !== pushSessionRef.current) return;
+      if (!pushHeldRef.current) {
+        submitPushToTalk();
+        return;
+      }
+      // Alguns navegadores encerram o reconhecimento após poucos segundos ou
+      // após uma pausa. Mantemos a interface ouvindo e criamos uma sessão nova,
+      // evitando o efeito visual de microfone ligando e desligando.
+      if (pushRestartTimerRef.current) clearTimeout(pushRestartTimerRef.current);
+      pushRestartTimerRef.current = setTimeout(() => startPushRecognition(session), 140);
+    };
+    rec.onerror = (event) => {
+      if (session !== pushSessionRef.current) return;
+      const error = event?.error || "";
+      if (error === "not-allowed" || error === "service-not-allowed" || error === "audio-capture") {
+        pushSessionRef.current += 1;
+        pushHeldRef.current = false;
+        pushSubmittedRef.current = true;
+        oneShotVoiceRef.current = false;
+        voiceOnRef.current = false;
+        setVoiceOn(false);
+        setListening(false);
+        alert(error === "audio-capture"
+          ? "Não encontrei um microfone disponível para o Copilot."
+          : "Para falar com o Copilot, permita o microfone neste site (cadeado ao lado do endereço)."
+        );
+      }
+    };
+    recRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      if (!pushHeldRef.current || session !== pushSessionRef.current) return;
+      if (pushRestartTimerRef.current) clearTimeout(pushRestartTimerRef.current);
+      pushRestartTimerRef.current = setTimeout(() => startPushRecognition(session), 240);
+    }
   }
 
   function beginPushToTalk() {
@@ -717,66 +788,15 @@ export default function Orb({
     setMinimized(true);
     setListening(true);
     showFloat(`${voicePrompt} · solte V para enviar`);
-
-    const rec = new Ctor();
-    rec.lang = "pt-BR";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.onresult = (e) => {
-      let interim = "";
-      const from = typeof e.resultIndex === "number" ? e.resultIndex : 0;
-      for (let i = from; i < e.results.length; i++) {
-        const result = e.results[i];
-        const text = result?.[0]?.transcript?.trim();
-        if (!text) continue;
-        if (result.isFinal ?? true) pushTextRef.current = `${pushTextRef.current} ${text}`.trim();
-        else interim = `${interim} ${text}`.trim();
-      }
-      pushInterimRef.current = interim;
-      const preview = `${pushTextRef.current} ${interim}`.replace(/\s+/g, " ").trim();
-      showFloat(preview || `${voicePrompt} · solte V para enviar`);
-    };
-    rec.onend = () => {
-      setListening(false);
-      if (pushHeldRef.current) {
-        setTimeout(() => {
-          if (!pushHeldRef.current) return;
-          try {
-            rec.start();
-            setListening(true);
-          } catch { /* ignore */ }
-        }, 120);
-        return;
-      }
-      submitPushToTalk();
-    };
-    rec.onerror = (event) => {
-      const error = event?.error || "";
-      if (error === "not-allowed" || error === "service-not-allowed") {
-        pushHeldRef.current = false;
-        pushSubmittedRef.current = true;
-        oneShotVoiceRef.current = false;
-        voiceOnRef.current = false;
-        setVoiceOn(false);
-        setListening(false);
-        alert("Para falar com o Orb, permita o microfone neste site (cadeado ao lado do endereço).");
-      }
-    };
-    recRef.current = rec;
-    try {
-      rec.start();
-    } catch {
-      pushHeldRef.current = false;
-      oneShotVoiceRef.current = false;
-      voiceOnRef.current = false;
-      setVoiceOn(false);
-      setListening(false);
-    }
+    pushSessionRef.current += 1;
+    startPushRecognition(pushSessionRef.current);
   }
 
   function endPushToTalk() {
     if (!pushHeldRef.current) return;
     pushHeldRef.current = false;
+    if (pushRestartTimerRef.current) clearTimeout(pushRestartTimerRef.current);
+    pushRestartTimerRef.current = null;
     setListening(false);
     try {
       recRef.current?.stop();
@@ -790,6 +810,7 @@ export default function Orb({
     activeRef.current = false;
     pushHeldRef.current = false;
     if (pushSubmitTimerRef.current) clearTimeout(pushSubmitTimerRef.current);
+    if (pushRestartTimerRef.current) clearTimeout(pushRestartTimerRef.current);
     try { recRef.current?.stop(); } catch { /* ignore */ }
   }, []);
   // Pressionar V inicia a captura; soltar V encerra e envia uma única transcrição.
