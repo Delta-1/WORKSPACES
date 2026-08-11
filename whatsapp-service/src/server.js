@@ -1254,13 +1254,86 @@ const HUMANIZED_RULES =
   "• Use abreviações comuns de forma NATURAL e VARIADA, não em toda frase: vc/você, tbm/também, pra/para, pq/porque, blz, tá, né, tô, cê, vlw, obg, tmj, pfv. Alterne entre a forma abreviada e a completa como uma pessoa faz sem pensar.\n" +
   "• Pode usar minúscula no começo às vezes, e dispensar o ponto final em mensagens curtas.\n" +
   "• Emojis com moderação, quando combinam com o clima. Um \"kkk\" ou \"haha\" quando a conversa é descontraída — nunca em assunto sério.\n" +
-  "• Mensagens curtas e diretas. Se for longo, quebre em partes como quem manda várias mensagens.\n" +
+  "• Converse no RITMO de WhatsApp: frases curtas, um pensamento por vez. Se a pessoa te cumprimenta, responda o cumprimento primeiro (\"oi, tudo bem?\") antes de já despejar solução. O sistema já quebra sua resposta em vários balões com \"digitando\" e pausas — então escreva em frases curtas e naturais, não um parágrafo só.\n" +
+  "• Nada de textão listando tudo de uma vez. Puxe a conversa: \"então, o que eu consigo fazer é...\" e aí a listinha. Deixe a conversa fluir, não entregue um manual.\n" +
   "• Espelhe o jeito da pessoa: se ela é formal, segure a mão nas gírias; se é solta, relaxe junto.\n" +
   "• NUNCA sacrifique clareza pela informalidade: números, valores, horários e nomes vão SEMPRE certos e por extenso. Humanizado é no tom, não no conteúdo.\n" +
   "• Nada de exagero: não encha de abreviação nem de emoji. O objetivo é soar gente, não soar adolescente forçado.";
 
 // Um agente está em modo humanizado? A coluna pode não existir em bancos antigos.
 const ehHumanizado = (chatbot) => chatbot?.humanized === true;
+
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Quebra a resposta em mensagens curtas, como uma pessoa manda no WhatsApp —
+ * um pensamento por balão. NÃO parte listas: uma listinha numerada vai inteira
+ * num balão só (partir ela em vários "digitando" seria irritante, não humano).
+ */
+function partirHumanizado(texto) {
+  const t = String(texto || "").trim();
+  if (!t) return [];
+  // Se tem lista (linhas com -, •, "1." etc.), separa o que vem antes da lista
+  // em balões e manda a lista toda junta.
+  const linhas = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const temLista = linhas.some((l) => /^(\d+[.)]|[-–•*])\s+/.test(l));
+  if (temLista) {
+    const antes = [];
+    const lista = [];
+    for (const l of linhas) {
+      if (/^(\d+[.)]|[-–•*])\s+/.test(l) || lista.length) lista.push(l);
+      else antes.push(l);
+    }
+    const baloes = [];
+    for (const l of antes) baloes.push(...frasesEmBaloes(l));
+    if (lista.length) baloes.push(lista.join("\n"));
+    return baloes.filter(Boolean);
+  }
+  // Sem lista: agrupa frases curtas em balões (1–2 frases, ~180 caracteres).
+  return frasesEmBaloes(linhas.join(" "));
+}
+
+// Uma frase por balão — é o que dá o clima de conversa ("oi, tudo bem?" num
+// balão, "então..." no outro). Só junta ao balão anterior quando o pedaço é
+// bem curtinho (um "kkk", "então", "beleza") ou quando o anterior ainda era
+// curto — senão viravam balões de uma palavra só. E limita a 6 balões: uma
+// resposta longa não pode virar quinze mensagens.
+function frasesEmBaloes(texto) {
+  const frases = String(texto).match(/[^.!?…\n]+[.!?…]*\s*/g) || [texto];
+  const baloes = [];
+  for (const f of frases) {
+    const t = f.trim();
+    if (!t) continue;
+    const anterior = baloes[baloes.length - 1];
+    if (anterior && (t.length < 20 || anterior.length < 25)) baloes[baloes.length - 1] = `${anterior} ${t}`;
+    else baloes.push(t);
+  }
+  if (baloes.length <= 6) return baloes;
+  // Junta o excedente no último balão para não estourar em mensagens demais.
+  const cabeca = baloes.slice(0, 5);
+  cabeca.push(baloes.slice(5).join(" "));
+  return cabeca;
+}
+
+/**
+ * Manda a resposta como uma pessoa: um balão por vez, com "digitando…" e uma
+ * pausa proporcional ao tamanho antes de cada um. O primeiro sai rapidinho (a
+ * saudação), os seguintes com o tempinho de quem está escrevendo.
+ */
+async function enviarHumanizado(sock, jid, conversationId, cid, texto) {
+  const baloes = partirHumanizado(texto);
+  if (!baloes.length) return;
+  for (let i = 0; i < baloes.length; i++) {
+    const b = baloes[i];
+    // Pausa de "escrevendo": curta no 1º balão, e depois ~30ms por caractere,
+    // com piso e teto para não ficar nem robótico nem lento demais.
+    const espera = i === 0 ? Math.min(900, 250 + b.length * 12) : Math.min(3200, 500 + b.length * 30);
+    try { await sock.sendPresenceUpdate("composing", jid); } catch { /* */ }
+    await dormir(espera);
+    try { await sock.sendPresenceUpdate("paused", jid); } catch { /* */ }
+    await sendBotMessage(sock, jid, conversationId, cid, { text: b });
+  }
+}
 
 async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null) {
   const name = await companyName(companyId);
@@ -3584,11 +3657,16 @@ async function startSession(numberId) {
                 }
               }
               if (!sentAsAudio) {
-                await sendBotMessage(sock, jid, conversation.id, cid, { text: reply });
+                // Modo humanizado: em vez de um textão, vários balões curtos com
+                // "digitando…" e pausas, como gente conversando. Fora dele, uma
+                // mensagem só, como antes.
+                if (ehHumanizado(agentForReply)) await enviarHumanizado(sock, jid, conversation.id, cid, reply);
+                else await sendBotMessage(sock, jid, conversation.id, cid, { text: reply });
               }
               // Parte marcada como texto (ex.: a listinha de funções) — sempre por TEXTO.
               if (textAfter) {
-                await sendBotMessage(sock, jid, conversation.id, cid, { text: textAfter });
+                if (ehHumanizado(agentForReply)) await enviarHumanizado(sock, jid, conversation.id, cid, textAfter);
+                else await sendBotMessage(sock, jid, conversation.id, cid, { text: textAfter });
               }
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
