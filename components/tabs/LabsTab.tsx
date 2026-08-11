@@ -367,6 +367,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       elevenlabs_voice_id: f.elevenlabs_voice_id?.trim() || null,
       elevenlabs_key: f.elevenlabs_key?.trim() || null,
       voice_reply: f.voice_reply ?? true,
+      humanized: f.humanized ?? false,
     };
     let agentId = f.id;
     if (f.id) {
@@ -520,6 +521,13 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           <input type="checkbox" checked={!!f.owner_id} onChange={(e) => set({ owner_id: e.target.checked ? (f.owner_id || profile?.id || null) : null })} className="accent-fuchsia-500 mt-0.5" />
           <span>
             <b className="text-fuchsia-300">Privado (só eu vejo)</b> — este agente aparece apenas para você no Labs, mesmo com outras pessoas na empresa.
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-2">
+          <input type="checkbox" checked={f.humanized ?? false} onChange={(e) => set({ humanized: e.target.checked })} className="accent-sky-500 mt-0.5" />
+          <span>
+            <b className="text-sky-300">Modo humanizado</b> — escreve como uma pessoa de verdade no WhatsApp: abreviações naturais e variadas (vc, tbm, pra, pq…), tom leve, mensagens curtas.
+            <br /><span className="text-gray-500">Só muda o jeito de falar — valores, horários e nomes continuam sempre certos. Desligado = escrita padrão.</span>
           </span>
         </label>
         <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">

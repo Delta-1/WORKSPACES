@@ -1082,6 +1082,41 @@ async function mp3ToOpusOgg(mp3Buffer) {
   }
 }
 
+// Converte QUALQUER imagem em uma figurinha WhatsApp: webp, 512x512, fundo
+// transparente preservado. Usa o mesmo ffmpeg que já converte áudio — sem
+// dependência nova. É o que permite o bot MANDAR figurinha a partir de uma
+// imagem (a que a pessoa enviou, ou a que uma ferramenta gerou).
+async function imagemParaFigurinha(imgBuffer) {
+  if (!ffmpegPath) return null;
+  const tmp = os.tmpdir();
+  const inFile = path.join(tmp, `stk-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const outFile = `${inFile}.webp`;
+  try {
+    fs.writeFileSync(inFile, imgBuffer);
+    await new Promise((resolve, reject) => {
+      const ff = spawn(ffmpegPath, [
+        "-y", "-i", inFile,
+        // Encaixa dentro de 512x512 mantendo proporção e centraliza com margem
+        // transparente — o formato que o WhatsApp espera de figurinha.
+        "-vf", "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000",
+        "-vcodec", "libwebp", "-lossless", "0", "-q:v", "70", "-preset", "default", "-an", "-vsync", "0",
+        outFile,
+      ]);
+      let err = "";
+      ff.stderr.on("data", (d) => (err += d.toString()));
+      ff.on("error", reject);
+      ff.on("close", (code) => (code === 0 ? resolve() : reject(new Error("ffmpeg " + code + ": " + err.slice(-200)))));
+    });
+    return fs.readFileSync(outFile);
+  } catch (err) {
+    console.error("imagemParaFigurinha failed:", err);
+    return null;
+  } finally {
+    try { fs.unlinkSync(inFile); } catch { /* */ }
+    try { fs.unlinkSync(outFile); } catch { /* */ }
+  }
+}
+
 function firstConnectedNumberId() {
   for (const [id, s] of sessions) {
     if (s.state.status === "connected" && s.sock) return id;
@@ -1209,6 +1244,24 @@ const SYSTEM_RULES =
   "11. Quando uma ferramenta falhar ou vier vazia, seja honesto e ofereça o próximo passo — não finja que deu certo nem invente o resultado.\n" +
   "12. Não prometa o que você não pode cumprir agora. Se algo depende de outra pessoa ou de um prazo, deixe isso claro.";
 
+// MODO HUMANIZADO — ligado por agente. Faz o bot escrever como uma pessoa de
+// verdade no WhatsApp, não como um robô certinho. A graça está na NATURALIDADE
+// e na VARIAÇÃO: às vezes "você", às vezes "vc"; um "kkk" quando cabe; nem toda
+// mensagem precisa de ponto final. Nunca é caricato nem forçado.
+const HUMANIZED_RULES =
+  "\n\n=== MODO HUMANIZADO (escreva como gente) ===\n" +
+  "• Escreva como um brasileiro real conversando no WhatsApp — leve, próximo, sem formalidade de robô.\n" +
+  "• Use abreviações comuns de forma NATURAL e VARIADA, não em toda frase: vc/você, tbm/também, pra/para, pq/porque, blz, tá, né, tô, cê, vlw, obg, tmj, pfv. Alterne entre a forma abreviada e a completa como uma pessoa faz sem pensar.\n" +
+  "• Pode usar minúscula no começo às vezes, e dispensar o ponto final em mensagens curtas.\n" +
+  "• Emojis com moderação, quando combinam com o clima. Um \"kkk\" ou \"haha\" quando a conversa é descontraída — nunca em assunto sério.\n" +
+  "• Mensagens curtas e diretas. Se for longo, quebre em partes como quem manda várias mensagens.\n" +
+  "• Espelhe o jeito da pessoa: se ela é formal, segure a mão nas gírias; se é solta, relaxe junto.\n" +
+  "• NUNCA sacrifique clareza pela informalidade: números, valores, horários e nomes vão SEMPRE certos e por extenso. Humanizado é no tom, não no conteúdo.\n" +
+  "• Nada de exagero: não encha de abreviação nem de emoji. O objetivo é soar gente, não soar adolescente forçado.";
+
+// Um agente está em modo humanizado? A coluna pode não existir em bancos antigos.
+const ehHumanizado = (chatbot) => chatbot?.humanized === true;
+
 async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null) {
   const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
@@ -1216,7 +1269,7 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
   const companyBlock = companyContextBlock(await getCompanyInfo(companyId));
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${grupo ? grupoBlock(grupo) : ""}${SYSTEM_RULES}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${grupo ? grupoBlock(grupo) : ""}${SYSTEM_RULES}${ehHumanizado(chatbot) ? HUMANIZED_RULES : ""}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
@@ -1342,6 +1395,16 @@ async function deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, { fi
   }
   for (const f of files) {
     try {
+      // Figurinha: vai como sticker do WhatsApp, sem legenda e sem virar anexo.
+      if (f.sticker) {
+        const url = await uploadMedia(f.buffer, "image/webp", "out");
+        await sendBotMessage(sock, jid, conversation.id, cid, {
+          text: "",
+          media: url ? { type: "image", url, name: "figurinha.webp", mime: "image/webp" } : null,
+          content: { sticker: f.buffer },
+        });
+        continue;
+      }
       const isImg = (f.mime || "").startsWith("image/");
       // Sobe o arquivo ANTES para registrar a linha com a mídia (log-first).
       const url = await uploadMedia(f.buffer, f.mime, "out");
@@ -1967,6 +2030,14 @@ const COPILOT_TOOLS = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "enviar_figurinha",
+    description:
+      "Manda uma FIGURINHA (sticker) na conversa, feita a partir da última IMAGEM ou FIGURINHA que a pessoa enviou aqui. " +
+      "Use quando ela pedir para transformar uma foto em figurinha, ou quando um toque descontraído combinar com o clima da conversa (nunca em assunto sério). " +
+      "Só funciona se houver uma imagem/figurinha recente na conversa — se não houver, peça que ela mande uma.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "documento_norma_do_arquivo",
     description:
       "Lê o MODELO que a pessoa mandou (manual de normas da faculdade, trabalho antigo ou foto da capa) e extrai a FORMATAÇÃO dele: margens, fonte, entrelinha, recuo, papel, estilo de citação e como é a capa. " +
@@ -2165,6 +2236,14 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
       // Imagem: quem "lê" é o próprio modelo, olhando a foto — nas ferramentas
       // que passam a imagem adiante.
       return { ok: true, tipo: "imagem", arquivo: r.media.name || "imagem", instrucao: "A pessoa mandou uma IMAGEM. Se for a capa de um modelo de trabalho, use documento_norma_do_arquivo para tirar a formatação dela. Se for foto para currículo, use documento_criar com usar_foto_enviada=true." };
+    }
+    if (name === "enviar_figurinha") {
+      const midia = await lastIncomingMedia(ctx.conv, ["image"]);
+      if (!midia?.buffer) return { ok: false, message: "Não achei nenhuma imagem ou figurinha recente nesta conversa. Peça que a pessoa mande uma e tente de novo." };
+      const webp = await imagemParaFigurinha(midia.buffer);
+      if (!webp) return { ok: false, message: "Não consegui montar a figurinha agora." };
+      files.push({ name: "figurinha.webp", mime: "image/webp", buffer: webp, sticker: true });
+      return { ok: true, message: "Figurinha pronta — enviei aqui na conversa." };
     }
     if (name === "documento_norma_do_arquivo") {
       if (!ctx.key) return { ok: false, message: "Sem chave de IA para ler o modelo." };
@@ -2824,6 +2903,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   }
   system += await contactMemoryBlock(conv);
   system += SYSTEM_RULES;
+  // Modo humanizado também vale para bots de atendimento com ferramentas (não
+  // para o copiloto do gestor, que é assessor e fala reto).
+  if (!isInternalCopilot && ehHumanizado(chatbot)) system += HUMANIZED_RULES;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
@@ -2855,7 +2937,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
   // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
   // só de números. Por isso estas duas ficam sempre liberadas, para qualquer bot.
-  const SEMPRE = ["salvar_nome_contato", "memoria_salvar"];
+  // Mandar figurinha entra aqui: é um gesto de conversa, não um privilégio.
+  // Qualquer bot pode; o bom senso (e o modo humanizado) decide QUANDO usar.
+  const SEMPRE = ["salvar_nome_contato", "memoria_salvar", "enviar_figurinha"];
   // Acesso total (assessor pessoal do gestor) ignora o gate de capacidades.
   let allowedNames = fullAccess || !caps || !caps.length
     ? null
@@ -3153,7 +3237,11 @@ async function startSession(numberId) {
         };
         // Desembrulha documentos com legenda
         const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
-        const mediaKind = inner.imageMessage
+        // Figurinha é uma imagem webp: entra pelo caminho de imagem (para o bot
+        // ENXERGAR pela visão) e ganha uma marca no texto, para ele saber que foi
+        // uma figurinha e poder reagir a isso.
+        const ehFigurinha = !!inner.stickerMessage;
+        const mediaKind = (inner.imageMessage || inner.stickerMessage)
           ? "image"
           : inner.audioMessage
             ? "audio"
@@ -3163,9 +3251,9 @@ async function startSession(numberId) {
                 ? "document"
                 : null;
         const node =
-          inner.imageMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
+          inner.imageMessage || inner.stickerMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
         const text =
-          inner.conversation || inner.extendedTextMessage?.text || node?.caption || "";
+          (inner.conversation || inner.extendedTextMessage?.text || node?.caption || "") + (ehFigurinha ? " [a pessoa mandou uma figurinha]" : "");
 
         let media = null;
         let audioBuffer = null;
@@ -3598,7 +3686,8 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
   try {
     if (msg?.key?.id && webSentWaIds.has(msg.key.id)) return; // já salvo pela web
     const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
-    const mediaKind = inner.imageMessage
+    const ehFigurinha = !!inner.stickerMessage;
+    const mediaKind = (inner.imageMessage || inner.stickerMessage)
       ? "image"
       : inner.audioMessage
         ? "audio"
@@ -3607,8 +3696,8 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
           : inner.documentMessage
             ? "document"
             : null;
-    const node = inner.imageMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
-    const text = inner.conversation || inner.extendedTextMessage?.text || node?.caption || "";
+    const node = inner.imageMessage || inner.stickerMessage || inner.audioMessage || inner.videoMessage || inner.documentMessage || null;
+    const text = (inner.conversation || inner.extendedTextMessage?.text || node?.caption || "") + (ehFigurinha ? " [a pessoa mandou uma figurinha]" : "");
     if (!text && !mediaKind) return;
 
     let media = null;
@@ -3742,7 +3831,8 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       const buf = Buffer.from(await resp.arrayBuffer());
       const mimetype = media.mime || undefined;
       let content;
-      if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
+      if (media.type === "sticker") content = { sticker: buf };
+      else if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
       else if (media.type === "audio") {
         // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
         // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).

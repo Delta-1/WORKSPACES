@@ -267,6 +267,7 @@ export type Chatbot = {
   elevenlabs_key: string | null;
   elevenlabs_voice_id: string | null;
   voice_reply: boolean;
+  humanized?: boolean | null;
   capabilities: string[] | null;
   accent: string | null;
   apis: AgentApi[] | null;
