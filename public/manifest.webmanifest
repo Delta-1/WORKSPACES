@@ -1,6 +1,6 @@
 {
-  "name": "Workspace Multiempresa",
-  "short_name": "Workspace",
+  "name": "Workspaces",
+  "short_name": "Workspaces",
   "description": "Plataforma de workspace multiempresa com copiloto de IA e WhatsApp",
   "start_url": "/",
   "scope": "/",

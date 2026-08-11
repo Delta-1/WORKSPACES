@@ -636,7 +636,10 @@ export default function Home() {
   // Abre um app numa NOVA janela do navegador (que pode ir para outro monitor).
   // A sessão vive no localStorage da mesma origem, então a nova janela já entra
   // logada e mostra só aquele app (modo ?solo=).
-  const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, `solo_${id}`, "width=1100,height=760"); } catch {} };
+  const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}&widget=1`, `solo_${id}`, "width=1100,height=760"); } catch {} };
+  // Abrir o app numa OUTRA ABA do navegador (útil pra jogar num segundo monitor
+  // arrastando a aba, ou como janela/widget no Workspaces Desktop).
+  const abrirEmAba = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, "_blank"); } catch {} };
 
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
   const mainPad =
@@ -805,9 +808,9 @@ export default function Home() {
               alt="Workspace"
             />
           )}
-          <div>
-            <h2 className="font-bold leading-tight">{company.name}</h2>
-            <p className="text-xs text-gray-500">{company.description || "Workspace Multi-Empresa"}</p>
+          <div className="min-w-0">
+            <h2 className="font-bold leading-tight truncate max-w-[42vw] sm:max-w-none">{company.name}</h2>
+            <p className="text-xs text-gray-500 truncate max-w-[42vw] sm:max-w-none">{company.description || "Workspace Multi-Empresa"}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -861,6 +864,7 @@ export default function Home() {
         onAbrirJanela={abrirJanela}
         onAbrirTela={abrirNaTela}
         onAbrirMonitor={abrirEmMonitor}
+        onAbrirAba={abrirEmAba}
         onFixar={pinApp}
         onDesafixar={unpinApp}
         onClose={() => setAppMenu(null)}
