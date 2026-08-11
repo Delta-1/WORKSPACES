@@ -1265,6 +1265,85 @@ const ehHumanizado = (chatbot) => chatbot?.humanized === true;
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── BIBLIOTECA DE FIGURINHAS ────────────────────────────────────────────────
+// Figurinhas que a empresa salvou (do Mensagens), com uma descrição do que cada
+// uma significa. O bot manda uma escrevendo [[fig: descrição]] no meio da
+// resposta; o sistema troca o marcador pela figurinha de verdade.
+async function figurinhasDaEmpresa(companyId) {
+  if (!supabase || !companyId) return [];
+  const { data } = await supabase
+    .from("bot_stickers")
+    .select("id, descricao, media_url, mime")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(60);
+  return data || [];
+}
+
+// O bloco que entra no prompt: diz que ele TEM figurinhas e como mandar.
+function blocoFigurinhas(lista) {
+  if (!lista.length) return "";
+  const itens = lista.map((f) => `• ${f.descricao}`).join("\n");
+  return (
+    "\n\n=== FIGURINHAS QUE VOCÊ PODE MANDAR ===\n" +
+    "Você tem uma biblioteca de figurinhas. Para mandar uma, escreva no meio da sua resposta o marcador [[fig: <descrição>]] — pode ser a descrição exata ou parecida, que o sistema acha a mais próxima e manda a figurinha de verdade (o marcador some do texto). " +
+    "Use com bom senso: em conversa descontraída, para dar um toque brincalhão — NUNCA em assunto sério, cobrança ou reclamação. No máximo uma por resposta.\n" +
+    "As figurinhas que você tem (pela descrição):\n" + itens
+  );
+}
+
+// Acha a figurinha cuja descrição mais casa com o pedido do marcador — simples
+// e tolerante: casa por conter as palavras, sem exigir texto idêntico.
+function acharFigurinha(lista, busca) {
+  const q = String(busca || "").toLowerCase().trim();
+  if (!q || !lista.length) return null;
+  const norm = (s) => String(s || "").toLowerCase();
+  let melhor = null, melhorPontos = 0;
+  const termos = q.split(/\s+/).filter(Boolean);
+  for (const f of lista) {
+    const d = norm(f.descricao);
+    if (d === q) return f; // descrição idêntica ganha na hora
+    let pontos = 0;
+    if (d.includes(q) || q.includes(d)) pontos += 5;
+    for (const t of termos) if (d.includes(t)) pontos += 1;
+    if (pontos > melhorPontos) { melhorPontos = pontos; melhor = f; }
+  }
+  return melhorPontos > 0 ? melhor : null;
+}
+
+/**
+ * Troca os marcadores [[fig: X]] da resposta pelas figurinhas da biblioteca.
+ * Devolve o texto limpo (sem marcadores) e a lista de figurinhas a enviar,
+ * na ordem em que apareceram. Sem biblioteca ou sem marcador, não faz nada.
+ */
+function extrairFigurinhas(texto, lista) {
+  const t = String(texto || "");
+  const re = /\[\[\s*fig(?:urinha)?\s*:\s*([^\]]+?)\s*\]\]/gi;
+  if (!re.test(t)) return { texto: t, figurinhas: [] };
+  const figurinhas = [];
+  const limpo = t.replace(re, (_m, desc) => {
+    const f = acharFigurinha(lista, desc);
+    if (f && figurinhas.length < 1) figurinhas.push(f); // no máximo uma por resposta
+    return "";
+  }).replace(/\n{3,}/g, "\n\n").trim();
+  return { texto: limpo, figurinhas };
+}
+
+// Baixa a figurinha e garante que vai como webp (o WhatsApp exige). Se já é
+// webp, manda direto; senão converte com o mesmo ffmpeg das outras.
+async function figurinhaParaEnvio(f) {
+  try {
+    const resp = await fetch(f.media_url, { signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const jaWebp = (f.mime || "").includes("webp") || (buf[0] === 0x52 && buf[8] === 0x57); // RIFF..WEBP
+    const webp = jaWebp ? buf : await imagemParaFigurinha(buf);
+    return webp || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Quebra a resposta em mensagens curtas, como uma pessoa manda no WhatsApp —
  * um pensamento por balão. NÃO parte listas: uma listinha numerada vai inteira
@@ -1335,14 +1414,14 @@ async function enviarHumanizado(sock, jid, conversationId, cid, texto) {
   }
 }
 
-async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null) {
+async function runChatbotReply(chatbot, customerText, history = [], mode = "ai", companyId = null, image = null, grupo = null, figurasBlock = "") {
   const name = await companyName(companyId);
   const persona = chatbot?.persona ? `Você é ${chatbot.persona}.` : "";
   const instructions = chatbot?.instructions || "Responda de forma cordial, breve e humana.";
   const knowledge = chatbot?.knowledge ? `\n\nBase de conhecimento:\n${chatbot.knowledge}` : "";
   const brain = await buildBotBrain(chatbot);
   const companyBlock = companyContextBlock(await getCompanyInfo(companyId));
-  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${grupo ? grupoBlock(grupo) : ""}${SYSTEM_RULES}${ehHumanizado(chatbot) ? HUMANIZED_RULES : ""}`;
+  const system = `${persona}\nVocê atende clientes no WhatsApp da empresa ${name}.\n${instructions}${modeGuidance(mode)}\nIMPORTANTE: esta é uma conversa CONTÍNUA e em andamento. Use o histórico para manter contexto — NÃO cumprimente de novo nem recomece o atendimento a cada mensagem, e NÃO esqueça o que a pessoa já respondeu (nome, data, etc.). Continue de onde parou.${knowledge}${brain}${companyBlock}${grupo ? grupoBlock(grupo) : ""}${SYSTEM_RULES}${ehHumanizado(chatbot) ? HUMANIZED_RULES : ""}${figurasBlock || ""}`;
 
   const provider = chatbot?.provider || "anthropic";
   const key = chatbot?.api_key || (await resolveAgentKey(companyId, provider));
@@ -2898,7 +2977,7 @@ async function copilotLoadFile(companyId, id) {
  *   escreveu antes de usar uma ferramenta. Sem ela, a pessoa fica no vácuo
  *   enquanto o documento é gerado ou o Pix é criado.
  */
-async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null, conv = null, onParcial = null) {
+async function runCopilotReply(companyId, chatbot, customerText, history = [], fullAccess = false, actor = null, conv = null, onParcial = null, figurasBlock = "") {
   // Provedor: o do agente (se tiver chave própria); senão o do agente mesmo, e a
   // chave cai no fallback (env ou de outro chatbot da empresa com o mesmo provedor).
   const provider = chatbot?.provider || "anthropic";
@@ -2979,6 +3058,9 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
   // Modo humanizado também vale para bots de atendimento com ferramentas (não
   // para o copiloto do gestor, que é assessor e fala reto).
   if (!isInternalCopilot && ehHumanizado(chatbot)) system += HUMANIZED_RULES;
+  // Biblioteca de figurinhas: só para bots de atendimento, nunca para o copiloto
+  // interno do gestor (que é assessor e não manda figurinha).
+  if (!isInternalCopilot && figurasBlock) system += figurasBlock;
   const hist = (Array.isArray(history) ? history : []).filter((h) => h && h.text);
   const files = [];
   const sends = [];
@@ -3601,13 +3683,19 @@ async function startSession(numberId) {
             let copilotFiles = [];
             let copilotSends = [];
             let reply = null;
+            // Biblioteca de figurinhas da empresa: carrega uma vez para (a) contar
+            // ao bot o que ele tem, e (b) trocar os marcadores [[fig: ...]] da
+            // resposta pelas figurinhas de verdade na hora de enviar.
+            const figuras = await figurinhasDaEmpresa(cid);
+            const figBloco = blocoFigurinhas(figuras);
             if (customerText && useTools) {
               // O aviso do meio do caminho sai por TEXTO mesmo quando a conversa
               // é por áudio: ele existe para chegar RÁPIDO, e sintetizar voz
               // custaria os segundos que ele veio economizar.
               const out = await runCopilotReply(
                 cid, agentForReply, customerText, history, copilotFullAccess, actor, conversation,
-                (texto) => sendBotMessage(sock, jid, conversation.id, cid, { text: texto })
+                (texto) => sendBotMessage(sock, jid, conversation.id, cid, { text: texto }),
+                figBloco
               );
               reply = out.reply;
               copilotFiles = out.files || [];
@@ -3615,7 +3703,7 @@ async function startSession(numberId) {
             } else if (customerText || imageBuffer) {
               // Todos os bots "enxergam" a imagem recebida (visão), mesmo sem texto.
               const agentImage = imageBuffer ? { buffer: imageBuffer, mime: node?.mimetype || "image/jpeg" } : null;
-              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage, ehGrupo ? grupo.subject : null);
+              reply = await runChatbotReply(chatbot, customerText, history, number?.bot_mode || "ai", cid, agentImage, ehGrupo ? grupo.subject : null, figBloco);
             }
             // Se o bot já falou antes nesta conversa (ou já mandamos a saudação de
             // abertura), tira uma saudação repetida no começo da resposta.
@@ -3623,6 +3711,16 @@ async function startSession(numberId) {
             // Em grupo a IA pode escolher não interromper: [[NADA]] é o silêncio
             // dela. Some aqui — nunca vai para o grupo.
             if (ehGrupo && reply && /^\s*\[\[\s*NADA\s*\]\]\s*$/i.test(reply)) reply = null;
+            // Figurinhas: o bot pode ter escrito [[fig: descrição]] no meio da
+            // resposta. Tira o marcador do texto e guarda a figurinha para mandar
+            // logo depois. (Se a resposta era SÓ a figurinha, reply fica vazio e o
+            // bloco de texto abaixo é pulado — manda só a figurinha.)
+            let figurinhasParaMandar = [];
+            if (reply && figuras.length) {
+              const ext = extrairFigurinhas(reply, figuras);
+              reply = ext.texto || null;
+              figurinhasParaMandar = ext.figurinhas;
+            }
             // Assessor pessoal (relay p/ outro contato) + entrega de arquivos que o
             // copiloto decidiu mandar — mesma lógica reaproveitada pelos nós
             // "IA"/"Ferramenta" do fluxograma (deliverCopilotOutputs).
@@ -3667,6 +3765,22 @@ async function startSession(numberId) {
               if (textAfter) {
                 if (ehHumanizado(agentForReply)) await enviarHumanizado(sock, jid, conversation.id, cid, textAfter);
                 else await sendBotMessage(sock, jid, conversation.id, cid, { text: textAfter });
+              }
+            }
+            // Figurinha(s) da biblioteca: manda depois do texto, como uma pessoa
+            // que solta a figurinha no fim. Sobe a webp para aparecer no Mensagens
+            // e envia como figurinha de verdade no WhatsApp.
+            for (const f of figurinhasParaMandar) {
+              try {
+                const buf = await figurinhaParaEnvio(f);
+                if (!buf) continue;
+                const url = await uploadMedia(buf, "image/webp", "out");
+                await sendBotMessage(sock, jid, conversation.id, cid, {
+                  media: url ? { type: "image", url, name: "figurinha.webp", mime: "image/webp" } : null,
+                  content: { sticker: buf },
+                });
+              } catch (e) {
+                console.error("envio de figurinha da biblioteca falhou:", e?.message || e);
               }
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um

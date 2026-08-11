@@ -206,6 +206,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   const [messages, setMessages] = useState<WhatsappMessageRow[]>([]);
+  // Figurinha que a pessoa clicou para salvar na biblioteca dos bots.
+  const [savingSticker, setSavingSticker] = useState<{ url: string; mime: string | null } | null>(null);
   const [internal, setInternal] = useState<InternalMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -1264,7 +1266,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} />
+                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaMime={m.media_mime} onSaveSticker={(url, mime) => setSavingSticker({ url, mime })} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
@@ -1461,6 +1463,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
       {/* Cobrança manual direto no chat do contato (cobrar antes do dia, marcar pago). */}
       {chargeConv?.contacts && <ChatChargeModal companyId={profile?.company_id ?? null} contact={chargeConv.contacts} onClose={() => setChargeConv(null)} />}
+
+      {/* Salvar figurinha recebida na biblioteca dos bots (com uma descrição). */}
+      {savingSticker && <SaveStickerModal companyId={profile?.company_id ?? null} profileId={profile?.id ?? null} sticker={savingSticker} onClose={() => setSavingSticker(null)} />}
 
       {/* Som de notificação: escolher entre vários + a empresa subir o próprio. */}
       {showSoundPicker && (
@@ -2050,13 +2055,24 @@ function ServerIcon({ active, onClick, title, children, badge = 0 }: { active: b
   );
 }
 
-function Bubble({ mine, at, text, mediaUrl, mediaType }: { mine: boolean; at: string; text: string | null; mediaUrl?: string | null; mediaType?: WhatsappMediaType | null }) {
+function Bubble({ mine, at, text, mediaUrl, mediaType, mediaMime, onSaveSticker }: { mine: boolean; at: string; text: string | null; mediaUrl?: string | null; mediaType?: WhatsappMediaType | null; mediaMime?: string | null; onSaveSticker?: (url: string, mime: string | null) => void }) {
+  // Figurinha do WhatsApp = imagem em webp. Nessas, a pessoa pode salvar na
+  // biblioteca dos bots (só faz sentido para figurinha que a pessoa recebeu).
+  const ehFigurinha = mediaType === "image" && !!mediaUrl && (mediaMime || "").includes("webp");
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm ${mine ? "bg-emerald-600 text-white" : "bg-[#1c232e]"}`}>
         {mediaUrl && mediaType === "image" && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={mediaUrl} alt="" className="rounded-lg max-w-full mb-1 max-h-60 object-contain" />
+        )}
+        {ehFigurinha && onSaveSticker && (
+          <button
+            onClick={() => onSaveSticker(mediaUrl!, mediaMime ?? null)}
+            className={`flex items-center gap-1 text-[11px] mb-1 px-2 py-1 rounded-md cursor-pointer ${mine ? "bg-white/15 hover:bg-white/25 text-white" : "bg-sky-500/15 hover:bg-sky-500/25 text-sky-300"}`}
+          >
+            <Star size={12} /> Salvar figurinha
+          </button>
         )}
         {mediaUrl && mediaType === "audio" && <audio src={mediaUrl} controls className="max-w-[220px] mb-1" />}
         {mediaUrl && (mediaType === "document" || mediaType === "video") && (
@@ -2066,6 +2082,63 @@ function Bubble({ mine, at, text, mediaUrl, mediaType }: { mine: boolean; at: st
         )}
         {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
         <p className={`text-[10px] mt-0.5 ${mine ? "text-emerald-100/70" : "text-gray-500"}`}>{fmtTime(at)}</p>
+      </div>
+    </div>
+  );
+}
+
+// Salvar uma figurinha recebida na BIBLIOTECA dos bots. A pessoa dá uma
+// descrição ("risada", "joia", "gato fofo") e a figurinha fica registrada para
+// a empresa — o bot passa a poder mandá-la sozinho num contexto brincalhão.
+function SaveStickerModal({ companyId, profileId, sticker, onClose }: { companyId: string | null; profileId: string | null; sticker: { url: string; mime: string | null }; onClose: () => void }) {
+  const [descricao, setDescricao] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  async function salvar() {
+    const d = descricao.trim();
+    if (!d || !supabase || !companyId) return;
+    setBusy(true); setErro(null);
+    const { error } = await supabase.from("bot_stickers").insert({
+      company_id: companyId,
+      descricao: d,
+      media_url: sticker.url,
+      mime: sticker.mime,
+      created_by: profileId,
+    });
+    setBusy(false);
+    if (error) { setErro("Não deu para salvar. Tente de novo."); return; }
+    setOk(true);
+    setTimeout(onClose, 900);
+  }
+  return (
+    <div className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-bold flex items-center gap-2"><Star size={18} className="text-sky-400" /> Salvar figurinha</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <div className="flex justify-center mb-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={sticker.url} alt="" className="max-h-32 object-contain rounded-lg bg-white/5 p-2" />
+        </div>
+        <p className="text-xs text-gray-400 mb-2">Descreva o que essa figurinha significa. É por essa descrição que o bot escolhe a hora de mandá-la.</p>
+        <input
+          autoFocus
+          value={descricao}
+          onChange={(e) => setDescricao(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") salvar(); }}
+          placeholder="ex.: risada, joia, gato fofo, bom dia…"
+          className="w-full bg-[#1c232e] border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500/50 mb-1"
+        />
+        {erro && <p className="text-[11px] text-red-400 mb-1">{erro}</p>}
+        <button
+          onClick={salvar}
+          disabled={busy || !descricao.trim() || ok}
+          className="w-full mt-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg py-2 cursor-pointer"
+        >
+          {ok ? "Salva! ✨" : busy ? "Salvando…" : "Salvar na biblioteca"}
+        </button>
       </div>
     </div>
   );
