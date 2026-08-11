@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Minus, Square, X } from "lucide-react";
+import AppBoundary from "@/components/AppBoundary";
 
 // GERENCIADOR DE JANELAS — o "desktop" do Workspace.
 //
@@ -38,7 +39,7 @@ export default function WindowManager({
           onFocus={() => onFocus(w.id)}
           onMinimize={() => onMinimize(w.id)}
         >
-          {render(w.id)}
+          <AppBoundary nome={w.id}>{render(w.id)}</AppBoundary>
         </FloatingWindow>
       ))}
 
