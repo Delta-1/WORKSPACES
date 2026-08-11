@@ -1287,7 +1287,8 @@ function blocoFigurinhas(lista) {
   return (
     "\n\n=== FIGURINHAS QUE VOCÊ PODE MANDAR ===\n" +
     "Você tem uma biblioteca de figurinhas. Para mandar uma, escreva no meio da sua resposta o marcador [[fig: <descrição>]] — pode ser a descrição exata ou parecida, que o sistema acha a mais próxima e manda a figurinha de verdade (o marcador some do texto). " +
-    "Use com bom senso: em conversa descontraída, para dar um toque brincalhão — NUNCA em assunto sério, cobrança ou reclamação. No máximo uma por resposta.\n" +
+    "USE COM MUITA PARCIMÔNIA: figurinha é tempero, não prato principal. A regra é NÃO mandar. Só solte uma de vez em quando, quando a conversa estiver leve e realmente combinar (uma piada, uma comemoração, um agradecimento animado) — e mesmo aí, na maioria das vezes um texto simpático já basta. " +
+    "NUNCA mande em assunto sério, cobrança, reclamação ou dúvida técnica. NUNCA mande duas seguidas nem em respostas seguidas — se já mandou uma há pouco, segura. No máximo uma por resposta, e olhe lá.\n" +
     "As figurinhas que você tem (pela descrição):\n" + itens
   );
 }
@@ -1327,6 +1328,24 @@ function extrairFigurinhas(texto, lista) {
     return "";
   }).replace(/\n{3,}/g, "\n\n").trim();
   return { texto: limpo, figurinhas };
+}
+
+// Trava anti-abuso: por mais que o bot queira, ele não sai mandando figurinha
+// toda hora. Só libera se NÃO mandou nenhuma nesta conversa nos últimos minutos.
+// A regra vale no servidor, então não tem como o modelo "burlar" mandando várias.
+const FIGURINHA_COOLDOWN_MS = 10 * 60 * 1000; // 10 min entre figurinhas na mesma conversa
+async function podeMandarFigurinha(conversationId) {
+  if (!supabase || !conversationId) return true;
+  const desde = new Date(Date.now() - FIGURINHA_COOLDOWN_MS).toISOString();
+  const { data } = await supabase
+    .from("whatsapp_messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "out")
+    .eq("media_name", "figurinha.webp")
+    .gte("at", desde)
+    .limit(1);
+  return !(data && data.length); // já mandou uma faz pouco → segura
 }
 
 // Baixa a figurinha e garante que vai como webp (o WhatsApp exige). Se já é
@@ -3772,6 +3791,9 @@ async function startSession(numberId) {
             // e envia como figurinha de verdade no WhatsApp.
             for (const f of figurinhasParaMandar) {
               try {
+                // Trava de servidor: nada de figurinha atrás de figurinha. Se
+                // mandou uma há pouco nesta conversa, engole a próxima.
+                if (!(await podeMandarFigurinha(conversation.id))) break;
                 const buf = await figurinhaParaEnvio(f);
                 if (!buf) continue;
                 const url = await uploadMedia(buf, "image/webp", "out");
