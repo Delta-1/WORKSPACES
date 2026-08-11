@@ -15,6 +15,9 @@ export type Profile = {
   finance_access: boolean | null;
   tool_access: Record<string, boolean> | null; // permissão por ferramenta (null = padrão do cargo)
   tutorials_done: Record<string, boolean> | null; // tutoriais já vistos, por app id
+  bio: string | null; // perfil estilo Instagram
+  job_title: string | null; // rótulo livre (ex.: "Atendente sênior")
+  cover_url: string | null; // capa do perfil
   created_at: string;
 };
 
@@ -162,6 +165,16 @@ export type CompanySettingsRow = {
   google_drive_root_folder_id: string | null;
   theme_color: string;
   logo_size: number;
+  // Onboarding do dono + triagem + métricas.
+  onboarding_done: boolean;
+  employee_estimate: number | null;
+  chat_modes: string[] | null; // layouts liberados p/ funcionários; null/[] = todos
+  triage_enabled: boolean;
+  triage_mode: "one_by_one" | "broadcast";
+  triage_timeout_minutes: number;
+  metrics_enabled: boolean;
+  attendance_goal_week: number | null;
+  attendance_goal_month: number | null;
   updated_at: string;
 };
 

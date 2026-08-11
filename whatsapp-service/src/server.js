@@ -107,7 +107,7 @@ async function getCompanyInfo(companyId = null) {
   if (cached && Date.now() - cached.at < 60000) return cached.info;
   let q = supabase
     .from("company_settings")
-    .select("name, address, address_link, phone, email, website, review_link, auto_close_minutes");
+    .select("name, address, address_link, phone, email, website, review_link, auto_close_minutes, triage_enabled, triage_mode, triage_timeout_minutes");
   if (companyId) q = q.eq("company_id", companyId);
   const { data } = await q.limit(1).maybeSingle();
   companyInfoCache.set(key, { at: Date.now(), info: data ?? null });
@@ -3847,6 +3847,9 @@ async function startSession(numberId) {
                   .from("conversations")
                   .update({ status: "espera", bot_paused: true, flow_node: null, ...(note ? { problem: note } : {}) })
                   .eq("id", conversation.id);
+                // Bot de triagem: distribui o atendimento entre a equipe (rodízio
+                // ou todos ao mesmo tempo). Sem triagem, fica na fila comum.
+                await assignTriage({ ...conversation, problem: note ?? conversation.problem }, cid);
               }
             }
             try {
@@ -4096,10 +4099,15 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
   }
 
   // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
+  // Também encerra a triagem: quem respondeu pegou o atendimento (accepted_at),
+  // então o rodízio/escalonamento para e o contato sai do "quem pegar, pegou".
   if (senderId && conversationId) {
     await supabase
       .from("conversations")
-      .update({ status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true })
+      .update({
+        status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true,
+        accepted_at: new Date().toISOString(), triage_offered_at: null, triage_open_to_all: false,
+      })
       .eq("id", conversationId);
   }
   return sent;
@@ -4426,6 +4434,95 @@ async function generateContactReport(conversation) {
 
 // Varre os atendimentos: encerra por inatividade (se ligado) e gera relatório
 // dos que foram fechados (por bot, por inatividade ou MANUALMENTE no app).
+// ── TRIAGEM: o bot entende o cliente e distribui o atendimento ──────────────
+// Candidatos = quem atende. Se a conversa tem setor, os do setor; senão, a
+// empresa toda. Ordena por created_at para dar um rodízio estável e previsível.
+async function triageCandidates(companyId, sectorId) {
+  if (!supabase || !companyId) return [];
+  let q = supabase.from("profiles").select("id").eq("company_id", companyId).order("created_at", { ascending: true });
+  if (sectorId) q = q.eq("sector_id", sectorId);
+  let { data } = await q;
+  let ids = (data || []).map((p) => p.id);
+  if (!ids.length && sectorId) {
+    // Setor vazio → cai para a empresa toda, senão o cliente ficaria sem ninguém.
+    const r = await supabase.from("profiles").select("id").eq("company_id", companyId).order("created_at", { ascending: true });
+    ids = (r.data || []).map((p) => p.id);
+  }
+  return ids;
+}
+
+// Chamada quando o bot decide passar para um humano (handoff). Distribui
+// conforme a config: "broadcast" (aparece pra todos) ou "one_by_one" (oferece
+// a um atendente e, no timeout, o triageSweep passa para o próximo).
+async function assignTriage(conversation, companyId) {
+  const info = await getCompanyInfo(companyId);
+  if (!info?.triage_enabled) return; // triagem desligada → fila comum (comportamento antigo)
+  const cands = await triageCandidates(companyId, conversation.sector_id);
+  if (!cands.length) return;
+  if (info.triage_mode === "broadcast") {
+    await supabase.from("conversations").update({
+      triage_open_to_all: true, assignee_id: null, triage_offered_at: null,
+      triage_tried_ids: [], triage_waited: false, accepted_at: null,
+    }).eq("id", conversation.id);
+    return;
+  }
+  const first = cands[0];
+  await supabase.from("conversations").update({
+    assignee_id: first, triage_offered_at: new Date().toISOString(),
+    triage_tried_ids: [first], triage_open_to_all: false, triage_waited: false, accepted_at: null,
+  }).eq("id", conversation.id);
+}
+
+// A cada minuto: nos atendimentos "um por vez" que ninguém pegou dentro do
+// tempo, passa para o próximo atendente do rodízio. Esgotado o rodízio, libera
+// para TODOS ("quem pegar, pegou") e avisa o cliente uma vez para aguardar.
+async function triageSweep() {
+  if (!supabase) return;
+  try {
+    const { data: pend } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("status", "espera")
+      .not("triage_offered_at", "is", null)
+      .is("accepted_at", null)
+      .eq("triage_open_to_all", false)
+      .limit(60);
+    for (const conv of pend || []) {
+      const info = await getCompanyInfo(conv.company_id);
+      if (!info?.triage_enabled) continue;
+      const timeoutMin = Number(info.triage_timeout_minutes || 20);
+      const age = Date.now() - new Date(conv.triage_offered_at).getTime();
+      if (age < timeoutMin * 60000) continue; // ainda dentro do tempo do atendente
+      const cands = await triageCandidates(conv.company_id, conv.sector_id);
+      const tried = Array.isArray(conv.triage_tried_ids) ? conv.triage_tried_ids : [];
+      const next = cands.find((id) => !tried.includes(id));
+      if (next) {
+        // Passa a bola para o próximo — o contato sai do "A fazer" de um e cai no do outro.
+        await supabase.from("conversations").update({
+          assignee_id: next, triage_offered_at: new Date().toISOString(),
+          triage_tried_ids: [...tried, next],
+        }).eq("id", conv.id);
+      } else {
+        // Ninguém pegou no rodízio → mostra para todos e avisa o cliente 1x.
+        await supabase.from("conversations").update({
+          triage_open_to_all: true, assignee_id: null, triage_offered_at: null, triage_waited: true,
+        }).eq("id", conv.id);
+        if (!conv.triage_waited) {
+          try {
+            const { data: contact } = await supabase.from("contacts").select("jid,phone,is_group").eq("id", conv.contact_id).maybeSingle();
+            const to = contact?.jid || contact?.phone;
+            if (to && !contact?.is_group) {
+              await sendMessage(conv.number_id, to, "Só um minutinho, já já alguém da equipe te responde. 🙏", null, null).catch(() => {});
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch (e) {
+    console.error("triageSweep falhou:", e?.message || e);
+  }
+}
+
 async function attendanceSweep() {
   if (!supabase) return;
   try {
@@ -4795,5 +4892,6 @@ app.listen(PORT, () => {
   setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
   setInterval(billingSweep, 180000); // Cobrador: envia cobranças/lembretes e regenera ciclos
   setInterval(flowTimerSweep, 60000); // fluxograma: lembretes de "sem resposta" (nó wait)
+  setInterval(triageSweep, 60000); // triagem: rodízio de atendentes + escalonamento por timeout
   setTimeout(billingSweep, 15000); // primeira passada logo após subir
 });

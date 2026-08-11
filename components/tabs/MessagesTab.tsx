@@ -96,6 +96,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [showNewChat, setShowNewChat] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [listMenu, setListMenu] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showLog, setShowLog] = useState(false);
@@ -143,10 +144,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     return "classic";
   });
   const [showLayoutPicker, setShowLayoutPicker] = useState(false);
-  const [tutorialStep, setTutorialStep] = useState(0); // 0 = sem tutorial
   const [asCompanyDefault, setAsCompanyDefault] = useState(false); // gestor: definir padrão da equipe
+  // Layouts que a empresa liberou para os funcionários (do onboarding). null = todos.
+  const [allowedModes, setAllowedModes] = useState<MsgLayout[] | null>(null);
   function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
   const isGestor = profile?.role === "gestor";
+  // O gestor vê tudo; o funcionário só os layouts liberados (se a empresa restringiu).
+  const layoutsDisponiveis = (isGestor || !allowedModes || allowedModes.length === 0)
+    ? LAYOUTS
+    : LAYOUTS.filter((l) => allowedModes.includes(l.id));
 
   // Trava opcional (por empresa) de atendimento exclusivo: quando ligada, quem
   // responde primeiro "assume" a conversa e outros atendentes não conseguem mais
@@ -265,8 +271,20 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!supabase || !profile?.company_id) return;
     let onboarded = false;
     try { onboarded = localStorage.getItem("msg:onboarded") === "1"; } catch { /* ignore */ }
-    supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url,messages_kanban_lock").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
+    supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url,messages_kanban_lock,chat_modes").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
       const cl = data?.messages_layout as MsgLayout | null;
+      // Layouts liberados pela empresa. Para funcionário, se o layout atual não
+      // está liberado, cai no primeiro permitido (sem escolha ilegal).
+      const modes = ((data as { chat_modes?: string[] | null } | null)?.chat_modes ?? null) as MsgLayout[] | null;
+      setAllowedModes(modes && modes.length ? modes : null);
+      if (!isGestor && modes && modes.length) {
+        setLayoutState((cur) => {
+          if (modes.includes(cur)) return cur;
+          const first = modes[0];
+          try { localStorage.setItem("msg:layout", first); } catch { /* ignore */ }
+          return first;
+        });
+      }
       setKanbanLock(!!(data as { messages_kanban_lock?: boolean } | null)?.messages_kanban_lock);
       // Som personalizado da empresa (URL) sempre carrega; toca quando escolhido "custom".
       const url = (data as { notification_sound_url?: string | null } | null)?.notification_sound_url ?? null;
@@ -1240,6 +1258,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                           <button onClick={() => { setChatMenu(false); setShowConnect(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Plug size={13} className="text-gray-300" /> Conectar WhatsApp
                           </button>
+                          <button onClick={() => { setChatMenu(false); setTransferOpen(true); }} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                            <UserPlus size={13} className="text-indigo-400" /> Transferir atendimento
+                          </button>
                           <button onClick={openContactLog} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <FileText size={13} className="text-sky-400" /> Histórico do contato
                           </button>
@@ -1467,6 +1488,17 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       {/* Salvar figurinha recebida na biblioteca dos bots (com uma descrição). */}
       {savingSticker && <SaveStickerModal companyId={profile?.company_id ?? null} profileId={profile?.id ?? null} sticker={savingSticker} onClose={() => setSavingSticker(null)} />}
 
+      {/* Transferir o atendimento atual para outro atendente. */}
+      {transferOpen && selConv && (
+        <TransferModal
+          conv={selConv}
+          colleagues={colleagues}
+          me={profile}
+          onClose={() => setTransferOpen(false)}
+          onDone={() => { setTransferOpen(false); loadConversations(); }}
+        />
+      )}
+
       {/* Som de notificação: escolher entre vários + a empresa subir o próprio. */}
       {showSoundPicker && (
         <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowSoundPicker(false)}>
@@ -1530,7 +1562,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             <h3 className="text-base font-bold mb-1">Como você quer usar o Mensagens?</h3>
             <p className="text-[11px] text-gray-400 mb-4">Escolha o layout. Você pode trocar quando quiser no botão de layout, na barra da esquerda.</p>
             <div className="space-y-2">
-              {LAYOUTS.map((l) => (
+              {layoutsDisponiveis.map((l) => (
                 <button
                   key={l.id}
                   onClick={() => {
@@ -1540,7 +1572,6 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                       supabase.from("company_settings").update({ messages_layout: l.id }).eq("company_id", profile.company_id);
                     }
                     setShowLayoutPicker(false);
-                    setTutorialStep(1);
                   }}
                   className={`w-full text-left rounded-xl border p-3 cursor-pointer transition ${layout === l.id ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:border-white/25 hover:bg-white/5"}`}
                 >
@@ -1577,36 +1608,6 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         </div>
       )}
 
-      {/* Tutorial rápido após escolher o layout. */}
-      {tutorialStep > 0 && (
-        <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 text-center">
-            {(() => {
-              const steps = layout === "kanban"
-                ? ["No layout Fluxo (Kanban), as conversas novas caem na coluna A fazer.", "Quando alguém começa a atender, a conversa vai para Em andamento.", "Clique numa conversa para abrir o chat ao lado. Ao Finalizar, ela sai de Em andamento e só volta se o cliente mandar mensagem de novo."]
-                : layout === "crm"
-                ? ["No layout CRM, suas conversas ficam à esquerda.", "No espaço vazio você monta um FLUXO (estilo n8n) que automatiza o atendimento do número.", "Clique em salvar no construtor de fluxo para ativar. Selecione uma conversa a qualquer momento para responder na mão."]
-                : ["Este é o layout clássico do WhatsApp: conversas à esquerda, chat à direita.", "O bot responde sozinho quando ligado (Bot ON) — e as respostas dele aparecem no chat.", "Pronto! Pode usar normalmente. Troque de layout quando quiser no botão da barra esquerda."];
-              const last = tutorialStep >= steps.length;
-              return (
-                <>
-                  <div className="w-12 h-12 rounded-full bg-emerald-600/20 border border-emerald-500 flex items-center justify-center mx-auto mb-3">
-                    <MessageSquare size={22} className="text-emerald-400" />
-                  </div>
-                  <p className="text-sm text-gray-200 min-h-[3rem]">{steps[tutorialStep - 1]}</p>
-                  <div className="flex items-center justify-center gap-1.5 my-3">
-                    {steps.map((_, i) => <span key={i} className={`h-1.5 rounded-full ${i === tutorialStep - 1 ? "w-4 bg-emerald-400" : "w-1.5 bg-white/20"}`} />)}
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setTutorialStep(0)} className="flex-1 text-xs py-2 rounded-lg bg-white/10 hover:bg-white/15 cursor-pointer">Pular</button>
-                    <button onClick={() => setTutorialStep(last ? 0 : tutorialStep + 1)} className="flex-1 text-xs py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer">{last ? "Começar" : "Próximo"}</button>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2172,6 +2173,50 @@ function SaveStickerModal({ companyId, profileId, sticker, onClose }: { companyI
         >
           {ok ? "Salva! ✨" : busy ? "Salvando…" : "Salvar na biblioteca"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Transferir o atendimento para outro atendente. O contato sai do painel de
+// quem estava atendendo e vai para o escolhido (em andamento). Encerra a
+// triagem automática nessa conversa (quem recebeu a transferência é o dono).
+function TransferModal({ conv, colleagues, me, onClose, onDone }: { conv: { id: string; assignee_id?: string | null }; colleagues: Profile[]; me: Profile | null; onClose: () => void; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const lista = colleagues.filter((c) => c.id !== conv.assignee_id);
+  async function transferir(toId: string) {
+    if (!supabase || busy) return;
+    setBusy(true);
+    await supabase.from("conversations").update({
+      assignee_id: toId,
+      status: "atendendo",
+      accepted_at: new Date().toISOString(),
+      triage_offered_at: null,
+      triage_open_to_all: false,
+      bot_paused: true,
+    }).eq("id", conv.id);
+    setBusy(false);
+    onDone();
+  }
+  return (
+    <div className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[80vh] overflow-y-auto custom-scroll" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-bold flex items-center gap-2"><UserPlus size={18} className="text-indigo-400" /> Transferir atendimento</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white cursor-pointer"><X size={18} /></button>
+        </div>
+        <p className="text-xs text-gray-400 mb-3">Para quem passa este atendimento?</p>
+        <div className="space-y-1.5">
+          {lista.map((c) => (
+            <button key={c.id} onClick={() => transferir(c.id)} disabled={busy} className="w-full flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2 text-left cursor-pointer disabled:opacity-50">
+              <div className="w-8 h-8 rounded-full bg-[#1c232e] overflow-hidden flex items-center justify-center text-xs font-bold text-gray-300 shrink-0">
+                {c.avatar_url ? (/* eslint-disable-next-line @next/next/no-img-element */ <img src={c.avatar_url} alt="" className="w-full h-full object-cover" />) : (c.full_name || c.email || "?").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0"><div className="text-sm truncate">{c.full_name || c.email}{c.id === me?.id ? " (você)" : ""}</div><div className="text-[10px] text-gray-500">{c.role === "gestor" ? "Dono" : c.role === "gerente" ? "Líder" : "Atendente"}</div></div>
+            </button>
+          ))}
+          {lista.length === 0 && <p className="text-sm text-gray-500 text-center py-6">Não há outros atendentes para transferir.</p>}
+        </div>
       </div>
     </div>
   );

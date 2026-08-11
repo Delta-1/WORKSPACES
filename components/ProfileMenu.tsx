@@ -42,6 +42,7 @@ export default function ProfileMenu({
   onToggleTheme,
   onLogout,
   onProfileUpdated,
+  onOpenFullProfile,
 }: {
   name: string;
   role: string;
@@ -52,6 +53,7 @@ export default function ProfileMenu({
   onToggleTheme: () => void;
   onLogout: () => void;
   onProfileUpdated?: (patch: { full_name?: string; avatar_url?: string; language?: AppLanguage }) => void;
+  onOpenFullProfile?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -125,11 +127,19 @@ export default function ProfileMenu({
                 <p className="text-xs text-gray-400">{role}</p>
               </div>
             </div>
+            {onOpenFullProfile && (
+              <button
+                onClick={() => { setOpen(false); onOpenFullProfile(); }}
+                className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm hover:bg-white/10 cursor-pointer"
+              >
+                <User size={16} /> Meu perfil
+              </button>
+            )}
             <button
               onClick={openEditor}
               className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm hover:bg-white/10 cursor-pointer"
             >
-              <Pencil size={16} /> Editar perfil
+              <Pencil size={16} /> Editar rápido
             </button>
             <button
               onClick={onToggleTheme}

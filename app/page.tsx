@@ -6,6 +6,8 @@ import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
 import TutorialOverlay from "@/components/TutorialOverlay";
+import OnboardingWizard from "@/components/OnboardingWizard";
+import ProfileModal from "@/components/ProfileModal";
 import WindowManager from "@/components/WindowManager";
 import AppContextMenu from "@/components/AppContextMenu";
 import AppBoundary from "@/components/AppBoundary";
@@ -128,6 +130,8 @@ export default function Home() {
   const [checkingSession, setCheckingSession] = useState(supabaseConfigured);
   const [authError, setAuthError] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showMyProfile, setShowMyProfile] = useState(false);
   const [showTV, setShowTV] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
   const agentModeActiveRef = useRef(false);
@@ -215,6 +219,14 @@ export default function Home() {
       .then(setCompany)
       .catch(() => {});
   }, [profile?.company_id]);
+
+  // Onboarding do dono: só na 1ª vez, só para quem é gestor. Se ainda não fez,
+  // abre o assistente que configura triagem, chat da equipe e métricas.
+  useEffect(() => {
+    if (!supabase || !profile?.company_id || profile.role !== "gestor") { setShowOnboarding(false); return; }
+    supabase.from("company_settings").select("onboarding_done").eq("company_id", profile.company_id).maybeSingle()
+      .then(({ data }) => setShowOnboarding(data ? !data.onboarding_done : false));
+  }, [profile?.company_id, profile?.role]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
@@ -809,6 +821,7 @@ export default function Home() {
           language={appLanguage}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
+          onOpenFullProfile={() => setShowMyProfile(true)}
           onProfileUpdated={(patch) => {
             if (patch.language) {
               setAppLanguage(patch.language);
@@ -856,6 +869,14 @@ export default function Home() {
       {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
       {tutorial && <TutorialOverlay appId={tutorial} onClose={() => marcarTutorial(tutorial)} />}
+      {showOnboarding && profile && <OnboardingWizard profile={profile} onDone={() => setShowOnboarding(false)} />}
+      {showMyProfile && profile && (
+        <ProfileModal
+          profile={profile}
+          onClose={() => setShowMyProfile(false)}
+          onSaved={(patch) => setProfile((p) => (p ? { ...p, ...patch } : p))}
+        />
+      )}
 
       <Dock
         apps={dockApps}

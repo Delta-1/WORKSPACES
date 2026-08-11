@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClipboardList, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Search, Trash2, BarChart3, List } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
+import TeamMetricsPanel from "@/components/TeamMetricsPanel";
+import ProfileModal from "@/components/ProfileModal";
 
 type Row = {
   id: string;
@@ -30,8 +32,12 @@ export default function AtendimentosTab({ profile }: { profile: Profile | null }
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [view, setView] = useState<"lista" | "equipe">("lista");
+  const [profileId, setProfileId] = useState<string | null>(null);
 
   const isGestor = profile?.role === "gestor";
+  // Dono e líder (gerente) veem o desempenho da equipe.
+  const canSeeTeam = profile?.role === "gestor" || profile?.role === "gerente";
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   async function load() {
@@ -79,33 +85,51 @@ export default function AtendimentosTab({ profile }: { profile: Profile | null }
           <ClipboardList className="text-emerald-400" size={20} /> Atendimentos
         </h3>
         <div className="flex items-center gap-2">
-          <div className="liquid-glass rounded-lg flex items-center gap-2 px-3 py-1.5">
-            <Search size={14} className="text-gray-400" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && search()}
-              placeholder="Pesquisar pelo protocolo..."
-              className="bg-transparent outline-none text-xs w-40"
-            />
-          </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-            className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none"
-          >
-            <option value="">Todos os status</option>
-            <option value="espera">Na fila</option>
-            <option value="atendendo">Atendendo</option>
-            <option value="fechado">Fechado</option>
-            <option value="cancelado">Cancelado</option>
-          </select>
+          {canSeeTeam && (
+            <div className="flex rounded-lg overflow-hidden border border-white/10">
+              <button onClick={() => setView("lista")} className={`flex items-center gap-1 text-xs px-3 py-2 cursor-pointer ${view === "lista" ? "bg-emerald-600 text-white" : "bg-black/20 text-gray-400 hover:text-white"}`}><List size={13} /> Lista</button>
+              <button onClick={() => setView("equipe")} className={`flex items-center gap-1 text-xs px-3 py-2 cursor-pointer ${view === "equipe" ? "bg-emerald-600 text-white" : "bg-black/20 text-gray-400 hover:text-white"}`}><BarChart3 size={13} /> Equipe</button>
+            </div>
+          )}
+          {view === "lista" && (
+            <>
+              <div className="liquid-glass rounded-lg flex items-center gap-2 px-3 py-1.5">
+                <Search size={14} className="text-gray-400" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && search()}
+                  placeholder="Pesquisar pelo protocolo..."
+                  className="bg-transparent outline-none text-xs w-40"
+                />
+              </div>
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none"
+              >
+                <option value="">Todos os status</option>
+                <option value="espera">Na fila</option>
+                <option value="atendendo">Atendendo</option>
+                <option value="fechado">Fechado</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+            </>
+          )}
         </div>
       </div>
 
+      {view === "equipe" && canSeeTeam && (
+        <div className="flex-1 liquid-glass rounded-2xl overflow-hidden">
+          <TeamMetricsPanel profile={profile} onOpenProfile={(id) => setProfileId(id)} />
+        </div>
+      )}
+      {profileId && <ProfileModal profile={profile} targetId={profileId} canEdit={profileId === profile?.id} onClose={() => setProfileId(null)} />}
+
+      {view === "lista" && (
       <div className="flex-1 liquid-glass rounded-2xl overflow-auto custom-scroll flex flex-col">
         <table className="w-full text-left text-sm border-collapse">
           <thead className="sticky top-0 z-10">
@@ -176,6 +200,7 @@ export default function AtendimentosTab({ profile }: { profile: Profile | null }
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal } from "lucide-react";
+import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Headphones, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
@@ -36,10 +36,11 @@ const OS_THEMES = [
   { id: "linux", name: "Linux", desc: "Ubuntu, dock lateral e foco", icon: Terminal },
 ] as const;
 
-type SectionId = "empresa" | "aparencia" | "instalacao" | "ferramentas" | "servidores" | "ia" | "chatbot" | "notificacoes";
+type SectionId = "empresa" | "aparencia" | "atendimento" | "instalacao" | "ferramentas" | "servidores" | "ia" | "chatbot" | "notificacoes";
 const SECTIONS: { id: SectionId; label: string; icon: typeof Building2 }[] = [
   { id: "empresa", label: "Empresa", icon: Building2 },
   { id: "aparencia", label: "Aparência", icon: Palette },
+  { id: "atendimento", label: "Atendimento", icon: Headphones },
   { id: "instalacao", label: "Instalação Acesso Remoto", icon: MonitorDown },
   { id: "ferramentas", label: "Download de Ferramentas", icon: Package },
   { id: "servidores", label: "Servidores", icon: Server },
@@ -517,6 +518,7 @@ export default function ConfigTab({
             </div>
           )}
 
+          {active === "atendimento" && <div className="max-w-lg"><AttendanceConfigSection /></div>}
           {active === "ferramentas" && <div className="max-w-lg"><ToolsManager /></div>}
           {active === "servidores" && <div className="max-w-lg space-y-4"><ServersSection /><ServerPasswordField /></div>}
           {active === "ia" && <div className="max-w-lg"><AiConfigSection /></div>}
@@ -910,6 +912,107 @@ function ServerPasswordField() {
 
 // Modo Game — só faz sentido numa conta HOME (casa). Liga o botão "Game" no
 // acesso remoto (jogar no PC pelo celular). Numa empresa nem aparece.
+// ATENDIMENTO — bot de triagem (distribuição) + métricas + metas. É o mesmo que
+// o dono responde no onboarding, aqui para mexer depois a qualquer momento.
+function AttendanceConfigSection() {
+  const [cid, setCid] = useState<string | null>(null);
+  const [triageOn, setTriageOn] = useState(false);
+  const [mode, setMode] = useState<"one_by_one" | "broadcast">("one_by_one");
+  const [timeoutMin, setTimeoutMin] = useState(20);
+  const [metricsOn, setMetricsOn] = useState(false);
+  const [goalWeek, setGoalWeek] = useState("");
+  const [goalMonth, setGoalMonth] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: p } = await supabase.from("profiles").select("company_id").eq("id", user.id).maybeSingle();
+      if (!p?.company_id) return;
+      setCid(p.company_id);
+      const { data: cs } = await supabase.from("company_settings")
+        .select("triage_enabled, triage_mode, triage_timeout_minutes, metrics_enabled, attendance_goal_week, attendance_goal_month")
+        .eq("company_id", p.company_id).maybeSingle();
+      if (cs) {
+        setTriageOn(!!cs.triage_enabled);
+        setMode((cs.triage_mode as "one_by_one" | "broadcast") || "one_by_one");
+        setTimeoutMin(cs.triage_timeout_minutes ?? 20);
+        setMetricsOn(!!cs.metrics_enabled);
+        setGoalWeek(cs.attendance_goal_week != null ? String(cs.attendance_goal_week) : "");
+        setGoalMonth(cs.attendance_goal_month != null ? String(cs.attendance_goal_month) : "");
+      }
+    })();
+  }, []);
+
+  async function save() {
+    if (!supabase || !cid) return;
+    await supabase.from("company_settings").update({
+      triage_enabled: triageOn,
+      triage_mode: mode,
+      triage_timeout_minutes: Number(timeoutMin) || 20,
+      metrics_enabled: metricsOn,
+      attendance_goal_week: goalWeek ? Number(goalWeek) : null,
+      attendance_goal_month: goalMonth ? Number(goalMonth) : null,
+    }).eq("company_id", cid);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+
+  return (
+    <div className="liquid-glass rounded-2xl p-5 space-y-4">
+      {/* Triagem */}
+      <div>
+        <label className="flex items-center justify-between gap-2 cursor-pointer">
+          <span className="text-sm font-semibold flex items-center gap-2"><Bot size={15} className="text-emerald-400" /> Bot de triagem</span>
+          <input type="checkbox" checked={triageOn} onChange={(e) => setTriageOn(e.target.checked)} className="accent-emerald-600 w-4 h-4" />
+        </label>
+        <p className="text-[11px] text-gray-500 mt-1">O bot entende o que o cliente quer e distribui o atendimento entre a equipe.</p>
+        {triageOn && (
+          <div className="mt-3 space-y-2 pl-1">
+            <button onClick={() => setMode("one_by_one")} className={`w-full text-left rounded-lg border px-3 py-2 text-xs cursor-pointer ${mode === "one_by_one" ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:bg-white/5"}`}>
+              <b>Um por vez (rodízio)</b> — oferece a um atendente; sem resposta no tempo, passa pro próximo; ninguém pegou, libera pra todos.
+            </button>
+            <button onClick={() => setMode("broadcast")} className={`w-full text-left rounded-lg border px-3 py-2 text-xs cursor-pointer ${mode === "broadcast" ? "border-emerald-500 bg-emerald-950/30" : "border-white/10 hover:bg-white/5"}`}>
+              <b>Todos ao mesmo tempo</b> — aparece pra equipe toda; quem responder primeiro assume.
+            </button>
+            {mode === "one_by_one" && (
+              <label className="flex items-center gap-2 text-xs text-gray-300">
+                Passar pro próximo após
+                <input type="number" min={1} value={timeoutMin} onChange={(e) => setTimeoutMin(Number(e.target.value))} className="w-16 bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-center outline-none" />
+                min sem resposta.
+              </label>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-white/10 pt-4">
+        <label className="flex items-center justify-between gap-2 cursor-pointer">
+          <span className="text-sm font-semibold flex items-center gap-2">📊 Métricas de atendimento</span>
+          <input type="checkbox" checked={metricsOn} onChange={(e) => setMetricsOn(e.target.checked)} className="accent-emerald-600 w-4 h-4" />
+        </label>
+        <p className="text-[11px] text-gray-500 mt-1">Conta os atendimentos de cada funcionário. Aparecem em Atendimentos → Equipe e no perfil de cada um. Quem bate a meta ganha destaque dourado. ✨</p>
+        {metricsOn && (
+          <div className="mt-3 flex gap-2">
+            <label className="flex-1 text-xs text-gray-400">Meta semanal
+              <input type="number" min={0} value={goalWeek} onChange={(e) => setGoalWeek(e.target.value)} placeholder="ex.: 40" className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 outline-none" />
+            </label>
+            <label className="flex-1 text-xs text-gray-400">Meta mensal
+              <input type="number" min={0} value={goalMonth} onChange={(e) => setGoalMonth(e.target.value)} placeholder="ex.: 160" className="w-full mt-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 outline-none" />
+            </label>
+          </div>
+        )}
+      </div>
+
+      <button onClick={save} className="text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer flex items-center gap-1">
+        {saved ? <><Check size={14} /> Salvo</> : "Salvar"}
+      </button>
+    </div>
+  );
+}
+
 function GameModeField() {
   const [isHome, setIsHome] = useState<boolean | null>(null);
   const [enabled, setEnabled] = useState(false);
