@@ -8,6 +8,7 @@ import PlansScreen from "@/components/PlansScreen";
 import TutorialOverlay from "@/components/TutorialOverlay";
 import WindowManager from "@/components/WindowManager";
 import AppContextMenu from "@/components/AppContextMenu";
+import AppBoundary from "@/components/AppBoundary";
 import { hasTutorial, WELCOME } from "@/lib/tutorials";
 import BlockedScreen from "@/components/BlockedScreen";
 import SplashScreen from "@/components/SplashScreen";
@@ -144,6 +145,13 @@ export default function Home() {
   const zTopo = useRef(20);
   // Menu do botão direito num ícone de app (abrir em janela, fixar/desafixar).
   const [appMenu, setAppMenu] = useState<{ id: string; label: string; x: number; y: number; fixado: boolean } | null>(null);
+  // ?solo=<app> → esta janela mostra só aquele app, em tela cheia. É o que
+  // permite jogar o Kanban num monitor e o Calendário em outro: cada monitor
+  // é uma janela do navegador aberta em modo solo.
+  const [solo] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("solo");
+  });
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shortcutCreatorOpen, setShortcutCreatorOpen] = useState(false);
@@ -613,6 +621,10 @@ export default function Home() {
   const fecharJanela = (id: string) => setJanelas((js) => js.filter((j) => j.id !== id));
   const focarJanela = (id: string) => setJanelas((js) => js.map((j) => j.id === id ? { ...j, z: ++zTopo.current } : j));
   const minimizarJanela = (id: string) => setJanelas((js) => js.map((j) => j.id === id ? { ...j, min: !j.min } : j));
+  // Abre um app numa NOVA janela do navegador (que pode ir para outro monitor).
+  // A sessão vive no localStorage da mesma origem, então a nova janela já entra
+  // logada e mostra só aquele app (modo ?solo=).
+  const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, `solo_${id}`, "width=1100,height=760"); } catch {} };
 
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
   const mainPad =
@@ -744,6 +756,22 @@ export default function Home() {
     );
   }
 
+  // Janela solo (outro monitor): só o app, sem barra nem cabeçalho pesado.
+  if (solo) {
+    return (
+      <div className="workspace-shell h-screen [height:100dvh] w-screen flex flex-col overflow-hidden bg-[#060a12]">
+        <div className="h-9 px-3 flex items-center gap-2 shrink-0 border-b border-white/5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="" className="w-4 h-4 rounded" />
+          <span className="text-[11px] font-semibold text-gray-300">{APPS.find((a) => a.id === solo)?.label ?? "Workspace"}</span>
+        </div>
+        <main className="flex-1 overflow-auto p-3 sm:p-5">
+          <AppBoundary nome={solo}>{renderApp(solo)}</AppBoundary>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="workspace-shell h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
       <header className="workspace-header h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
@@ -798,8 +826,12 @@ export default function Home() {
       </header>
 
       <main className={`workspace-main flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
-        {/* key={tab} faz a tela re-animar a cada troca de app, no estilo escolhido. */}
-        <div key={tab} className="app-anim h-full">{renderApp(tab)}</div>
+        {/* key={tab} faz a tela re-animar a cada troca de app. A barreira
+            (também com key) contém um erro do app para não derrubar o site,
+            e trocar de aba limpa o erro anterior. */}
+        <div key={tab} className="app-anim h-full">
+          <AppBoundary key={tab} nome={tab}>{renderApp(tab)}</AppBoundary>
+        </div>
       </main>
 
       {/* Janelas flutuantes: abrir vários apps ao mesmo tempo, como no desktop. */}
@@ -815,6 +847,7 @@ export default function Home() {
         alvo={appMenu}
         onAbrirJanela={abrirJanela}
         onAbrirTela={abrirNaTela}
+        onAbrirMonitor={abrirEmMonitor}
         onFixar={pinApp}
         onDesafixar={unpinApp}
         onClose={() => setAppMenu(null)}

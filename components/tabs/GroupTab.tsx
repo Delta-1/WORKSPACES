@@ -801,7 +801,7 @@ function ProjetosView({ group, me }: { group: Group; me: string }) {
     setAberto(null);
     void carregar();
     // A lista se atualiza sozinha quando alguém cria/renomeia um quadro.
-    const ch = supabase?.channel(`projetos:${group.id}`).on(
+    const ch = supabase?.channel(`projetos:${group.id}:${Math.random().toString(36).slice(2, 9)}`).on(
       "postgres_changes",
       { event: "*", schema: "public", table: "group_projects", filter: `group_id=eq.${group.id}` },
       () => void carregar()

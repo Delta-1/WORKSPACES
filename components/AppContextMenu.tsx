@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { ExternalLink, Pin, PinOff, SquareArrowOutUpRight } from "lucide-react";
+import { ExternalLink, MonitorUp, Pin, PinOff, SquareArrowOutUpRight } from "lucide-react";
 
 // MENU DO BOTÃO DIREITO nos ícones de app.
 //
@@ -12,13 +12,14 @@ import { ExternalLink, Pin, PinOff, SquareArrowOutUpRight } from "lucide-react";
 export type AppMenuAlvo = { id: string; label: string; x: number; y: number; fixado: boolean };
 
 export default function AppContextMenu({
-  alvo, onAbrirJanela, onFixar, onDesafixar, onAbrirTela, onClose,
+  alvo, onAbrirJanela, onFixar, onDesafixar, onAbrirTela, onAbrirMonitor, onClose,
 }: {
   alvo: AppMenuAlvo | null;
   onAbrirJanela: (id: string) => void;
   onFixar: (id: string) => void;
   onDesafixar: (id: string) => void;
   onAbrirTela: (id: string) => void;
+  onAbrirMonitor: (id: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -49,6 +50,9 @@ export default function AppContextMenu({
       </button>
       <button className={item} onClick={() => { onAbrirJanela(alvo.id); onClose(); }}>
         <SquareArrowOutUpRight size={14} /> Abrir em janela
+      </button>
+      <button className={item} onClick={() => { onAbrirMonitor(alvo.id); onClose(); }}>
+        <MonitorUp size={14} /> Abrir em nova janela (outro monitor)
       </button>
       <div className="h-px bg-white/10 my-1" />
       {alvo.fixado ? (

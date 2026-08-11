@@ -25,6 +25,12 @@ export function useLive(
   const cb = useRef(reload);
   useEffect(() => { cb.current = reload; });
 
+  // Um id por instância do hook. Sem isto, o MESMO app aberto duas vezes (na
+  // tela e numa janela flutuante) criava dois canais com nome idêntico — e o
+  // Realtime rejeita o segundo com um erro que estourava a árvore inteira e
+  // "recarregava" o site. Nome único por instância acaba com a colisão.
+  const inst = useRef(Math.random().toString(36).slice(2, 9));
+
   // A lista vira string para a dependência comparar por valor — um array novo
   // por render não pode significar "reassine tudo".
   const chave = tables.join(",");
@@ -36,7 +42,7 @@ export function useLive(
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => cb.current(), 250);
     };
-    const ch = supabase.channel(`live:${chave}:${companyId}`);
+    const ch = supabase.channel(`live:${chave}:${companyId}:${inst.current}`);
     for (const table of chave.split(",")) {
       // Filtrar por empresa no servidor: sem isto todo cliente receberia os
       // eventos de todas as empresas (o RLS não se aplica ao realtime do

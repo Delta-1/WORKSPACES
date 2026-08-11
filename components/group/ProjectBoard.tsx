@@ -180,7 +180,7 @@ function ProjectBoardCanvas({
     void supabase?.from("group_projects").select("scene").eq("id", projectId).maybeSingle().then(({ data }) => {
       if (alive && data) setScene(normalizeScene(data.scene));
     });
-    const channel = supabase?.channel(`board:${projectId}`).on(
+    const channel = supabase?.channel(`board:${projectId}:${Math.random().toString(36).slice(2, 9)}`).on(
       "postgres_changes",
       { event: "UPDATE", schema: "public", table: "group_projects", filter: `id=eq.${projectId}` },
       (payload) => {
