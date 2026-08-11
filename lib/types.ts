@@ -268,6 +268,8 @@ export type Chatbot = {
   elevenlabs_voice_id: string | null;
   voice_reply: boolean;
   humanized?: boolean | null;
+  /** Sexo do agente p/ concordância: "masculino" | "feminino" | "neutro". */
+  gender?: string | null;
   capabilities: string[] | null;
   accent: string | null;
   apis: AgentApi[] | null;

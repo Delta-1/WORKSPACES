@@ -368,6 +368,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       elevenlabs_key: f.elevenlabs_key?.trim() || null,
       voice_reply: f.voice_reply ?? true,
       humanized: f.humanized ?? false,
+      gender: f.gender || "neutro",
     };
     let agentId = f.id;
     if (f.id) {
@@ -424,6 +425,14 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           ))}
         </div>
         <input value={f.persona ?? ""} onChange={(e) => set({ persona: e.target.value })} placeholder="Personalidade / papel (ex.: especialista fiscal, calma e objetiva)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-400 shrink-0">Sexo do agente</span>
+          <select value={f.gender ?? "neutro"} onChange={(e) => set({ gender: e.target.value })} className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none">
+            <option value="feminino">Feminino (ela — &quot;fico feliz, obrigada&quot;)</option>
+            <option value="masculino">Masculino (ele — &quot;fico feliz, obrigado&quot;)</option>
+            <option value="neutro">Neutro (evita marcar gênero)</option>
+          </select>
+        </div>
         <textarea value={f.instructions ?? ""} onChange={(e) => set({ instructions: e.target.value })} rows={2} placeholder="Instruções (como agir, o que priorizar)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none resize-none" />
         <input value={f.greeting ?? ""} onChange={(e) => set({ greeting: e.target.value })} placeholder="Saudação inicial (opcional)" className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
 

@@ -2095,16 +2095,34 @@ function SaveStickerModal({ companyId, profileId, sticker, onClose }: { companyI
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
+  // Bots da empresa para escolher quem pode usar. Vazio marcado = TODOS.
+  const [bots, setBots] = useState<{ id: string; name: string }[]>([]);
+  const [permitidos, setPermitidos] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!supabase || !companyId) return;
+    supabase.from("chatbots").select("id,name").eq("company_id", companyId).order("name").then(({ data }) => {
+      const list = (data as { id: string; name: string }[]) ?? [];
+      setBots(list);
+      setPermitidos(new Set(list.map((b) => b.id))); // começa com todos liberados
+    });
+  }, [companyId]);
+  const todosMarcados = bots.length > 0 && permitidos.size === bots.length;
+  function toggleBot(id: string) {
+    setPermitidos((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
   async function salvar() {
     const d = descricao.trim();
     if (!d || !supabase || !companyId) return;
     setBusy(true); setErro(null);
+    // Todos (ou nenhum) marcados → null = qualquer bot da empresa pode usar.
+    const chatbot_ids = todosMarcados || permitidos.size === 0 ? null : Array.from(permitidos);
     const { error } = await supabase.from("bot_stickers").insert({
       company_id: companyId,
       descricao: d,
       media_url: sticker.url,
       mime: sticker.mime,
       created_by: profileId,
+      chatbot_ids,
     });
     setBusy(false);
     if (error) { setErro("Não deu para salvar. Tente de novo."); return; }
@@ -2113,7 +2131,7 @@ function SaveStickerModal({ companyId, profileId, sticker, onClose }: { companyI
   }
   return (
     <div className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-sm bg-[#0b0f16] border border-white/10 rounded-2xl p-5 max-h-[88vh] overflow-y-auto custom-scroll" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-bold flex items-center gap-2"><Star size={18} className="text-sky-400" /> Salvar figurinha</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white cursor-pointer"><X size={18} /></button>
@@ -2131,11 +2149,26 @@ function SaveStickerModal({ companyId, profileId, sticker, onClose }: { companyI
           placeholder="ex.: risada, joia, gato fofo, bom dia…"
           className="w-full bg-[#1c232e] border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500/50 mb-1"
         />
-        {erro && <p className="text-[11px] text-red-400 mb-1">{erro}</p>}
+        {bots.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs text-gray-400 mb-1.5">Quais bots podem usar? <span className="text-gray-500">(todos marcados = liberada para todos)</span></p>
+            <div className="flex flex-wrap gap-1.5">
+              {bots.map((b) => {
+                const on = permitidos.has(b.id);
+                return (
+                  <button key={b.id} onClick={() => toggleBot(b.id)} className={`text-[11px] px-2 py-1 rounded-full border cursor-pointer ${on ? "bg-sky-500/20 border-sky-500/50 text-sky-200" : "bg-white/5 border-white/10 text-gray-400"}`}>
+                    {on ? "✓ " : ""}{b.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {erro && <p className="text-[11px] text-red-400 mb-1 mt-2">{erro}</p>}
         <button
           onClick={salvar}
           disabled={busy || !descricao.trim() || ok}
-          className="w-full mt-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg py-2 cursor-pointer"
+          className="w-full mt-3 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg py-2 cursor-pointer"
         >
           {ok ? "Salva! ✨" : busy ? "Salvando…" : "Salvar na biblioteca"}
         </button>
