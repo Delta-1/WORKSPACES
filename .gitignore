@@ -47,3 +47,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 whatsapp-service/.next/
+
+# Workspaces Desktop (Electron) build output
+desktop/node_modules/
+desktop/dist/

@@ -8,9 +8,15 @@
   "orientation": "any",
   "background_color": "#060a12",
   "theme_color": "#10b981",
+  "categories": ["business", "productivity"],
   "icons": [
     { "src": "/icon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Mensagens", "short_name": "Mensagens", "url": "/?solo=mensagens", "icons": [{ "src": "/icon.png", "sizes": "192x192" }] },
+    { "name": "Kanban", "short_name": "Kanban", "url": "/?solo=kanban", "icons": [{ "src": "/icon.png", "sizes": "192x192" }] },
+    { "name": "Atendimentos", "short_name": "Atendimentos", "url": "/?solo=atendimentos", "icons": [{ "src": "/icon.png", "sizes": "192x192" }] }
   ]
 }

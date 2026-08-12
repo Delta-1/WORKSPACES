@@ -636,10 +636,21 @@ export default function Home() {
   // Abre um app numa NOVA janela do navegador (que pode ir para outro monitor).
   // A sessão vive no localStorage da mesma origem, então a nova janela já entra
   // logada e mostra só aquele app (modo ?solo=).
-  const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}&widget=1`, `solo_${id}`, "width=1100,height=760"); } catch {} };
+  // No Workspaces Desktop (app), abrir vira uma JANELA NATIVA (widget de verdade);
+  // no navegador, cai numa janela/aba normal.
+  const desktopBridge = () => (typeof window !== "undefined" ? (window as unknown as { workspacesDesktop?: { openWidget?: (id: string) => void } }).workspacesDesktop : undefined);
+  const abrirEmMonitor = (id: string) => {
+    const wd = desktopBridge();
+    if (wd?.openWidget) { wd.openWidget(id); return; }
+    try { window.open(`${window.location.pathname}?solo=${id}&widget=1`, `solo_${id}`, "width=1100,height=760"); } catch {}
+  };
   // Abrir o app numa OUTRA ABA do navegador (útil pra jogar num segundo monitor
   // arrastando a aba, ou como janela/widget no Workspaces Desktop).
-  const abrirEmAba = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, "_blank"); } catch {} };
+  const abrirEmAba = (id: string) => {
+    const wd = desktopBridge();
+    if (wd?.openWidget) { wd.openWidget(id); return; }
+    try { window.open(`${window.location.pathname}?solo=${id}`, "_blank"); } catch {}
+  };
 
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
   const mainPad =

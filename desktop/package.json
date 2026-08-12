@@ -1,0 +1,46 @@
+{
+  "name": "workspaces-desktop",
+  "version": "0.1.0",
+  "description": "Workspaces Desktop — o app do Workspaces para computador (Windows, Mac e Linux). Abre o Workspaces em janela própria e permite jogar cada app (Kanban, Calendário…) num monitor separado como widget.",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "author": "Workspaces",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.workspaces.desktop",
+    "productName": "Workspaces",
+    "files": ["src/**/*"],
+    "directories": { "buildResources": "build" },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "artifactName": "Workspaces-Setup.exe",
+      "shortcutName": "Workspaces"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Office"
+    }
+  }
+}
