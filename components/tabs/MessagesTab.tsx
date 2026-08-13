@@ -2304,8 +2304,13 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
         await supabase.from("billing_targets").insert({ company_id: companyId, charge_id: charge.id, contact_id: contact.id, name: nome, phone: (contact.phone || "").replace(/\D/g, "") || null, tipo: "pix", valor: valorFinal, due_date: today, status: "enviado", sent_at: new Date().toISOString(), itens: cleanItens, motivo: motivo || null, image_url: imageUrl || null });
       }
       const extrato = renderExtrato(cleanItens, motivo);
-      const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
-      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+      // A chave Pix vai numa mensagem SEPARADA, sozinha — assim a pessoa copia
+      // sem ter que apagar o resto do texto.
+      const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPara pagar via Pix, é só copiar a chave que mando logo abaixo. 👇\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
+      if (to) {
+        await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+        if (pixKey) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: pixKey }) });
+      }
       setValor(""); setMotivo(""); setItens([]); setImageUrl(null); setFollowupMin("0"); setMulta(""); await load();
     } finally { setBusy(false); }
   }

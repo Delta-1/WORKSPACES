@@ -2500,7 +2500,7 @@ async function copilotAction(companyId, name, input, files = [], sends = [], ctx
         ok: true,
         ...out,
         instrucao: out.metodo === "pix"
-          ? "Mandei o QR Code. Passe TAMBÉM o código copia-e-cola (pix_copia_e_cola) numa mensagem separada, sozinho, para a pessoa conseguir copiar. Avise que o saldo entra sozinho quando o pagamento cair, e que ela pode pedir para você conferir."
+          ? "O QR Code JÁ FOI enviado como imagem. Agora, NESTA ORDEM e em MENSAGENS SEPARADAS: (1) mande o código copia-e-cola (pix_copia_e_cola) SOZINHO, numa mensagem só dele, sem nenhum texto junto — a pessoa precisa copiar sem apagar nada; (2) depois mande uma mensagem curta explicando (é só colar no app do banco, ou escanear o QR acima; o saldo entra sozinho quando o pagamento cair e ela pode pedir para você conferir). Nunca junte o código com outro texto."
           : "Passe o link para a pessoa pagar com cartão. Avise que o saldo entra sozinho assim que o pagamento for aprovado.",
       };
     }
@@ -4677,16 +4677,43 @@ async function pixDaCobranca(alvo, bs) {
 }
 // Envia a cobrança por TEXTO (ou IMAGEM com legenda) e, se houver AGENTE com voz,
 // também por ÁUDIO. Pedido do cliente: imagem em vez do/junto ao texto + áudio.
-async function sendBillingMessage(numberId, to, text, agent, imageUrl = null) {
+// Manda a chave/código Pix SEPARADO: primeiro o QR Code (quando é um código
+// "copia e cola" de verdade, que dá pra escanear), depois o código SOZINHO numa
+// mensagem só dele — assim a pessoa copia sem ter que apagar o texto inteiro.
+async function enviarChavePixSeparada(numberId, to, pix) {
+  const code = String(pix || "").trim();
+  if (!code) return;
+  try {
+    // Só gera QR de um BR Code real (copia e cola). Chave simples (telefone/e-mail/
+    // CPF/aleatória) não vira QR pagável, então mandamos só a chave.
+    if (contemCodigoPix(code)) {
+      try {
+        const buf = await QRCode.toBuffer(code, { width: 512, margin: 1 });
+        const url = await uploadMedia(buf, "image/png", "out");
+        if (url) await sendMessage(numberId, to, "", null, { type: "image", url, name: "pix-qrcode.png", mime: "image/png" }).catch(() => {});
+      } catch { /* sem QR, o código resolve */ }
+    }
+    // O código/chave sozinho — nada junto, pra copiar de uma vez.
+    await sendMessage(numberId, to, code, null, null).catch(() => {});
+  } catch (e) {
+    console.error("pix separado:", e?.message || e);
+  }
+}
+
+async function sendBillingMessage(numberId, to, text, agent, imageUrl = null, pix = null) {
+  // Se há Pix, tira o código/chave de DENTRO do texto — ele vai sozinho depois.
+  const code = pix && String(pix).trim();
+  let body = text;
+  if (code && body.includes(code)) body = body.split(code).join("👇 (mando logo abaixo)").replace(/\n{3,}/g, "\n\n");
   if (imageUrl) {
-    await sendMessage(numberId, to, text, null, { type: "image", url: imageUrl, name: null, mime: null }).catch((e) => console.error("billing imagem:", e?.message || e));
+    await sendMessage(numberId, to, body, null, { type: "image", url: imageUrl, name: null, mime: null }).catch((e) => console.error("billing imagem:", e?.message || e));
   } else {
-    await sendMessage(numberId, to, text, null, null).catch((e) => console.error("billing texto:", e?.message || e));
+    await sendMessage(numberId, to, body, null, null).catch((e) => console.error("billing texto:", e?.message || e));
   }
   try {
     const key = agent?.elevenlabs_key || elevenKey;
     if (agent && agent.voice_reply !== false && key) {
-      const mp3 = await synthesizeSpeech(sanitizeForSpeech(text), key, agent.elevenlabs_voice_id);
+      const mp3 = await synthesizeSpeech(sanitizeForSpeech(body), key, agent.elevenlabs_voice_id);
       const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
       const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
       if (url) await sendMessage(numberId, to, "", null, { type: "audio", url, name: null, mime: "audio/ogg" }).catch(() => {});
@@ -4694,6 +4721,8 @@ async function sendBillingMessage(numberId, to, text, agent, imageUrl = null) {
   } catch (e) {
     console.error("billing áudio:", e?.message || e);
   }
+  // Depois do texto (e do áudio), a chave Pix separada: QR + código sozinho.
+  if (code) await enviarChavePixSeparada(numberId, to, code);
 }
 // Lê a DATA de um comprovante (imagem) via IA de visão (Gemini) — best-effort.
 async function extractReceiptDate(buffer, mime, key) {
@@ -4799,6 +4828,8 @@ async function billingSweep() {
       // ligada; senão, a chave estática de sempre. O template não muda: {pix}
       // recebe um ou outro.
       const pix = (await pixDaCobranca(t, bs)) || bs.billing_pix_key || "";
+      // A chave Pix vai SEPARADA (QR + código sozinho) só nas cobranças por Pix.
+      const pixArg = ch.tipo === "pix" && pix ? pix : null;
       const empresa = bs.name || "";
       const tpl = ch.template || bs.billing_default_template || DEFAULT_BILLING_TEMPLATE;
       const agent = ch.agent_id ? agentsById[ch.agent_id] : null;
@@ -4825,7 +4856,7 @@ async function billingSweep() {
               const primeiro = (t.name || "").split(" ")[0];
               const reMsg = `Oi ${primeiro}, tudo bem? 🙂 Vi que a cobrança de ${brlMoney(t.valor)} (vence ${fmtBrDate(t.due_date)}) ainda está em aberto. Consegue dar uma olhadinha?\n\nChave Pix:\n${pix || "(configure a chave Pix no Cobrador)"}`;
               // Áudio (se marcado e houver agente com voz) OU reenvio por texto/imagem.
-              await sendBillingMessage(numId, to, reMsg, ch.followup_as_audio ? agent : null, ch.followup_as_audio ? null : img);
+              await sendBillingMessage(numId, to, reMsg, ch.followup_as_audio ? agent : null, ch.followup_as_audio ? null : img, pixArg);
               await supabase.from("billing_targets").update({ followup_sent_at: new Date().toISOString(), followup_count: count + 1 }).eq("id", t.id);
             }
           }
@@ -4835,13 +4866,13 @@ async function billingSweep() {
 
       // Lembrete X dias antes (uma vez).
       if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
-        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent, img);
+        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent, img, pixArg);
         await supabase.from("billing_targets").update({ status: t.status === "pendente" ? "lembrete" : t.status, reminder_sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
       // Cobrança no dia do vencimento (uma vez).
       if (daysUntil <= 0 && !t.sent_at) {
-        await sendBillingMessage(numId, to, baseMsg, agent, img);
+        await sendBillingMessage(numId, to, baseMsg, agent, img, pixArg);
         await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
