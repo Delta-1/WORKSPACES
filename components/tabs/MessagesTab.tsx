@@ -2309,7 +2309,9 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
       const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPara pagar via Pix, é só copiar a chave que mando logo abaixo. 👇\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
       if (to) {
         await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
-        if (pixKey) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: pixKey }) });
+        // Pix separado: QR Code + copia e cola + chave embaixo (o serviço monta o
+        // BR Code a partir da chave, então funciona até com chave estática).
+        if (pixKey) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, pix: { key: pixKey, amount: valorFinal } }) });
       }
       setValor(""); setMotivo(""); setItens([]); setImageUrl(null); setFollowupMin("0"); setMulta(""); await load();
     } finally { setBusy(false); }

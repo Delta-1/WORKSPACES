@@ -3651,7 +3651,14 @@ async function startSession(numberId) {
             const wantVoice = preferVoice && voiceReplyOn && !!botElevenKey;
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
-            if (!isCopilot && !continuous && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
+            // A pessoa sinalizou que terminou? Fecha o atendimento (com despedida).
+            // Cobre desde "quero encerrar" até "não, tá bom, é só isso" e um
+            // "obrigado/valeu" sozinho no fim da conversa.
+            const clienteEncerrou = !!customerText && (
+              /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|(era|é|eh)\s+s[oó]\s+isso|s[oó]\s+isso\s+(mesmo|por enquanto|obrigad|valeu)|por\s+enquanto\s+(é|eh|era)\s+s[oó]|n[aã]o\s+preciso\s+de\s+mais\s+nada|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)
+              || /^\s*(muito\s+)?(obrigad[oa]?|valeu|vlw|brigad[oa]?|era isso|s[oó] isso)\s*[!.…]*\s*$/i.test(customerText)
+            );
+            if (!isCopilot && !continuous && clienteEncerrou) {
               // Já fechou e mandou a despedida uma vez? Não repete — só encerra em silêncio.
               if (conversation.closing_sent || conversation.status === "fechado") {
                 await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true }).eq("id", conversation.id);
@@ -3821,6 +3828,12 @@ async function startSession(numberId) {
               } catch (e) {
                 console.error("envio de figurinha da biblioteca falhou:", e?.message || e);
               }
+            }
+            // O BOT ASSUMIU a conversa → sai de "Aguardando atendimento" e passa a
+            // "Sendo atendido". (Só quando ele de fato respondeu, fora de grupo e
+            // sem um humano já dono; a triagem, quando entra, muda isso depois.)
+            if (reply && !isCopilot && !ehGrupo && conversation.status === "espera" && !conversation.assignee_id && !conversation.triage_open_to_all) {
+              await supabase.from("conversations").update({ status: "atendendo" }).eq("id", conversation.id).then(() => {}, () => {});
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
             // humano, a gente conclui isso de verdade — senão ele fica repetindo
@@ -4207,12 +4220,23 @@ app.post("/groups/sync", async (req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { numberId, to, text, senderId, media, messageId } = req.body ?? {};
-  if (!to || (!text && !media?.url)) {
-    return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
+  const { numberId, to, text, senderId, media, messageId, pix } = req.body ?? {};
+  // Com 'pix', a mensagem pode ser só o Pix separado (QR + copia e cola + chave).
+  if (!to || (!text && !media?.url && !pix?.key && !pix?.code)) {
+    return res.status(400).json({ error: "Informe 'to' e 'text', 'media' ou 'pix'." });
   }
   try {
-    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null);
+    if (text || media?.url) {
+      await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null);
+    }
+    // Pix separado: QR Code + copia e cola + chave embaixo. Aceita um código
+    // pronto (pix.code) ou uma chave simples (pix.key) para montar o BR Code.
+    if (pix && (pix.key || pix.code)) {
+      await enviarChavePixSeparada(numberId ? String(numberId) : null, to, pix.code || pix.key, {
+        name: pix.name, city: pix.city, amount: pix.amount,
+        chaveExtra: pix.code && pix.key ? pix.key : undefined,
+      });
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
@@ -4677,30 +4701,77 @@ async function pixDaCobranca(alvo, bs) {
 }
 // Envia a cobrança por TEXTO (ou IMAGEM com legenda) e, se houver AGENTE com voz,
 // também por ÁUDIO. Pedido do cliente: imagem em vez do/junto ao texto + áudio.
-// Manda a chave/código Pix SEPARADO: primeiro o QR Code (quando é um código
-// "copia e cola" de verdade, que dá pra escanear), depois o código SOZINHO numa
-// mensagem só dele — assim a pessoa copia sem ter que apagar o texto inteiro.
-async function enviarChavePixSeparada(numberId, to, pix) {
-  const code = String(pix || "").trim();
-  if (!code) return;
+// ── Pix "copia e cola" ESTÁTICO (BR Code) a partir de uma chave ──────────────
+// Monta o código EMV do Pix (o mesmo que dá pra colar no app do banco e que vira
+// QR) a partir de uma chave simples (telefone/e-mail/CPF/aleatória) + nome +
+// cidade + valor. Assim até quem usa chave estática ganha QR + copia e cola.
+function pixTlv(id, value) {
+  const v = String(value);
+  return `${id}${String(v.length).padStart(2, "0")}${v}`;
+}
+function pixCrc16(payload) {
+  let crc = 0xffff;
+  for (let i = 0; i < payload.length; i++) {
+    crc ^= payload.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xffff;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+function pixSanitize(s, max) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\x20-\x7E]/g, "").trim().slice(0, max);
+}
+function pixBrCodeEstatico({ key, name, city, amount, txid = "***" }) {
+  if (!key) return null;
+  const mai = pixTlv("26", pixTlv("00", "br.gov.bcb.pix") + pixTlv("01", String(key).trim()));
+  const parts = [pixTlv("00", "01"), mai, pixTlv("52", "0000"), pixTlv("53", "986")];
+  if (amount && Number(amount) > 0) parts.push(pixTlv("54", Number(amount).toFixed(2)));
+  parts.push(pixTlv("58", "BR"));
+  parts.push(pixTlv("59", pixSanitize(name, 25) || "RECEBEDOR"));
+  parts.push(pixTlv("60", pixSanitize(city, 15) || "SAO PAULO"));
+  parts.push(pixTlv("62", pixTlv("05", pixSanitize(txid, 25) || "***")));
+  const partial = parts.join("") + "6304";
+  return partial + pixCrc16(partial);
+}
+
+// Manda o Pix SEPARADO, na ordem que a pessoa precisa:
+// 1) o QR Code (dá pra escanear no app do banco);
+// 2) o "copia e cola" SOZINHO numa mensagem (colar sem apagar nada);
+// 3) a chave Pix simples embaixo (quando a origem é uma chave, não um código).
+// opts: { name, city, amount } para montar o BR Code a partir de uma chave.
+async function enviarChavePixSeparada(numberId, to, pix, opts = {}) {
+  const raw = String(pix || "").trim();
+  if (!raw) return;
   try {
-    // Só gera QR de um BR Code real (copia e cola). Chave simples (telefone/e-mail/
-    // CPF/aleatória) não vira QR pagável, então mandamos só a chave.
-    if (contemCodigoPix(code)) {
+    let brcode = null;
+    let chaveSimples = opts.chaveExtra ? String(opts.chaveExtra).trim() : null;
+    if (contemCodigoPix(raw)) {
+      brcode = raw; // já é um copia e cola de verdade
+    } else {
+      // É uma chave simples: mostra a chave embaixo E monta um copia e cola/QR.
+      chaveSimples = chaveSimples || raw;
+      brcode = pixBrCodeEstatico({ key: raw, name: opts.name, city: opts.city, amount: opts.amount });
+    }
+    // 1) QR Code do copia e cola.
+    if (brcode) {
       try {
-        const buf = await QRCode.toBuffer(code, { width: 512, margin: 1 });
+        const buf = await QRCode.toBuffer(brcode, { width: 512, margin: 1 });
         const url = await uploadMedia(buf, "image/png", "out");
         if (url) await sendMessage(numberId, to, "", null, { type: "image", url, name: "pix-qrcode.png", mime: "image/png" }).catch(() => {});
       } catch { /* sem QR, o código resolve */ }
     }
-    // O código/chave sozinho — nada junto, pra copiar de uma vez.
-    await sendMessage(numberId, to, code, null, null).catch(() => {});
+    // 2) O copia e cola sozinho.
+    if (brcode) await sendMessage(numberId, to, brcode, null, null).catch(() => {});
+    // 3) A chave Pix simples, embaixo.
+    if (chaveSimples && chaveSimples !== brcode) await sendMessage(numberId, to, `Chave Pix: ${chaveSimples}`, null, null).catch(() => {});
   } catch (e) {
     console.error("pix separado:", e?.message || e);
   }
 }
 
-async function sendBillingMessage(numberId, to, text, agent, imageUrl = null, pix = null) {
+async function sendBillingMessage(numberId, to, text, agent, imageUrl = null, pix = null, pixOpts = {}) {
   // Se há Pix, tira o código/chave de DENTRO do texto — ele vai sozinho depois.
   const code = pix && String(pix).trim();
   let body = text;
@@ -4722,7 +4793,7 @@ async function sendBillingMessage(numberId, to, text, agent, imageUrl = null, pi
     console.error("billing áudio:", e?.message || e);
   }
   // Depois do texto (e do áudio), a chave Pix separada: QR + código sozinho.
-  if (code) await enviarChavePixSeparada(numberId, to, code);
+  if (code) await enviarChavePixSeparada(numberId, to, code, pixOpts);
 }
 // Lê a DATA de um comprovante (imagem) via IA de visão (Gemini) — best-effort.
 async function extractReceiptDate(buffer, mime, key) {
@@ -4830,6 +4901,8 @@ async function billingSweep() {
       const pix = (await pixDaCobranca(t, bs)) || bs.billing_pix_key || "";
       // A chave Pix vai SEPARADA (QR + código sozinho) só nas cobranças por Pix.
       const pixArg = ch.tipo === "pix" && pix ? pix : null;
+      // Dados p/ montar o QR/copia-e-cola quando a empresa usa chave estática.
+      const pixOpts = { name: empresa, amount: t.valor };
       const empresa = bs.name || "";
       const tpl = ch.template || bs.billing_default_template || DEFAULT_BILLING_TEMPLATE;
       const agent = ch.agent_id ? agentsById[ch.agent_id] : null;
@@ -4856,7 +4929,7 @@ async function billingSweep() {
               const primeiro = (t.name || "").split(" ")[0];
               const reMsg = `Oi ${primeiro}, tudo bem? 🙂 Vi que a cobrança de ${brlMoney(t.valor)} (vence ${fmtBrDate(t.due_date)}) ainda está em aberto. Consegue dar uma olhadinha?\n\nChave Pix:\n${pix || "(configure a chave Pix no Cobrador)"}`;
               // Áudio (se marcado e houver agente com voz) OU reenvio por texto/imagem.
-              await sendBillingMessage(numId, to, reMsg, ch.followup_as_audio ? agent : null, ch.followup_as_audio ? null : img, pixArg);
+              await sendBillingMessage(numId, to, reMsg, ch.followup_as_audio ? agent : null, ch.followup_as_audio ? null : img, pixArg, pixOpts);
               await supabase.from("billing_targets").update({ followup_sent_at: new Date().toISOString(), followup_count: count + 1 }).eq("id", t.id);
             }
           }
@@ -4866,13 +4939,13 @@ async function billingSweep() {
 
       // Lembrete X dias antes (uma vez).
       if (daysUntil > 0 && daysUntil <= antecedencia && !t.reminder_sent_at) {
-        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent, img, pixArg);
+        await sendBillingMessage(numId, to, `⏰ ${baseMsg}`, agent, img, pixArg, pixOpts);
         await supabase.from("billing_targets").update({ status: t.status === "pendente" ? "lembrete" : t.status, reminder_sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
       // Cobrança no dia do vencimento (uma vez).
       if (daysUntil <= 0 && !t.sent_at) {
-        await sendBillingMessage(numId, to, baseMsg, agent, img, pixArg);
+        await sendBillingMessage(numId, to, baseMsg, agent, img, pixArg, pixOpts);
         await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
         continue;
       }
