@@ -1264,6 +1264,11 @@ const HUMANIZED_RULES =
 // Um agente está em modo humanizado? A coluna pode não existir em bancos antigos.
 const ehHumanizado = (chatbot) => chatbot?.humanized === true;
 
+// O bot GERENCIA o atendimento (abre "Sendo atendido" e finaliza sozinho)?
+// Padrão sim; quem escolhe "só atender" deixa a conversa em Aguardando para um
+// humano. (Coluna pode não existir em bancos antigos → assume que sim.)
+const gerenciaAtendimento = (chatbot) => chatbot?.manages_attendance !== false;
+
 // Sexo do agente → concordância. Muda SÓ como ele fala de si (obrigado/obrigada),
 // nunca o conteúdo, e nunca o modo de tratar a pessoa.
 function blocoSexo(chatbot) {
@@ -3658,7 +3663,7 @@ async function startSession(numberId) {
               /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|(era|é|eh)\s+s[oó]\s+isso|s[oó]\s+isso\s+(mesmo|por enquanto|obrigad|valeu)|por\s+enquanto\s+(é|eh|era)\s+s[oó]|n[aã]o\s+preciso\s+de\s+mais\s+nada|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)
               || /^\s*(muito\s+)?(obrigad[oa]?|valeu|vlw|brigad[oa]?|era isso|s[oó] isso)\s*[!.…]*\s*$/i.test(customerText)
             );
-            if (!isCopilot && !continuous && clienteEncerrou) {
+            if (!isCopilot && !continuous && clienteEncerrou && gerenciaAtendimento(agentForReply)) {
               // Já fechou e mandou a despedida uma vez? Não repete — só encerra em silêncio.
               if (conversation.closing_sent || conversation.status === "fechado") {
                 await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString(), bot_paused: true }).eq("id", conversation.id);
@@ -3832,13 +3837,13 @@ async function startSession(numberId) {
             // O BOT ASSUMIU a conversa → sai de "Aguardando atendimento" e passa a
             // "Sendo atendido". (Só quando ele de fato respondeu, fora de grupo e
             // sem um humano já dono; a triagem, quando entra, muda isso depois.)
-            if (reply && !isCopilot && !ehGrupo && conversation.status === "espera" && !conversation.assignee_id && !conversation.triage_open_to_all) {
+            if (reply && !isCopilot && !ehGrupo && gerenciaAtendimento(agentForReply) && conversation.status === "espera" && !conversation.assignee_id && !conversation.triage_open_to_all) {
               await supabase.from("conversations").update({ status: "atendendo" }).eq("id", conversation.id).then(() => {}, () => {});
             }
             // FIM DO LOOP: se o PRÓPRIO bot disse que ia encerrar ou passar para um
             // humano, a gente conclui isso de verdade — senão ele fica repetindo
             // "vou encerrar" pra sempre. (Não vale para o copiloto nem IA contínua.)
-            if (!isCopilot && !continuous && reply) {
+            if (!isCopilot && !continuous && reply && gerenciaAtendimento(agentForReply)) {
               const intent = detectBotClosureIntent(reply);
               if (intent === "close") {
                 const info2 = await getCompanyInfo(cid);

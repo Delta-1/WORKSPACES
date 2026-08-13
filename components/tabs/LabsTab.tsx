@@ -369,6 +369,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       voice_reply: f.voice_reply ?? true,
       humanized: f.humanized ?? false,
       gender: f.gender || "neutro",
+      manages_attendance: f.manages_attendance ?? true,
     };
     let agentId = f.id;
     if (f.id) {
@@ -544,6 +545,13 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
           <span>
             <b className="text-emerald-300">IA contínua</b> — responde sempre e <b>NÃO fica encerrando</b> o atendimento; encerra sozinho em silêncio e <b>lembra das conversas antigas</b> do contato.
             <br /><span className="text-gray-500">Ideal quando o agente tem número próprio e é a atendente fixa daquele WhatsApp.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-teal-500/30 bg-teal-950/20 px-3 py-2">
+          <input type="checkbox" checked={f.manages_attendance ?? true} onChange={(e) => set({ manages_attendance: e.target.checked })} className="accent-teal-500 mt-0.5" />
+          <span>
+            <b className="text-teal-300">Gerencia o atendimento (abre e finaliza)</b> — quando responde, a conversa vira <b>Sendo atendido</b>, e ele <b>finaliza sozinho</b> quando a pessoa termina ou dá o tempo de inatividade.
+            <br /><span className="text-gray-500">Desligado: ele <b>só atende</b> — a conversa continua em <b>Aguardando atendimento</b> para um humano assumir e fechar.</span>
           </span>
         </label>
         <label className="flex items-start gap-2 text-xs cursor-pointer rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2">

@@ -283,6 +283,8 @@ export type Chatbot = {
   humanized?: boolean | null;
   /** Sexo do agente p/ concordância: "masculino" | "feminino" | "neutro". */
   gender?: string | null;
+  /** true = abre "Sendo atendido" e finaliza sozinho; false = só atende (segue em Aguardando). */
+  manages_attendance?: boolean | null;
   capabilities: string[] | null;
   accent: string | null;
   apis: AgentApi[] | null;
