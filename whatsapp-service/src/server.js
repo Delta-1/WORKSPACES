@@ -1500,6 +1500,11 @@ async function runChatbotReply(chatbot, customerText, history = [], mode = "ai",
         }
       );
       const data = await res.json();
+      if (!res.ok || data?.error) {
+        // Erro do Gemini (quota/chave): loga claro para diagnóstico. Não fica mudo à toa.
+        console.error("Gemini (atendimento) erro:", res.status, data?.error?.message || data?.error?.status || "");
+        return null;
+      }
       return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
     }
     if (provider === "openai") {
@@ -3176,6 +3181,12 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
           { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, tools: [{ functionDeclarations }] }) }
         );
         const data = await res.json();
+        // Erro do provedor (quota estourada, chave inválida, indisponível): NÃO
+        // pode virar silêncio. Lança para cair no fallback (e no log) em vez de
+        // deixar o bot mudo — assim a pessoa recebe algo e o operador vê o motivo.
+        if (!res.ok || data?.error) {
+          throw new Error(`Gemini ${res.status}: ${data?.error?.message || data?.error?.status || "resposta sem conteúdo"}`);
+        }
         const parts = data?.candidates?.[0]?.content?.parts ?? [];
         reply = parts.filter((p) => p.text).map((p) => p.text).join("\n") || reply;
         const calls = parts.filter((p) => p.functionCall);
