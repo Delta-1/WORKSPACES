@@ -309,6 +309,8 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       });
       const data = await res.json() as { reply: string; patch?: Partial<Agent> };
       if (data.patch && Object.keys(data.patch).length) set(data.patch);
+      // Montou um fluxograma? Abre o canvas pra pessoa ver (se o agente já foi salvo).
+      if (data.patch?.flow && f.id) setShowFlow(true);
       setEvaMsgs((m) => [...m, { role: "assistant", text: data.reply || "Prontinho! ✨" }]);
     } catch {
       setEvaMsgs((m) => [...m, { role: "assistant", text: "Tive um probleminha aqui, tenta de novo?" }]);
