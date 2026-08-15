@@ -17,4 +17,5 @@ export const CAPS: Capability[] = [
   { id: "logistica", label: "Logística Internacional", desc: "Status de cargas, localização de motoristas e documentos aduaneiros" },
   { id: "cobranca", label: "Cobrador (cobranças)", desc: "Consulta cobranças pendentes e situação de cada cliente" },
   { id: "creditos", label: "Saldo e cobrança", desc: "Cobra os serviços em reais, gera Pix/link de cartão e controla o saldo do cliente" },
+  { id: "projetos", label: "Projetos (SDR)", desc: "Cria e toca projetos: Kanban, checklist, notas/prompts, orçamento, agenda — e consulta o supervisor" },
 ];

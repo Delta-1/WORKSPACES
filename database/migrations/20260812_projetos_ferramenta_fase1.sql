@@ -1,0 +1,5 @@
+-- FERRAMENTA "PROJETOS" (privada do dono) — Fase 1. Espelha a migração aplicada
+-- via MCP (projetos_ferramenta_fase1): projects + project_tasks (kanban c/
+-- checklist) + project_notes (pontos/prompts) + project_budget_items +
+-- project_events. RLS: só o dono (owner_id = auth.uid()) vê. Em tempo real.
+-- Ver o SQL completo no painel do Supabase (migração projetos_ferramenta_fase1).

@@ -2012,6 +2012,14 @@ async function fetchDocModels() {
 // aos arquivos da empresa: procura pelo nome e ENTREGA o arquivo/imagem.
 // ---------------------------------------------------------------------------
 const COPILOT_TOOLS = [
+  // ── PROJETOS (ferramenta privada do dono) ──────────────────────────────
+  { name: "projeto_listar", description: "Lista os projetos do dono (id, nome, status). Use antes de anotar/atualizar para achar o project_id certo.", input_schema: { type: "object", properties: {} } },
+  { name: "projeto_criar", description: "Cria um projeto novo. tipo 'cliente' liga ao contato desta conversa; 'meu' é uma ideia sua. Devolve project_id.", input_schema: { type: "object", properties: { nome: { type: "string" }, tipo: { type: "string", description: "meu | cliente" }, resumo: { type: "string" } }, required: ["nome"] } },
+  { name: "projeto_anotar", description: "Adiciona uma nota ao projeto. tipo 'ponto' = algo que você identificou; tipo 'prompt' = um prompt COMPLETO pronto pra colar no Claude e desenvolver o projeto.", input_schema: { type: "object", properties: { project_id: { type: "string" }, tipo: { type: "string", description: "ponto | prompt" }, titulo: { type: "string" }, texto: { type: "string" } }, required: ["project_id", "texto"] } },
+  { name: "projeto_tarefa", description: "Cria um card no Kanban do projeto, com um checklist. coluna: backlog|a_fazer|fazendo|revisao|concluido.", input_schema: { type: "object", properties: { project_id: { type: "string" }, titulo: { type: "string" }, checklist: { type: "array", items: { type: "string" } }, coluna: { type: "string" } }, required: ["project_id", "titulo"] } },
+  { name: "projeto_orcamento", description: "Monta/atualiza o orçamento do projeto (substitui os itens). Passe itens [{descricao, valor}]; o total é somado.", input_schema: { type: "object", properties: { project_id: { type: "string" }, itens: { type: "array", items: { type: "object", properties: { descricao: { type: "string" }, valor: { type: "number" } } } } }, required: ["project_id", "itens"] } },
+  { name: "projeto_agendar", description: "Agenda uma etapa/prazo no calendário do projeto. quando em ISO (ex.: 2026-09-01T14:00).", input_schema: { type: "object", properties: { project_id: { type: "string" }, titulo: { type: "string" }, quando: { type: "string" } }, required: ["project_id", "titulo", "quando"] } },
+  { name: "consultar_supervisor", description: "Antes de decisões importantes (orçamento, fechar, cobrar): manda a proposta pro supervisor (dono) no WhatsApp e pede o aval. Diga ao cliente pra aguardar e siga o que o supervisor responder.", input_schema: { type: "object", properties: { assunto: { type: "string" }, proposta: { type: "string" } }, required: ["assunto", "proposta"] } },
   {
     name: "search_files",
     description: "Busca arquivos/pastas da empresa pelo nome. Use quando pedirem um arquivo/imagem/documento.",
@@ -2965,7 +2973,86 @@ async function copilotDispatch(companyId, name, input, files, sends, ctx = {}) {
     } catch { /* ignore */ }
     return { ok: false, message: "O print foi tirado mas não consegui anexar." };
   }
+  if (name.startsWith("projeto_") || name === "consultar_supervisor") {
+    return await projetoDispatch(companyId, name, input, sends, ctx);
+  }
   return await copilotAction(companyId, name, input, files, sends, ctx);
+}
+
+// Dono dos projetos: o dono do agente (bot privado) ou, se não tiver, o dono
+// da empresa. Os projetos são privados desse dono (RLS por owner_id).
+async function projetoOwnerId(companyId, agentId) {
+  if (!supabase) return null;
+  if (agentId) {
+    const { data } = await supabase.from("chatbots").select("owner_id").eq("id", agentId).maybeSingle();
+    if (data?.owner_id) return data.owner_id;
+  }
+  const { data: c } = await supabase.from("companies").select("owner_id").eq("id", companyId).maybeSingle();
+  return c?.owner_id ?? null;
+}
+
+// Ferramentas de PROJETO da Nina (cria/atualiza projetos, notas, kanban,
+// orçamento, agenda) + consulta ao supervisor.
+async function projetoDispatch(companyId, name, input, sends, ctx) {
+  if (!supabase) return { ok: false, message: "Sem banco." };
+  const ownerId = await projetoOwnerId(companyId, ctx.agentId);
+  if (!ownerId) return { ok: false, message: "Não achei o dono dos projetos." };
+
+  if (name === "projeto_listar") {
+    const { data } = await supabase.from("projects").select("id,name,status,kind").eq("owner_id", ownerId).order("created_at", { ascending: false }).limit(40);
+    return { ok: true, projetos: (data || []).map((p) => ({ id: p.id, nome: p.name, status: p.status, tipo: p.kind })) };
+  }
+  if (name === "projeto_criar") {
+    const kind = input.tipo === "cliente" ? "cliente" : "meu";
+    const contact_id = kind === "cliente" ? (ctx.conv?.contact_id ?? null) : null;
+    const { data, error } = await supabase.from("projects").insert({
+      company_id: companyId, owner_id: ownerId, contact_id,
+      name: String(input.nome || "Projeto novo"), kind, description: input.resumo ?? null,
+    }).select("id").single();
+    if (error) return { ok: false, message: "Não consegui criar o projeto." };
+    return { ok: true, project_id: data.id, message: `Projeto "${input.nome}" criado.` };
+  }
+  if (name === "projeto_anotar") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id (use projeto_listar)." };
+    const kind = input.tipo === "prompt" ? "prompt" : "ponto";
+    await supabase.from("project_notes").insert({ project_id: input.project_id, company_id: companyId, kind, title: input.titulo ?? null, body: String(input.texto || "") });
+    return { ok: true, message: kind === "prompt" ? "Prompt salvo nas Notas." : "Ponto anotado nas Notas." };
+  }
+  if (name === "projeto_tarefa") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id." };
+    const checklist = Array.isArray(input.checklist) ? input.checklist.map((t) => ({ text: String(t), done: false })) : [];
+    const col = ["backlog", "a_fazer", "fazendo", "revisao", "concluido"].includes(input.coluna) ? input.coluna : "a_fazer";
+    await supabase.from("project_tasks").insert({ project_id: input.project_id, company_id: companyId, title: String(input.titulo || "Tarefa"), column_name: col, checklist });
+    return { ok: true, message: `Card "${input.titulo}" criado no Kanban.` };
+  }
+  if (name === "projeto_orcamento") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id." };
+    const itens = Array.isArray(input.itens) ? input.itens : [];
+    await supabase.from("project_budget_items").delete().eq("project_id", input.project_id);
+    let total = 0;
+    for (const it of itens) {
+      const v = Number(it?.valor) || 0; total += v;
+      await supabase.from("project_budget_items").insert({ project_id: input.project_id, company_id: companyId, descricao: String(it?.descricao || "Item"), valor: v });
+    }
+    await supabase.from("projects").update({ budget_total: total }).eq("id", input.project_id);
+    return { ok: true, total, message: `Orçamento montado: R$ ${total.toFixed(2)}.` };
+  }
+  if (name === "projeto_agendar") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id." };
+    const when = input.quando ? new Date(input.quando) : null;
+    if (!when || isNaN(when.getTime())) return { ok: false, message: "Data inválida (use ISO, ex.: 2026-09-01T14:00)." };
+    await supabase.from("project_events").insert({ project_id: input.project_id, company_id: companyId, title: String(input.titulo || "Etapa"), starts_at: when.toISOString() });
+    return { ok: true, message: `Agendado: ${input.titulo}.` };
+  }
+  if (name === "consultar_supervisor") {
+    const { data: ownerProf } = await supabase.from("profiles").select("whatsapp_number,full_name").eq("id", ownerId).maybeSingle();
+    const to = (ownerProf?.whatsapp_number || "").replace(/\D/g, "");
+    if (!to) return { ok: false, message: "O supervisor não tem WhatsApp no perfil — não consegui consultar. Prossiga com bom senso ou avise a pessoa." };
+    const msg = `🤝 *Consulta da Nina*\n${input.assunto || "Preciso do seu aval"}\n\nProposta: ${input.proposta || "—"}\n\nPode? O que ajusto?`;
+    sends.push({ to, text: msg, name: ownerProf?.full_name || "Supervisor" });
+    return { ok: true, message: "Consulta enviada ao supervisor. Peça ao cliente pra aguardar um instante e siga o que o supervisor responder." };
+  }
+  return { ok: false, message: "Ação de projeto desconhecida." };
 }
 
 async function copilotSearchFiles(companyId, query) {
@@ -3134,6 +3221,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     creditos: ["tabela_precos", "saldo_consultar", "saldo_recarregar", "pagamento_conferir", "cobrar_servico", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
+    projetos: ["projeto_listar", "projeto_criar", "projeto_anotar", "projeto_tarefa", "projeto_orcamento", "projeto_agendar", "consultar_supervisor"],
   };
   // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
   // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
