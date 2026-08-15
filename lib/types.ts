@@ -11,6 +11,7 @@ export type Profile = {
   whatsapp_number: string | null;
   finance_access: boolean | null;
   tool_access: Record<string, boolean> | null; // permissão por ferramenta (null = padrão do cargo)
+  logistics_modules: string[] | null; // módulos visíveis no TransLog (null = acesso total; gestor/gerente sempre têm tudo)
   created_at: string;
 };
 

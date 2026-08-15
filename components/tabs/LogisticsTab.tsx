@@ -10,12 +10,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Anchor, Boxes, Check, FileText, LineChart, Link2, MapPin, MessageSquare, Navigation,
+  Activity, Anchor, Boxes, Camera, Check, FileText, LineChart, Link2, ListChecks, Map as MapIcon, MapPin, MessageSquare, Navigation,
   Plus, Route, Settings, Ship, ShieldCheck, Sprout, Trash2, Truck, Users, Wrench, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
-import { LOGI_DOCS, docLabel, renderLogisticsDoc, type LogiDocType, type OperacaoData, type Mercadoria, type Veiculo } from "@/lib/logistics-docs";
+import { LOGI_DOCS, docLabel, renderLogisticsDoc, generateDocumentPackage, type LogiDocType, type OperacaoData, type Mercadoria, type Veiculo } from "@/lib/logistics-docs";
+import { ensureOperationFolders } from "@/lib/logistics-folders";
+import LogisticsMap, { type MapDriver } from "@/components/LogisticsMap";
 
 type CfgState = { onboarded: boolean; server: string; razao: string; cnpj: string; nome: string; logo: string | null; endereco: string; phone: string; email: string; ie: string; bank: string; signatory: string; signatoryDoc: string };
 
@@ -48,9 +50,10 @@ const STAGES: { id: string; label: string; hint: string; color: string }[] = [
 ];
 const stageIndex = (s: string) => Math.max(0, STAGES.findIndex((x) => x.id === s));
 
-type Mod = "kanban" | "fleet" | "stock" | "drivers" | "docgen" | "dre" | "settings";
+type Mod = "kanban" | "map" | "fleet" | "stock" | "drivers" | "docgen" | "dre" | "settings";
 const MODULES: { id: Mod; label: string; icon: typeof Ship; group: string }[] = [
-  { id: "kanban", label: "Visão Kanban", icon: Route, group: "Operações & Rastreio" },
+  { id: "kanban", label: "Visão Geral", icon: Route, group: "Operações & Rastreio" },
+  { id: "map", label: "Mapa", icon: MapIcon, group: "Operações & Rastreio" },
   { id: "fleet", label: "Frota & Manutenção", icon: Wrench, group: "Operações & Rastreio" },
   { id: "stock", label: "Estoque & Fumigação", icon: Boxes, group: "Operações & Rastreio" },
   { id: "drivers", label: "Motoristas & Portal", icon: Users, group: "Operações & Rastreio" },
@@ -58,13 +61,23 @@ const MODULES: { id: Mod; label: string; icon: typeof Ship; group: string }[] = 
   { id: "dre", label: "DRE Operação × Empresa", icon: LineChart, group: "Docs & Financeiro" },
   { id: "settings", label: "Dados da Empresa & Servidor", icon: Settings, group: "Configurações" },
 ];
+// Módulos que nunca podem ser escondidos de ninguém (config. e o próprio mapa
+// de permissões vivem em "settings" — sem isso a pessoa restrita não teria
+// como nem ver que está restrita).
+const ALWAYS_VISIBLE: Mod[] = ["kanban"];
 
 const money = (n: number, c = "R$") => `${c} ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 
 export default function LogisticsTab({ profile }: { profile: Profile | null }) {
   const cid = profile?.company_id ?? null;
   const isGestor = profile?.role === "gestor";
-  const [mod, setMod] = useState<Mod>("kanban");
+  // Gestor e gerente sempre têm acesso total ao TransLog — a restrição por
+  // módulo (profile.logistics_modules) só vale pra funcionário.
+  const isManager = profile?.role === "gestor" || profile?.role === "gerente";
+  const allowedModules = profile?.logistics_modules ?? null;
+  const visibleModules = MODULES.filter((m) => isManager || ALWAYS_VISIBLE.includes(m.id) || !allowedModules || allowedModules.includes(m.id));
+  const [mod, setModState] = useState<Mod>("kanban");
+  const setMod = useCallback((m: Mod) => setModState(visibleModules.some((x) => x.id === m) ? m : "kanban"), [visibleModules]);
   const [toast, setToast] = useState<{ t: string; d?: string; kind?: string } | null>(null);
   const flash = useCallback((t: string, d?: string, kind = "success") => { setToast({ t, d, kind }); setTimeout(() => setToast(null), 4000); }, []);
 
@@ -153,19 +166,23 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
           <div><div className="text-sm font-bold leading-tight">TransLog</div><div className="text-[10px] font-mono text-zinc-500">MERCOSUL</div></div>
         </div>
         <div className="p-2 space-y-3 flex-1">
-          {["Operações & Rastreio", "Docs & Financeiro", "Configurações"].map((g) => (
-            <div key={g}>
-              <div className="px-2 mb-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{g}</div>
-              <div className="space-y-0.5">
-                {MODULES.filter((m) => m.group === g).map((m) => (
-                  <button key={m.id} onClick={() => setMod(m.id)}
-                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${mod === m.id ? "bg-zinc-800/80 text-white border border-zinc-700/50" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"}`}>
-                    <m.icon size={16} className={mod === m.id ? "text-amber-400" : ""} /> {m.label}
-                  </button>
-                ))}
+          {["Operações & Rastreio", "Docs & Financeiro", "Configurações"].map((g) => {
+            const items = visibleModules.filter((m) => m.group === g);
+            if (items.length === 0) return null;
+            return (
+              <div key={g}>
+                <div className="px-2 mb-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{g}</div>
+                <div className="space-y-0.5">
+                  {items.map((m) => (
+                    <button key={m.id} onClick={() => setMod(m.id)}
+                      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${mod === m.id ? "bg-zinc-800/80 text-white border border-zinc-700/50" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"}`}>
+                      <m.icon size={16} className={mod === m.id ? "text-amber-400" : ""} /> {m.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="p-3 border-t border-white/10">
           <div className="bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg">
@@ -178,18 +195,20 @@ export default function LogisticsTab({ profile }: { profile: Profile | null }) {
       {/* Mobile module picker */}
       <div className="md:hidden absolute top-2 left-2 right-2 z-20">
         <select value={mod} onChange={(e) => setMod(e.target.value as Mod)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm">
-          {MODULES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {visibleModules.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
       </div>
 
       <main className="flex-1 overflow-y-auto p-4 md:p-5 pt-16 md:pt-5">
-        {mod === "kanban" && <KanbanModule cid={cid} cargas={cargas} vehicles={vehicles} drivers={drivers} finance={finance} reload={loadAll} flash={flash} />}
+        {mod === "kanban" && <OverviewModule cid={cid} cargas={cargas} vehicles={vehicles} drivers={drivers} finance={finance} docs={docs} company={cfg} reload={loadAll} flash={flash} />}
+        {mod === "map" && <MapModule drivers={drivers} cargas={cargas} />}
         {mod === "fleet" && <FleetModule cid={cid} vehicles={vehicles} expenses={expenses} drivers={drivers} reload={loadAll} flash={flash} />}
         {mod === "stock" && <StockModule cid={cid} stock={stock} fumi={fumi} reload={loadAll} flash={flash} />}
         {mod === "drivers" && <DriversModule cid={cid} drivers={drivers} reload={loadAll} flash={flash} />}
         {mod === "docgen" && <DocGenModule cid={cid} cargas={cargas} docs={docs} company={cfg} reload={loadAll} flash={flash} />}
         {mod === "dre" && <DreModule finance={finance} expenses={expenses} />}
         {mod === "settings" && <SettingsModule cid={cid} cfg={cfg} setCfg={setCfg} isGestor={isGestor} flash={flash} />}
+        {mod === "settings" && isGestor && <TeamPermissions cid={cid} flash={flash} />}
       </main>
 
       <style jsx global>{`
@@ -307,64 +326,99 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block flex-1"><span className="text-[11px] text-zinc-400 mb-1 block">{label}</span>{children}</label>;
 }
 
-// =============================== KANBAN MODULE ===============================
-function KanbanModule({ cid, cargas, vehicles, drivers, finance, reload, flash }: {
-  cid: string | null; cargas: Carga[]; vehicles: Vehicle[]; drivers: Driver[]; finance: Finance[];
+// =============================== MAPA (GPS AO VIVO) ===============================
+function MapModule({ drivers, cargas }: { drivers: Driver[]; cargas: Carga[] }) {
+  const mapDrivers: MapDriver[] = drivers.map((d) => ({ id: d.id, nome: d.nome, veiculo: d.veiculo, last_lat: d.last_lat, last_lng: d.last_lng, last_ping_at: d.last_ping_at, gps_ativo: d.gps_ativo }));
+  return (
+    <div className="space-y-4">
+      <Header title="Mapa — Localização ao Vivo" sub="Motoristas com GPS ligado aparecem aqui em tempo real. Em breve: desenhar a rota planejada para o motorista." icon={MapIcon} />
+      <LogisticsMap drivers={mapDrivers} height={520} />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {drivers.map((d) => {
+          const cargasDoMotorista = cargas.filter((c) => c.driver_id === d.id && c.stage !== "concluido");
+          return (
+            <div key={d.id} className="bg-zinc-900/70 border border-white/10 rounded-xl p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold">{d.nome}</span>
+                {d.gps_ativo ? (
+                  <span className="text-[9px] font-mono text-emerald-400 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> GPS ativo</span>
+                ) : (
+                  <span className="text-[9px] font-mono text-zinc-600">GPS desligado</span>
+                )}
+              </div>
+              <div className="text-[11px] text-zinc-500 mt-1">{d.last_ping_at ? `Última atualização: ${new Date(d.last_ping_at).toLocaleString("pt-BR")}` : "Sem localização ainda"}</div>
+              {cargasDoMotorista.length > 0 && <div className="text-[11px] text-zinc-400 mt-1.5">Carregando: {cargasDoMotorista.map((c) => c.codigo || "#—").join(", ")}</div>}
+            </div>
+          );
+        })}
+        {drivers.length === 0 && <Empty text="Nenhum motorista cadastrado." />}
+      </div>
+    </div>
+  );
+}
+
+// =============================== VISÃO GERAL ===============================
+// Grid de todas as cargas (filtrável por texto/etapa). Clicar numa carga abre o
+// detalhe: mini-kanban clicável (pula direto pra etapa), mapa ao vivo do
+// motorista responsável e tudo que já foi feito na operação.
+function OverviewModule({ cid, cargas, vehicles, drivers, finance, docs, company, reload, flash }: {
+  cid: string | null; cargas: Carga[]; vehicles: Vehicle[]; drivers: Driver[]; finance: Finance[]; docs: LogiDoc[]; company: CfgState;
   reload: () => void; flash: (t: string, d?: string, k?: string) => void;
 }) {
   const [showNew, setShowNew] = useState(false);
   const [sel, setSel] = useState<Carga | null>(null);
+  const [query, setQuery] = useState("");
+  const [stageFilter, setStageFilter] = useState("all");
   const selLive = sel ? cargas.find((c) => c.id === sel.id) || sel : null;
 
-  async function advance(c: Carga, dir: 1 | -1) {
-    if (!supabase) return;
-    const i = Math.min(STAGES.length - 1, Math.max(0, stageIndex(c.stage) + dir));
-    await supabase.from("logistics_cargas").update({ stage: STAGES[i].id, updated_at: new Date().toISOString() }).eq("id", c.id);
-    // Transbordo não gera nova fatura (regra do negócio) — só registra o movimento.
-    if (STAGES[i].id === "transbordo") flash("Transbordo na fronteira", "Troca de cavalo/reboque registrada — sem nova fatura comercial.", "info");
-    reload();
-  }
+  const filtered = cargas.filter((c) => {
+    if (stageFilter !== "all" && c.stage !== stageFilter) return false;
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (c.codigo || "").toLowerCase().includes(q) || (c.cliente_nome || "").toLowerCase().includes(q) || (c.produto || "").toLowerCase().includes(q);
+  });
 
   return (
     <div className="space-y-4">
-      <Header title="Quadro Kanban de Rastreio & Exportação" sub="Acompanhamento em tempo real de cada carreta e expedição internacional." icon={Route}
+      <Header title="Visão Geral das Cargas" sub="Todas as operações, com etapa, motorista e rota. Clique numa carga para ver o kanban de tarefas, o mapa ao vivo do motorista e tudo que já foi feito." icon={ListChecks}
         action={<button onClick={() => setShowNew(true)} className="btn-primary"><Plus size={14} /> Nova Carga / Proforma</button>} />
 
-      <div className="flex gap-3 overflow-x-auto pb-3">
-        {STAGES.map((st) => {
-          const items = cargas.filter((c) => c.stage === st.id);
+      <div className="flex flex-wrap items-center gap-2">
+        <input className="in" style={{ width: 260 }} placeholder="Buscar por código, cliente ou produto…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <select className="in" style={{ width: "auto" }} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+          <option value="all">Todas as etapas</option>
+          {STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+        <span className="text-[11px] text-zinc-500">{filtered.length} carga{filtered.length === 1 ? "" : "s"}</span>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((c) => {
+          const drv = drivers.find((d) => d.id === c.driver_id);
+          const veh = vehicles.find((v) => v.id === c.vehicle_id);
+          const st = STAGES[stageIndex(c.stage)];
           return (
-            <div key={st.id} className="min-w-[260px] max-w-[280px] shrink-0">
-              <div className="flex items-center justify-between px-1 mb-2">
-                <span className={`text-xs font-semibold ${st.color}`}>{st.label}</span>
-                <span className="text-[10px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800 px-1.5 rounded">{items.length}</span>
+            <button key={c.id} onClick={() => setSel(c)} className="text-left bg-zinc-900/70 border border-white/10 hover:border-white/25 rounded-xl p-3.5 transition">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-mono text-amber-400">{c.codigo || "#—"}</span>
+                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-white/5 ${st.color}`}>{st.label}</span>
               </div>
-              <div className="space-y-2">
-                {items.map((c) => {
-                  const drv = drivers.find((d) => d.id === c.driver_id);
-                  const veh = vehicles.find((v) => v.id === c.vehicle_id);
-                  return (
-                    <button key={c.id} onClick={() => setSel(c)} className="w-full text-left bg-zinc-900/70 border border-white/10 hover:border-white/25 rounded-xl p-3 transition">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono text-amber-400">{c.codigo || "#—"}</span>
-                        <span className="text-[9px] font-mono text-zinc-500">{c.cfop}</span>
-                      </div>
-                      <div className="text-sm font-semibold mt-1 truncate">{c.cliente_nome || "Sem cliente"}</div>
-                      <div className="text-[11px] text-zinc-400 truncate">{c.produto || "—"}</div>
-                      <div className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-1 truncate"><MapPin size={11} /> {c.origem || "?"} → {c.destino || "?"}{c.pais_destino ? ` (${c.pais_destino})` : ""}</div>
-                      {(drv || veh) && <div className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1 truncate"><Truck size={11} /> {veh?.placa || ""} {drv ? `· ${drv.nome}` : ""}</div>}
-                    </button>
-                  );
-                })}
-                {items.length === 0 && <div className="text-[11px] text-zinc-600 px-1 py-3 text-center border border-dashed border-zinc-800 rounded-xl">Vazio</div>}
-              </div>
-            </div>
+              <div className="text-sm font-semibold mt-1 truncate">{c.cliente_nome || "Sem cliente"}</div>
+              <div className="text-[11px] text-zinc-400 truncate">{c.produto || "—"}</div>
+              <div className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-1 truncate"><MapPin size={11} /> {c.origem || "?"} → {c.destino || "?"}{c.pais_destino ? ` (${c.pais_destino})` : ""}</div>
+              {(drv || veh) && <div className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1 truncate"><Truck size={11} /> {veh?.placa || ""} {drv ? `· ${drv.nome}` : ""}</div>}
+              {drv?.gps_ativo && <div className="text-[9px] text-emerald-400 mt-1 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" /> GPS ao vivo</div>}
+            </button>
           );
         })}
+        {filtered.length === 0 && <Empty text="Nenhuma carga encontrada." />}
       </div>
 
       {showNew && <NewCargaModal cid={cid} count={cargas.length} onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); reload(); flash("Carga criada", "Nova proforma aberta no fluxo."); }} />}
-      {selLive && <CargaDrawer cid={cid} c={selLive} vehicles={vehicles} drivers={drivers} finance={finance} onClose={() => setSel(null)} onAdvance={advance} reload={reload} flash={flash} />}
+      {selLive && (
+        <CargaDetailModal cid={cid} c={selLive} vehicles={vehicles} drivers={drivers} finance={finance} docs={docs} company={company}
+          onClose={() => setSel(null)} reload={reload} flash={flash} />
+      )}
     </div>
   );
 }
@@ -404,13 +458,38 @@ function NewCargaModal({ cid, count, onClose, onSaved }: { cid: string | null; c
   );
 }
 
-function CargaDrawer({ cid, c, vehicles, drivers, finance, onClose, onAdvance, reload, flash }: {
-  cid: string | null; c: Carga; vehicles: Vehicle[]; drivers: Driver[]; finance: Finance[];
-  onClose: () => void; onAdvance: (c: Carga, d: 1 | -1) => void; reload: () => void; flash: (t: string, d?: string, k?: string) => void;
+type PodRow = { id: string; kind: string | null; photo_url: string | null; created_at: string };
+
+function companyDocObj(cfg: CfgState) {
+  return { razao_social: cfg.razao, cnpj: cfg.cnpj, ie: cfg.ie, nome: cfg.nome, endereco: cfg.endereco, phone: cfg.phone, email: cfg.email, logo_url: cfg.logo, bank_info: cfg.bank, signatory: cfg.signatory, signatory_doc: cfg.signatoryDoc, server: cfg.server };
+}
+
+// Detalhe da carga: mini-kanban clicável (pula direto pra qualquer etapa —
+// não só ±1), mapa ao vivo do motorista responsável (rota em tempo real) e uma
+// timeline com tudo que já foi feito (financeiro, documentos emitidos, fotos
+// enviadas pelo motorista). Ao entrar na etapa de Documentação pela primeira
+// vez, gera o pacote de documentos sozinho (sem precisar abrir o Gerador).
+function CargaDetailModal({ cid, c, vehicles, drivers, finance, docs, company, onClose, reload, flash }: {
+  cid: string | null; c: Carga; vehicles: Vehicle[]; drivers: Driver[]; finance: Finance[]; docs: LogiDoc[]; company: CfgState;
+  onClose: () => void; reload: () => void; flash: (t: string, d?: string, k?: string) => void;
 }) {
   const drv = drivers.find((d) => d.id === c.driver_id);
-  const veh = vehicles.find((v) => v.id === c.vehicle_id);
   const cargoFinance = finance.filter((f) => f.carga_id === c.id);
+  const cargoDocs = docs.filter((x) => x.carga_id === c.id);
+  const [pod, setPod] = useState<PodRow[]>([]);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    let alive = true;
+    const load = () => {
+      supabase!.from("logistics_pod").select("id,kind,photo_url,created_at").eq("carga_id", c.id).order("created_at", { ascending: false })
+        .then(({ data }) => { if (alive) setPod((data as PodRow[]) ?? []); });
+    };
+    load();
+    const ch = supabase.channel(`carga-pod-${c.id}`).on("postgres_changes", { event: "INSERT", schema: "public", table: "logistics_pod", filter: `carga_id=eq.${c.id}` }, load).subscribe();
+    return () => { alive = false; if (supabase) supabase.removeChannel(ch); };
+  }, [c.id]);
 
   async function assign(field: "vehicle_id" | "driver_id", value: string) {
     if (!supabase) return;
@@ -433,60 +512,107 @@ function CargaDrawer({ cid, c, vehicles, drivers, finance, onClose, onAdvance, r
     onClose(); reload();
   }
 
+  async function setStage(stageId: string) {
+    if (!supabase || stageId === c.stage) return;
+    const enteringDocs = stageId === "documentacao" && stageIndex(c.stage) < stageIndex("documentacao");
+    await supabase.from("logistics_cargas").update({ stage: stageId, updated_at: new Date().toISOString() }).eq("id", c.id);
+    if (stageId === "transbordo") flash("Transbordo na fronteira", "Troca de cavalo/reboque registrada — sem nova fatura comercial.", "info");
+    reload();
+    if (enteringDocs && cid && cargoDocs.length === 0) {
+      setAutoGenerating(true);
+      try {
+        await generateDocumentPackage(supabase, cid, {
+          id: c.id, codigo: c.codigo, cliente_nome: c.cliente_nome, produto: c.produto, origem: c.origem, destino: c.destino,
+          pais_destino: c.pais_destino, incoterm: c.incoterm, moeda: c.moeda, valor_declarado: c.valor_declarado, peso: c.peso, volumes: c.volumes, cfop: c.cfop, created_at: c.created_at,
+        }, (c.dados as OperacaoData) || {}, companyDocObj(company));
+        reload();
+        flash("Documentos emitidos automaticamente", "A carga entrou em Documentação — o pacote completo já foi gerado e salvo na pasta da operação.");
+      } catch {
+        flash("Não deu para gerar os documentos sozinho", "Abra o Gerador de Documentos para gerar manualmente.", "error");
+      } finally {
+        setAutoGenerating(false);
+      }
+    }
+  }
+
+  type TItem = { at: string; label: string; detail?: string; icon: typeof FileText };
+  const timeline: TItem[] = [
+    ...cargoFinance.map((f) => ({ at: f.data || c.created_at, label: f.descricao || f.categoria || "Lançamento financeiro", detail: money(f.valor), icon: Activity })),
+    ...cargoDocs.map((d) => ({ at: d.created_at, label: `${docLabel(d.tipo as LogiDocType)} emitido`, detail: d.numero || undefined, icon: FileText })),
+    ...pod.map((p) => ({ at: p.created_at, label: `Foto enviada pelo motorista (${p.kind || "carga"})`, icon: Camera })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+  const mapDrivers: MapDriver[] = drv ? [{ id: drv.id, nome: drv.nome, veiculo: drv.veiculo, last_lat: drv.last_lat, last_lng: drv.last_lng, last_ping_at: drv.last_ping_at, gps_ativo: drv.gps_ativo }] : [];
+
   return (
-    <div className="fixed inset-0 z-[80] flex justify-end bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-md h-full bg-zinc-950 border-l border-white/10 overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
+    <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3" onClick={onClose}>
+      <div className="w-full max-w-3xl max-h-[92vh] bg-zinc-950 border border-white/10 rounded-2xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 bg-zinc-950/95 backdrop-blur border-b border-white/10 p-4 flex items-center justify-between">
           <div><span className="text-xs font-mono text-amber-400">{c.codigo}</span><h3 className="text-base font-bold">{c.cliente_nome || "Sem cliente"}</h3></div>
           <button onClick={onClose} className="text-zinc-500 hover:text-white"><X size={18} /></button>
         </div>
 
-        {/* Timeline de progresso (estilo app de entrega) */}
-        <div className="mt-4 space-y-1.5">
-          {STAGES.map((s, i) => {
-            const done = i < stageIndex(c.stage); const cur = i === stageIndex(c.stage);
-            return (
-              <div key={s.id} className="flex items-center gap-2.5">
-                <div className={`w-3.5 h-3.5 rounded-full border-2 ${done ? "bg-emerald-500 border-emerald-500" : cur ? "border-amber-400 bg-amber-400/30" : "border-zinc-700"}`} />
-                <span className={`text-xs ${cur ? "text-white font-semibold" : done ? "text-zinc-400" : "text-zinc-600"}`}>{s.label}</span>
+        <div className="p-4 space-y-5">
+          {/* Mini-kanban clicável — pula direto pra qualquer etapa. */}
+          <div>
+            <div className="text-xs font-semibold text-zinc-400 mb-1.5 flex items-center gap-1.5"><ListChecks size={13} /> Kanban de tarefas da carga</div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {STAGES.map((s, i) => {
+                const done = i < stageIndex(c.stage); const cur = i === stageIndex(c.stage);
+                return (
+                  <button key={s.id} onClick={() => setStage(s.id)}
+                    className={`shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg border transition cursor-pointer ${cur ? "border-amber-400 bg-amber-400/10 text-amber-200 font-semibold" : done ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300" : "border-zinc-800 text-zinc-500 hover:border-zinc-600"}`}>
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            {autoGenerating && <p className="text-[11px] text-amber-300 mt-1.5">Gerando documentos automaticamente…</p>}
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-2 text-sm">
+            <InfoRow label="Produto" value={c.produto} />
+            <InfoRow label="Rota" value={`${c.origem || "?"} → ${c.destino || "?"} ${c.pais_destino ? `(${c.pais_destino})` : ""}`} />
+            <InfoRow label="Incoterm / CFOP" value={`${c.incoterm || "—"} · ${c.cfop}`} />
+            <InfoRow label="Valor declarado" value={money(c.valor_declarado || 0, c.moeda || "USD")} />
+            <InfoRow label="Peso / Volumes" value={`${c.peso || "—"} kg · ${c.volumes || "—"} vol.`} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Veículo"><select className="in" value={c.vehicle_id || ""} onChange={(e) => assign("vehicle_id", e.target.value)}><option value="">—</option>{vehicles.map((v) => <option key={v.id} value={v.id}>{v.placa} ({v.tipo})</option>)}</select></Field>
+            <Field label="Motorista"><select className="in" value={c.driver_id || ""} onChange={(e) => assign("driver_id", e.target.value)}><option value="">—</option>{drivers.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}</select></Field>
+          </div>
+
+          {drv && (
+            <div>
+              <div className="text-xs font-semibold text-zinc-400 mb-1.5 flex items-center gap-1.5"><Navigation size={13} /> Rota em tempo real — {drv.nome}</div>
+              <LogisticsMap drivers={mapDrivers} focusDriverId={drv.id} height={220} emptyHint={`${drv.nome} ainda não ligou o GPS.`} />
+            </div>
+          )}
+
+          <button onClick={genPurchaseOrder} className="w-full btn-secondary"><FileText size={14} /> Emitir Pedido de Compra → Contas a Pagar</button>
+
+          <div>
+            <div className="text-xs font-semibold text-zinc-400 mb-1.5 flex items-center gap-1.5"><Activity size={13} /> Tudo que já foi feito</div>
+            {timeline.length === 0 ? (
+              <p className="text-[11px] text-zinc-600">Nenhuma atividade registrada ainda.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {timeline.map((t, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[11px] border-b border-white/5 pb-1.5">
+                    <t.icon size={13} className="text-zinc-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-zinc-300 truncate">{t.label}{t.detail ? ` — ${t.detail}` : ""}</div>
+                      <div className="text-zinc-600">{new Date(t.at).toLocaleString("pt-BR")}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </div>
-        <div className="flex gap-2 mt-3">
-          <button onClick={() => onAdvance(c, -1)} className="btn-ghost flex-1">← Voltar etapa</button>
-          <button onClick={() => onAdvance(c, 1)} className="btn-primary flex-1">Avançar etapa →</button>
-        </div>
-
-        <div className="mt-5 space-y-2 text-sm">
-          <InfoRow label="Produto" value={c.produto} />
-          <InfoRow label="Rota" value={`${c.origem || "?"} → ${c.destino || "?"} ${c.pais_destino ? `(${c.pais_destino})` : ""}`} />
-          <InfoRow label="Incoterm / CFOP" value={`${c.incoterm || "—"} · ${c.cfop}`} />
-          <InfoRow label="Valor declarado" value={money(c.valor_declarado || 0, c.moeda || "USD")} />
-          <InfoRow label="Peso / Volumes" value={`${c.peso || "—"} kg · ${c.volumes || "—"} vol.`} />
-        </div>
-
-        <div className="mt-5 grid grid-cols-2 gap-2">
-          <Field label="Veículo"><select className="in" value={c.vehicle_id || ""} onChange={(e) => assign("vehicle_id", e.target.value)}><option value="">—</option>{vehicles.map((v) => <option key={v.id} value={v.id}>{v.placa} ({v.tipo})</option>)}</select></Field>
-          <Field label="Motorista"><select className="in" value={c.driver_id || ""} onChange={(e) => assign("driver_id", e.target.value)}><option value="">—</option>{drivers.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}</select></Field>
-        </div>
-
-        {drv && (drv.last_lat != null) && (
-          <div className="mt-3 bg-zinc-900 border border-zinc-800 rounded-xl p-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5"><Navigation size={13} className="text-amber-400" /> Última localização — {drv.nome}</div>
-            <div className="text-[11px] text-zinc-400 mt-1 font-mono">{drv.last_lat?.toFixed(5)}, {drv.last_lng?.toFixed(5)}</div>
-            <a href={`https://www.google.com/maps?q=${drv.last_lat},${drv.last_lng}`} target="_blank" rel="noreferrer" className="text-[11px] text-sky-400 hover:underline">Ver no mapa →</a>
+            )}
           </div>
-        )}
 
-        <button onClick={genPurchaseOrder} className="w-full mt-4 btn-secondary"><FileText size={14} /> Emitir Pedido de Compra → Contas a Pagar</button>
-        {cargoFinance.length > 0 && (
-          <div className="mt-3 text-[11px] text-zinc-400 space-y-1">
-            {cargoFinance.map((f) => <div key={f.id} className="flex justify-between"><span>{f.descricao}</span><span className={f.tipo === "receita" ? "text-emerald-400" : "text-red-400"}>{money(f.valor)}</span></div>)}
-          </div>
-        )}
-
-        <button onClick={del} className="w-full mt-5 text-xs text-red-400 hover:text-red-300 flex items-center justify-center gap-1"><Trash2 size={13} /> Excluir carga</button>
+          <button onClick={del} className="w-full text-xs text-red-400 hover:text-red-300 flex items-center justify-center gap-1 py-2"><Trash2 size={13} /> Excluir carga</button>
+        </div>
       </div>
     </div>
   );
@@ -818,33 +944,20 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
     setSavingOp(false); setDirty(false); reload(); flash("Operação salva");
   }
 
-  // Cria/acha a pasta da operação no grafo (Logística › <operação>).
-  async function ensureFolder(): Promise<string | null> {
-    if (!supabase || !cid || !carga) return null;
-    if (carga.folder_id) return carga.folder_id;
-    const { data: root } = await supabase.from("files").select("id").eq("company_id", cid).eq("type", "folder").is("parent_id", null).ilike("name", "Logística").maybeSingle();
-    let rootId = root?.id as string | undefined;
-    if (!rootId) { const { data } = await supabase.from("files").insert({ name: "Logística", type: "folder", parent_id: null, company_id: cid }).select("id").single(); rootId = data?.id; }
-    if (!rootId) return null;
-    const opName = carga.codigo || `Operacao-${carga.id.slice(0, 6)}`;
-    const { data: existing } = await supabase.from("files").select("id").eq("company_id", cid).eq("parent_id", rootId).eq("type", "folder").eq("name", opName).maybeSingle();
-    let folderId = existing?.id as string | undefined;
-    if (!folderId) { const { data } = await supabase.from("files").insert({ name: opName, type: "folder", parent_id: rootId, company_id: cid }).select("id").single(); folderId = data?.id; }
-    if (folderId) await supabase.from("logistics_cargas").update({ folder_id: folderId }).eq("id", carga.id);
-    return folderId || null;
+  // Garante TransLog / mês-ano / <operação> / Documentos (e devolve o id da
+  // pasta Documentos, onde os arquivos entram). Sempre resolve pelo nome — não
+  // trata folder_id como cache bloqueante, só mantém ele atualizado como atalho.
+  async function ensureFolders() {
+    if (!supabase || !cid || !carga) return { opFolderId: null, docsFolderId: null, fotosFolderId: null };
+    const folders = await ensureOperationFolders(supabase, cid, { codigo: carga.codigo, cliente: carga.cliente_nome, createdAt: carga.created_at, withFotos: true });
+    if (folders.opFolderId && folders.opFolderId !== carga.folder_id) await supabase.from("logistics_cargas").update({ folder_id: folders.opFolderId }).eq("id", carga.id);
+    return folders;
   }
 
   const compObj = () => ({ razao_social: company.razao, cnpj: company.cnpj, ie: company.ie, nome: company.nome, endereco: company.endereco, phone: company.phone, email: company.email, logo_url: company.logo, bank_info: company.bank, signatory: company.signatory, signatory_doc: company.signatoryDoc });
   const cargaObj = () => carga ? { codigo: carga.codigo, cliente_nome: carga.cliente_nome, produto: carga.produto, origem: carga.origem, destino: carga.destino, pais_destino: carga.pais_destino, incoterm: carga.incoterm, moeda: carga.moeda, valor_declarado: carga.valor_declarado, peso: carga.peso, volumes: carga.volumes, cfop: carga.cfop } : {};
 
-  // Garante que TODOS os documentos tenham número (série ligada — mesmo sufixo),
-  // para que um referencie o outro (CRT↔MIC, etc.).
-  function withNumbers(dd: OperacaoData): OperacaoData {
-    const base = Date.now().toString().slice(-5);
-    for (const doc of LOGI_DOCS) if (!dd[doc.numKey]) (dd as Record<string, string>)[doc.numKey] = `${doc.label.slice(0, 3).toUpperCase()}-${base}`;
-    return dd;
-  }
-  // Renderiza um documento, SALVA na pasta da operação e registra. Não abre janela.
+  // Renderiza um documento, SALVA na pasta Documentos da operação e registra. Não abre janela.
   async function saveDoc(type: LogiDocType, dd: OperacaoData, folderId: string | null): Promise<{ html: string; url: string | null }> {
     const def = LOGI_DOCS.find((x) => x.type === type)!;
     const html = renderLogisticsDoc(type, cargaObj(), dd, compObj());
@@ -868,8 +981,8 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
       const def = LOGI_DOCS.find((x) => x.type === type)!;
       const dd: OperacaoData = { ...d };
       if (!dd[def.numKey]) (dd as Record<string, string>)[def.numKey] = `${def.label.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-5)}`;
-      const folderId = await ensureFolder();
-      const { html } = await saveDoc(type, dd, folderId);
+      const folders = await ensureFolders();
+      const { html } = await saveDoc(type, dd, folders.docsFolderId);
       const w = window.open("", "_blank");
       if (w) { w.document.write(html); w.document.close(); } else flash("Pop-up bloqueado", "Permita pop-ups para abrir/imprimir.", "error");
       setD(dd);
@@ -881,21 +994,19 @@ function DocGenModule({ cid, cargas, docs, company, reload, flash }: {
 
   // AUTOMÁTICO: gera TODOS os documentos em ordem lógica (romaneio → invoice →
   // packing → fatura de serviço → MIC/DTA → CRT → DUE), com numeração ligada, e
-  // salva o pacote na pasta da operação de uma vez. Avança a etapa para
-  // "Documentação". Poupa tempo — preenche uma vez e sai tudo.
-  const ORDER: LogiDocType[] = ["romaneio", "invoice", "packing", "fatura_servico", "micdta", "crt", "due"];
+  // salva o pacote na pasta Documentos da operação de uma vez. Avança a etapa
+  // para "Documentação". Mesma função usada quando a carga entra sozinha nessa
+  // etapa (Visão Geral) — poupa tempo, preenche uma vez e sai tudo.
   async function generateAll() {
-    if (!carga) { flash("Escolha a operação primeiro."); return; }
+    if (!carga || !supabase || !cid) { flash("Escolha a operação primeiro."); return; }
     setBusyType("romaneio");
     try {
-      const dd = withNumbers({ ...d });
-      const folderId = await ensureFolder();
-      for (const type of ORDER) await saveDoc(type, dd, folderId);
+      const dd = await generateDocumentPackage(supabase, cid, {
+        id: carga.id, codigo: carga.codigo, cliente_nome: carga.cliente_nome, produto: carga.produto, origem: carga.origem, destino: carga.destino,
+        pais_destino: carga.pais_destino, incoterm: carga.incoterm, moeda: carga.moeda, valor_declarado: carga.valor_declarado, peso: carga.peso, volumes: carga.volumes, cfop: carga.cfop, created_at: carga.created_at,
+      }, d, { ...compObj(), server: company.server });
       setD(dd);
-      if (supabase && cid) {
-        await supabase.from("logistics_cargas").update({ dados: dd }).eq("id", carga.id);
-        if (stageIndex(carga.stage) < stageIndex("documentacao")) await supabase.from("logistics_cargas").update({ stage: "documentacao" }).eq("id", carga.id);
-      }
+      if (stageIndex(carga.stage) < stageIndex("documentacao")) await supabase.from("logistics_cargas").update({ stage: "documentacao" }).eq("id", carga.id);
       setDirty(false); reload();
       flash("Pacote gerado", "Todos os documentos foram criados e salvos na pasta da operação.");
     } finally { setBusyType(null); }
@@ -1124,13 +1235,97 @@ function SettingsModule({ cid, cfg, setCfg, isGestor, flash }: {
           <Field label="Doc do assinante (CPF)"><input className="in" value={s.signatoryDoc} onChange={(e) => set("signatoryDoc", e.target.value)} disabled={!isGestor} /></Field>
         </div>
         <Field label="Pasta no servidor local (SRV-MATRIZ)"><input className="in font-mono text-xs" value={s.server} onChange={(e) => set("server", e.target.value)} disabled={!isGestor} placeholder="/Volumes/Data/Cargas_2026/" /></Field>
-        <div className="flex items-center gap-2 text-[11px] text-zinc-500"><ShieldCheck size={13} className="text-amber-400" /> Os documentos gerados são salvos automaticamente na pasta de cada operação (Logística › &lt;operação&gt;).</div>
+        <div className="flex items-center gap-2 text-[11px] text-zinc-500"><ShieldCheck size={13} className="text-amber-400" /> Os documentos e fotos são salvos automaticamente em TransLog › mês-ano › &lt;operação&gt; › Documentos.</div>
         {isGestor && <button onClick={save} disabled={busy} className="btn-primary">{busy ? "Salvando…" : "Salvar"}</button>}
       </div>
       <div className="bg-amber-950/20 border border-amber-500/20 rounded-xl p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-amber-300"><Anchor size={15} /> Agente de IA</div>
         <p className="text-[12px] text-zinc-400 mt-1">No <b>Labs</b>, ligue a capacidade <b>Logística</b> em um agente e vincule-o a um número de WhatsApp. Ele informa a localização dos motoristas, entrega arquivos da pasta da ferramenta e tira dúvidas — rápido e sem esquecer o histórico.</p>
       </div>
+    </div>
+  );
+}
+
+// =============================== PERMISSÕES DA EQUIPE ===============================
+// Restringe quais módulos do TransLog cada FUNCIONÁRIO enxerga (gestor/gerente
+// sempre têm acesso total — a restrição nunca se aplica a eles). null = acesso
+// total (comportamento padrão, sem restrição nenhuma).
+const RESTRICTABLE_MODULES = MODULES.filter((m) => !ALWAYS_VISIBLE.includes(m.id));
+
+function TeamPermissions({ cid, flash }: { cid: string | null; flash: (t: string, d?: string, k?: string) => void }) {
+  type Emp = { id: string; full_name: string | null; email: string; role: string; logistics_modules: string[] | null };
+  const [team, setTeam] = useState<Emp[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase || !cid) return;
+    const { data } = await supabase.from("profiles").select("id,full_name,email,role,logistics_modules").eq("company_id", cid).eq("role", "funcionario").order("full_name");
+    setTeam((data as Emp[]) ?? []);
+    setLoading(false);
+  }, [cid]);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggle(emp: Emp, modId: Mod) {
+    if (!supabase) return;
+    // null (ou vazio) = acesso total. Primeiro clique numa lista vazia parte de
+    // "tudo liberado" e tira só o módulo clicado; os próximos só ligam/desligam.
+    const current = emp.logistics_modules && emp.logistics_modules.length > 0 ? emp.logistics_modules : RESTRICTABLE_MODULES.map((m) => m.id);
+    const next = current.includes(modId) ? current.filter((x) => x !== modId) : [...current, modId];
+    const value = next.length === RESTRICTABLE_MODULES.length ? null : next;
+    setSavingId(emp.id);
+    setTeam((prev) => prev.map((e) => (e.id === emp.id ? { ...e, logistics_modules: value } : e)));
+    await supabase.from("profiles").update({ logistics_modules: value }).eq("id", emp.id);
+    setSavingId(null);
+  }
+
+  async function resetAll(emp: Emp) {
+    if (!supabase) return;
+    setSavingId(emp.id);
+    setTeam((prev) => prev.map((e) => (e.id === emp.id ? { ...e, logistics_modules: null } : e)));
+    await supabase.from("profiles").update({ logistics_modules: null }).eq("id", emp.id);
+    setSavingId(null);
+    flash("Acesso total restaurado", `${emp.full_name || emp.email} volta a ver tudo no TransLog.`);
+  }
+
+  if (loading) return null;
+
+  return (
+    <div className="space-y-3 max-w-2xl mt-6">
+      <Header title="Permissões da Equipe" sub="Escolha o que cada funcionário pode ver dentro do TransLog. Gestor e gerente sempre têm acesso total — essa tela não se aplica a eles." icon={Users} />
+      {team.length === 0 ? (
+        <Empty text="Nenhum funcionário (cargo 'funcionario') cadastrado ainda." />
+      ) : (
+        <div className="space-y-2">
+          {team.map((emp) => {
+            const restricted = !!(emp.logistics_modules && emp.logistics_modules.length > 0);
+            const active = restricted ? emp.logistics_modules! : RESTRICTABLE_MODULES.map((m) => m.id);
+            return (
+              <div key={emp.id} className="bg-zinc-900/50 border border-white/10 rounded-xl p-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-sm font-semibold">{emp.full_name || emp.email}</div>
+                  {restricted ? (
+                    <button onClick={() => resetAll(emp)} disabled={savingId === emp.id} className="text-[11px] text-amber-400 hover:text-amber-300">Restaurar acesso total</button>
+                  ) : (
+                    <span className="text-[10px] text-zinc-500">Acesso total (padrão)</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {RESTRICTABLE_MODULES.map((m) => {
+                    const on = active.includes(m.id);
+                    return (
+                      <button key={m.id} onClick={() => toggle(emp, m.id)} disabled={savingId === emp.id}
+                        className={`text-[11px] px-2.5 py-1 rounded-full border flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 ${on ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-zinc-800 text-zinc-600"}`}>
+                        <m.icon size={11} /> {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

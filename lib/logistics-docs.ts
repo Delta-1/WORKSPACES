@@ -8,6 +8,8 @@
 // preenchidos uma vez e TODOS os documentos saem já preenchidos. O cabeçalho usa
 // a LOGO e os dados da empresa (configurados nas Configurações) — no lugar da SHKT.
 
+import { ensureOperationFolders } from "./logistics-folders";
+
 export type LogiDocType = "romaneio" | "invoice" | "packing" | "fatura_servico" | "micdta" | "crt" | "due";
 
 export type Mercadoria = { descricao: string; ncm?: string; quant?: string; unidade?: string; peso_bruto?: string; peso_neto?: string; preco_unit?: string; total?: string };
@@ -278,4 +280,49 @@ export function renderLogisticsDoc(type: LogiDocType, carga: Carga, d: OperacaoD
     <div class="note">Documento gerado pelo TransLog (Workspace). Confira todos os dados antes do uso oficial/aduaneiro.</div>
   </div>
 </body></html>`;
+}
+
+// Gera o PACOTE COMPLETO de documentos de uma operação (romaneio → invoice →
+// packing → fatura de serviço → MIC/DTA → CRT → DUE, com numeração ligada) e
+// salva cada um na pasta TransLog/mês-ano/operação/Documentos. Usada tanto pelo
+// botão manual "Gerar todos" quanto automaticamente quando a carga avança pra
+// etapa de Documentação — assim que a etapa começa, os documentos já saem
+// emitidos, sem precisar abrir o Gerador de Documentos.
+export async function generateDocumentPackage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  companyId: string,
+  carga: Carga & { id: string; created_at: string },
+  dadosIn: OperacaoData,
+  company: Company & { server?: string | null },
+  order: LogiDocType[] = ["romaneio", "invoice", "packing", "fatura_servico", "micdta", "crt", "due"],
+): Promise<OperacaoData> {
+  const base = Date.now().toString().slice(-5);
+  const dados: OperacaoData = { ...dadosIn };
+  for (const doc of LOGI_DOCS) if (!dados[doc.numKey]) (dados as Record<string, string>)[doc.numKey] = `${doc.label.slice(0, 3).toUpperCase()}-${base}`;
+
+  const folders = await ensureOperationFolders(sb, companyId, { codigo: carga.codigo, cliente: carga.cliente_nome, createdAt: carga.created_at, withFotos: true });
+  if (folders.opFolderId) await sb.from("logistics_cargas").update({ folder_id: folders.opFolderId }).eq("id", carga.id);
+
+  for (const type of order) {
+    const def = LOGI_DOCS.find((x) => x.type === type)!;
+    try {
+      const html = renderLogisticsDoc(type, carga, dados, company);
+      const fileName = `${def.label}-${dados[def.numKey] || ""}.html`.replace(/\s+/g, "_");
+      const path = `logistica/${carga.id}/${Date.now()}-${fileName}`;
+      let url: string | null = null;
+      const { error } = await sb.storage.from("company-files").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
+      if (!error) {
+        const { data } = sb.storage.from("company-files").getPublicUrl(path);
+        url = data?.publicUrl ?? null;
+        if (folders.docsFolderId) await sb.from("files").insert({ name: fileName, type: "file", parent_id: folders.docsFolderId, company_id: companyId, storage_path: path, mime: "text/html" });
+      }
+      await sb.from("logistics_documents").insert({
+        company_id: companyId, carga_id: carga.id, tipo: type, numero: (dados[def.numKey] as string) || null,
+        dados, pdf_url: url, server_path: company.server ? `${company.server}${fileName}` : null,
+      });
+    } catch { /* segue pro próximo documento mesmo se um falhar */ }
+  }
+  await sb.from("logistics_cargas").update({ dados }).eq("id", carga.id);
+  return dados;
 }
