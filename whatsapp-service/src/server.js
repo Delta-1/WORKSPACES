@@ -2016,7 +2016,9 @@ const COPILOT_TOOLS = [
   { name: "projeto_listar", description: "Lista os projetos do dono (id, nome, status). Use antes de anotar/atualizar para achar o project_id certo.", input_schema: { type: "object", properties: {} } },
   { name: "projeto_criar", description: "Cria um projeto novo. tipo 'cliente' liga ao contato desta conversa; 'meu' é uma ideia sua. Devolve project_id.", input_schema: { type: "object", properties: { nome: { type: "string" }, tipo: { type: "string", description: "meu | cliente" }, resumo: { type: "string" } }, required: ["nome"] } },
   { name: "projeto_anotar", description: "Adiciona uma nota ao projeto. tipo 'ponto' = algo que você identificou; tipo 'prompt' = um prompt COMPLETO pronto pra colar no Claude e desenvolver o projeto.", input_schema: { type: "object", properties: { project_id: { type: "string" }, tipo: { type: "string", description: "ponto | prompt" }, titulo: { type: "string" }, texto: { type: "string" } }, required: ["project_id", "texto"] } },
-  { name: "projeto_tarefa", description: "Cria um card no Kanban do projeto, com um checklist. coluna: backlog|a_fazer|fazendo|revisao|concluido.", input_schema: { type: "object", properties: { project_id: { type: "string" }, titulo: { type: "string" }, checklist: { type: "array", items: { type: "string" } }, coluna: { type: "string" } }, required: ["project_id", "titulo"] } },
+  { name: "projeto_tarefa", description: "Cria um card no Kanban do projeto, com um checklist. coluna: backlog|a_fazer|fazendo|revisao|concluido. prazo_dias (opcional) agenda um prazo médio no calendário.", input_schema: { type: "object", properties: { project_id: { type: "string" }, titulo: { type: "string" }, checklist: { type: "array", items: { type: "string" } }, coluna: { type: "string" }, prazo_dias: { type: "number" } }, required: ["project_id", "titulo"] } },
+  { name: "projeto_briefing", description: "Salva/atualiza o briefing do projeto (a Nina preenche discretamente pela conversa). campos: objeto livre (ex.: {objetivo, tipo, escopo, referencias, prazo, orcamento, contato}).", input_schema: { type: "object", properties: { project_id: { type: "string" }, campos: { type: "object" } }, required: ["project_id", "campos"] } },
+  { name: "projeto_mapa", description: "Define o mapa mental do projeto. mapa = { titulo, filhos: [{ titulo, filhos: [...] }] }.", input_schema: { type: "object", properties: { project_id: { type: "string" }, mapa: { type: "object" } }, required: ["project_id", "mapa"] } },
   { name: "projeto_orcamento", description: "Monta/atualiza o orçamento do projeto (substitui os itens). Passe itens [{descricao, valor}]; o total é somado.", input_schema: { type: "object", properties: { project_id: { type: "string" }, itens: { type: "array", items: { type: "object", properties: { descricao: { type: "string" }, valor: { type: "number" } } } } }, required: ["project_id", "itens"] } },
   { name: "projeto_agendar", description: "Agenda uma etapa/prazo no calendário do projeto. quando em ISO (ex.: 2026-09-01T14:00).", input_schema: { type: "object", properties: { project_id: { type: "string" }, titulo: { type: "string" }, quando: { type: "string" } }, required: ["project_id", "titulo", "quando"] } },
   { name: "consultar_supervisor", description: "Antes de decisões importantes (orçamento, fechar, cobrar): manda a proposta pro supervisor (dono) no WhatsApp e pede o aval. Diga ao cliente pra aguardar e siga o que o supervisor responder.", input_schema: { type: "object", properties: { assunto: { type: "string" }, proposta: { type: "string" } }, required: ["assunto", "proposta"] } },
@@ -3022,8 +3024,18 @@ async function projetoDispatch(companyId, name, input, sends, ctx) {
     if (!input.project_id) return { ok: false, message: "Informe o project_id." };
     const checklist = Array.isArray(input.checklist) ? input.checklist.map((t) => ({ text: String(t), done: false })) : [];
     const col = ["backlog", "a_fazer", "fazendo", "revisao", "concluido"].includes(input.coluna) ? input.coluna : "a_fazer";
-    await supabase.from("project_tasks").insert({ project_id: input.project_id, company_id: companyId, title: String(input.titulo || "Tarefa"), column_name: col, checklist });
-    return { ok: true, message: `Card "${input.titulo}" criado no Kanban.` };
+    // Prazo médio (Fase 3): se vier prazo_dias, calcula a data e agenda no calendário.
+    let due_date = null;
+    const dias = Number(input.prazo_dias);
+    if (Number.isFinite(dias) && dias > 0) {
+      const d = new Date(); d.setDate(d.getDate() + dias);
+      due_date = d.toISOString().slice(0, 10);
+    }
+    await supabase.from("project_tasks").insert({ project_id: input.project_id, company_id: companyId, title: String(input.titulo || "Tarefa"), column_name: col, checklist, due_date });
+    if (due_date) {
+      await supabase.from("project_events").insert({ project_id: input.project_id, company_id: companyId, title: `Prazo: ${input.titulo}`, starts_at: new Date(due_date + "T12:00:00").toISOString() });
+    }
+    return { ok: true, message: `Card "${input.titulo}" criado no Kanban${due_date ? ` (prazo ${due_date})` : ""}.` };
   }
   if (name === "projeto_orcamento") {
     if (!input.project_id) return { ok: false, message: "Informe o project_id." };
@@ -3044,13 +3056,38 @@ async function projetoDispatch(companyId, name, input, sends, ctx) {
     await supabase.from("project_events").insert({ project_id: input.project_id, company_id: companyId, title: String(input.titulo || "Etapa"), starts_at: when.toISOString() });
     return { ok: true, message: `Agendado: ${input.titulo}.` };
   }
+  if (name === "projeto_briefing") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id." };
+    // Mescla os campos do briefing (a Nina vai preenchendo aos poucos).
+    const { data: cur } = await supabase.from("projects").select("briefing").eq("id", input.project_id).maybeSingle();
+    const briefing = { ...(cur?.briefing || {}), ...(input.campos && typeof input.campos === "object" ? input.campos : {}) };
+    await supabase.from("projects").update({ briefing }).eq("id", input.project_id);
+    return { ok: true, message: "Briefing atualizado." };
+  }
+  if (name === "projeto_mapa") {
+    if (!input.project_id) return { ok: false, message: "Informe o project_id." };
+    // Mapa mental simples: { titulo, filhos: [{ titulo, filhos: [...] }] }
+    await supabase.from("projects").update({ mindmap: input.mapa ?? null }).eq("id", input.project_id);
+    return { ok: true, message: "Mapa mental do projeto atualizado." };
+  }
   if (name === "consultar_supervisor") {
     const { data: ownerProf } = await supabase.from("profiles").select("whatsapp_number,full_name").eq("id", ownerId).maybeSingle();
-    const to = (ownerProf?.whatsapp_number || "").replace(/\D/g, "");
-    if (!to) return { ok: false, message: "O supervisor não tem WhatsApp no perfil — não consegui consultar. Prossiga com bom senso ou avise a pessoa." };
-    const msg = `🤝 *Consulta da Nina*\n${input.assunto || "Preciso do seu aval"}\n\nProposta: ${input.proposta || "—"}\n\nPode? O que ajusto?`;
-    sends.push({ to, text: msg, name: ownerProf?.full_name || "Supervisor" });
-    return { ok: true, message: "Consulta enviada ao supervisor. Peça ao cliente pra aguardar um instante e siga o que o supervisor responder." };
+    const supPhone = (ownerProf?.whatsapp_number || "").replace(/\D/g, "");
+    if (!supPhone) return { ok: false, message: "O supervisor não tem WhatsApp no perfil — não consegui consultar. Prossiga com bom senso ou avise a pessoa." };
+    // Registra a APROVAÇÃO PENDENTE ligando a conversa do cliente à consulta.
+    let clientTo = null;
+    if (ctx.conv?.contact_id) {
+      const { data: ct } = await supabase.from("contacts").select("jid,phone").eq("id", ctx.conv.contact_id).maybeSingle();
+      clientTo = ct?.jid || ct?.phone || null;
+    }
+    await supabase.from("bot_approvals").insert({
+      company_id: companyId, chatbot_id: ctx.agentId ?? null,
+      client_conversation_id: ctx.conv?.id ?? null, client_number_id: ctx.conv?.number_id ?? null, client_to: clientTo,
+      supervisor_phone: supPhone, assunto: input.assunto ?? null, proposta: input.proposta ?? null, status: "pending",
+    });
+    const msg = `🤝 *Consulta da Nina*\n${input.assunto || "Preciso do seu aval"}\n\nProposta: ${input.proposta || "—"}\n\nResponda aqui: pode fechar assim? o que ajusto? (eu repasso ao cliente)`;
+    sends.push({ to: supPhone, text: msg, name: ownerProf?.full_name || "Supervisor" });
+    return { ok: true, message: "Consulta enviada ao supervisor. Diga ao cliente pra aguardar um instante — quando o supervisor responder, eu repasso." };
   }
   return { ok: false, message: "Ação de projeto desconhecida." };
 }
@@ -3221,7 +3258,7 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
     creditos: ["tabela_precos", "saldo_consultar", "saldo_recarregar", "pagamento_conferir", "cobrar_servico", "salvar_nome_contato", "memoria_salvar"],
     logistica: ["logistica_status_carga", "logistica_localizacao_motorista", "logistica_listar_motoristas", "logistica_entregar_documento"],
     cobranca: ["cobranca_pendentes", "cobranca_status_cliente"],
-    projetos: ["projeto_listar", "projeto_criar", "projeto_anotar", "projeto_tarefa", "projeto_orcamento", "projeto_agendar", "consultar_supervisor"],
+    projetos: ["projeto_listar", "projeto_criar", "projeto_anotar", "projeto_tarefa", "projeto_briefing", "projeto_mapa", "projeto_orcamento", "projeto_agendar", "consultar_supervisor"],
   };
   // Saber e guardar o NOME de quem está falando (e o que ela contou) é o básico
   // de qualquer atendimento, não um privilégio: sem isso a lista de contatos fica
@@ -3606,6 +3643,33 @@ async function startSession(numberId) {
             cid
           );
           const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid);
+
+          // APROVAÇÃO DO SUPERVISOR (round-trip): se quem respondeu é um supervisor
+          // com uma consulta PENDENTE, esta mensagem é a DECISÃO. A Nina repassa
+          // ao cliente e o atendimento do supervisor não vira conversa de bot.
+          if (!ehGrupo && textoRegistrado && contact?.phone && supabase) {
+            try {
+              const supDigits = String(contact.phone).replace(/\D/g, "");
+              const { data: appr } = await supabase.from("bot_approvals")
+                .select("*").eq("supervisor_phone", supDigits).eq("status", "pending")
+                .order("created_at", { ascending: false }).limit(1).maybeSingle();
+              if (appr) {
+                await supabase.from("bot_approvals").update({ status: "resolved", decisao: textoRegistrado, resolved_at: new Date().toISOString() }).eq("id", appr.id);
+                await sendBotMessage(sock, contactJid, conversation.id, cid, { text: "Perfeito, já repasso ao cliente. 👍" });
+                if (appr.chatbot_id && appr.client_number_id && appr.client_to) {
+                  const { data: nina } = await supabase.from("chatbots").select("*").eq("id", appr.chatbot_id).maybeSingle();
+                  if (nina) {
+                    const relayPrompt = `[DECISÃO DO SUPERVISOR sobre "${appr.assunto || ""}" (proposta: ${appr.proposta || ""})]: "${textoRegistrado}". Repasse essa decisão ao cliente de forma natural e simpática, focando em fechar o projeto. NÃO diga que consultou um supervisor — fale como se a decisão fosse sua. Se foi aprovado, siga para o próximo passo (confirmar valor e combinar o pagamento).`;
+                    const reply = await runChatbotReply(nina, relayPrompt, [], "ai", cid, null, null, "");
+                    if (reply) await sendMessage(appr.client_number_id, appr.client_to, reply, null, null).catch(() => {});
+                  }
+                }
+                continue; // decisão tratada — não roda o bot normal na msg do supervisor
+              }
+            } catch (e) {
+              console.error("aprovação do supervisor falhou:", e?.message || e);
+            }
+          }
 
           // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
           // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos

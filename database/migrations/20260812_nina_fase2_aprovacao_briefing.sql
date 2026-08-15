@@ -1,0 +1,4 @@
+-- FASE 2 da Nina — espelha a migração aplicada via MCP (nina_fase2_aprovacao_briefing):
+-- bot_approvals (aprovação do supervisor com round-trip: liga a conversa do
+-- cliente à consulta; supervisor_phone casa a resposta) + projects.briefing jsonb.
+-- Ver o SQL completo no painel do Supabase.

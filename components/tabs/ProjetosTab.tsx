@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderKanban, Plus, ArrowLeft, Trash2, Copy, Check, StickyNote, Wallet, CalendarDays, Columns3, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { FolderKanban, Plus, ArrowLeft, Trash2, Copy, Check, StickyNote, Wallet, CalendarDays, Columns3, ChevronLeft, ChevronRight, Sparkles, Brain } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { useLive } from "@/lib/use-live";
 import type { Profile } from "@/lib/types";
 
-type Project = { id: string; name: string; kind: string; status: string; description: string | null; budget_total: number; deadline: string | null; contact_id: string | null; created_at: string };
+type MindNode = { titulo: string; filhos?: MindNode[] };
+type Project = { id: string; name: string; kind: string; status: string; description: string | null; budget_total: number; deadline: string | null; contact_id: string | null; created_at: string; briefing?: Record<string, unknown> | null; mindmap?: MindNode | null };
 type ChecklistItem = { text: string; done: boolean };
 type Task = { id: string; project_id: string; title: string; column_name: string; position: number; checklist: ChecklistItem[]; due_date: string | null };
 type Note = { id: string; kind: string; title: string | null; body: string; created_at: string };
@@ -80,7 +81,7 @@ export default function ProjetosTab({ profile }: { profile: Profile | null }) {
 }
 
 function ProjectDetail({ project, cid, onBack, onChanged }: { project: Project; cid: string | null; onBack: () => void; onChanged: () => void }) {
-  const [tab, setTab] = useState<"kanban" | "notas" | "orcamento" | "agenda">("kanban");
+  const [tab, setTab] = useState<"kanban" | "notas" | "orcamento" | "agenda" | "mapa">("kanban");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [budget, setBudget] = useState<BudgetItem[]>([]);
@@ -205,11 +206,23 @@ function ProjectDetail({ project, cid, onBack, onChanged }: { project: Project; 
       </div>
       <div className="h-1.5 rounded-full bg-white/10 overflow-hidden"><div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress}%` }} /></div>
 
-      <div className="flex items-center gap-1.5">
+      {project.briefing && Object.keys(project.briefing).length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <p className="text-[11px] text-gray-400 mb-1.5 font-semibold">Briefing <span className="text-gray-500">(preenchido pela Nina na conversa)</span></p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
+            {Object.entries(project.briefing).map(([k, v]) => (
+              <div key={k}><span className="text-gray-500 capitalize">{k}: </span><span className="text-gray-200">{typeof v === "object" && v ? JSON.stringify(v) : String(v ?? "—")}</span></div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5 flex-wrap">
         {tabBtn("kanban", "Kanban", <Columns3 size={13} />)}
         {tabBtn("notas", "Notas", <StickyNote size={13} />)}
         {tabBtn("orcamento", "Orçamento", <Wallet size={13} />)}
         {tabBtn("agenda", "Agenda", <CalendarDays size={13} />)}
+        {tabBtn("mapa", "Mapa mental", <Brain size={13} />)}
       </div>
 
       <div className="flex-1 overflow-auto custom-scroll">
@@ -309,7 +322,36 @@ function ProjectDetail({ project, cid, onBack, onChanged }: { project: Project; 
             ))}
           </div>
         )}
+
+        {tab === "mapa" && (
+          <div className="max-w-2xl">
+            {project.mindmap && project.mindmap.titulo ? (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <MindMapView node={project.mindmap} depth={0} />
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 py-6 text-center">Sem mapa mental ainda. A Nina monta a estrutura do projeto aqui.</p>
+            )}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Mapa mental (só leitura): a árvore { titulo, filhos[] } como um outline.
+function MindMapView({ node, depth }: { node: MindNode; depth: number }) {
+  return (
+    <div style={{ marginLeft: depth ? 16 : 0 }}>
+      <div className="flex items-center gap-2 py-0.5">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: depth === 0 ? "#818cf8" : depth === 1 ? "#22d3ee" : "#64748b" }} />
+        <span className={depth === 0 ? "font-bold text-sm" : depth === 1 ? "text-sm text-gray-200" : "text-[13px] text-gray-400"}>{node.titulo}</span>
+      </div>
+      {Array.isArray(node.filhos) && node.filhos.length > 0 && (
+        <div className="border-l border-white/10 ml-[3px] pl-2">
+          {node.filhos.map((f, i) => <MindMapView key={i} node={f} depth={depth + 1} />)}
+        </div>
+      )}
     </div>
   );
 }
