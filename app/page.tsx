@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, Globe2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck, Maximize2, Minimize2 } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, Globe2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck, Maximize2, Minimize2, FolderKanban } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -28,6 +28,7 @@ import KanbanTab from "@/components/tabs/KanbanTab";
 import CalendarTab from "@/components/tabs/CalendarTab";
 import RemoteAccessTab from "@/components/tabs/RemoteAccessTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
+import ProjetosTab from "@/components/tabs/ProjetosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
 import ClientsTab from "@/components/tabs/ClientsTab";
@@ -100,6 +101,7 @@ const APPS: AppDef[] = [
   { id: "remoto", label: "Acesso Remoto", icon: MonitorSmartphone, accent: "bg-fuchsia-800/60", roles: ["gestor", "gerente"] },
   { id: "automacao", label: "Automação", icon: Bot, accent: "bg-cyan-900/60", roles: ["gestor", "gerente"] },
   { id: "labs", label: "Labs", icon: FlaskConical, accent: "bg-indigo-900/60", roles: ["gestor", "gerente"] },
+  { id: "projetos", label: "Projetos", icon: FolderKanban, accent: "bg-indigo-900/60", roles: ["gestor"] },
   { id: "memorias", label: "Memórias", icon: Brain, accent: "bg-indigo-800/60", roles: ["gestor", "gerente"] },
   { id: "log", label: "Log", icon: ScrollText, accent: "bg-slate-700/60", roles: ["gestor", "gerente"] },
   { id: "planos", label: "Planos", icon: Wallet, accent: "bg-emerald-900/60", roles: ["gestor"] },
@@ -719,6 +721,7 @@ export default function Home() {
       case "remoto": return <RemoteAccessTab profile={profile} />;
       case "automacao": return <AutomationTab profile={profile} />;
       case "labs": return <LabsTab profile={profile} canUseAutomation={canAccessApp("automacao")} />;
+      case "projetos": return <ProjetosTab profile={profile} />;
       case "memorias": return <MemoriesTab profile={profile} />;
       case "log": return <LogTab profile={profile} />;
       case "config": return (
