@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, Globe2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck } from "lucide-react";
+import { Bot, Building2, CalendarDays, ClipboardList, Crown, Eye, ExternalLink, FileSpreadsheet, FlaskConical, Gamepad2, Globe2, LayoutGrid, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Sliders, SquareKanban, Store, Users, Users2, Wallet, FileText, Brain, Truck, Maximize2, Minimize2 } from "lucide-react";
 import LoginScreen from "@/components/LoginScreen";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import PlansScreen from "@/components/PlansScreen";
@@ -64,7 +64,7 @@ import { detectBrowserLanguage, normalizeAppLanguage, rememberLanguage, type App
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 export type DockPosition = "bottom" | "top" | "left" | "right";
-export type OsTheme = "workspace" | "mac" | "windows" | "linux";
+export type OsTheme = "workspace" | "mac" | "windows" | "linux" | "terminal";
 export type AnimStyle = "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
 
 const APPS: AppDef[] = [
@@ -143,6 +143,9 @@ export default function Home() {
   const [dockPosition, setDockPosition] = useState<DockPosition>("bottom");
   const [osTheme, setOsTheme] = useState<OsTheme>("workspace");
   const [animStyle, setAnimStyle] = useState<AnimStyle>("workspace");
+  // Modo foco / tela cheia: esconde a barra de cima e a dock some sozinha
+  // (reaparece ao encostar o mouse na beirada). Esc sai.
+  const [focusMode, setFocusMode] = useState(false);
   const [remoteDesktopAvailable, setRemoteDesktopAvailable] = useState(true);
   // Janelas flutuantes abertas (abrir Kanban e Calendário ao mesmo tempo).
   const [janelas, setJanelas] = useState<{ id: string; z: number; min: boolean }[]>([]);
@@ -551,7 +554,8 @@ export default function Home() {
       const p = localStorage.getItem("dock:pos") as DockPosition | null;
       if (p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
       const os = localStorage.getItem("os:theme") as OsTheme | null;
-      if (os === "workspace" || os === "mac" || os === "windows" || os === "linux") setOsTheme(os);
+      if (os === "workspace" || os === "mac" || os === "windows" || os === "linux" || os === "terminal") setOsTheme(os);
+      if (localStorage.getItem("focus:mode") === "1") setFocusMode(true);
       const a = localStorage.getItem("anim:style") as AnimStyle | null;
       if (a === "workspace" || a === "mac" || a === "windows" || a === "linux" || a === "fun" || a === "none") setAnimStyle(a);
     } catch { /* ignore */ }
@@ -575,6 +579,18 @@ export default function Home() {
   // Aplica o estilo de animação na raiz — o CSS em globals.css faz o resto.
   useEffect(() => { document.documentElement.setAttribute("data-anim", animStyle); }, [animStyle]);
   useEffect(() => { document.documentElement.setAttribute("data-os-theme", osTheme); }, [osTheme]);
+  // Modo foco: marca a raiz (o CSS esconde barra + dock) e guarda a preferência.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-focus", focusMode ? "1" : "0");
+    try { localStorage.setItem("focus:mode", focusMode ? "1" : "0"); } catch {}
+  }, [focusMode]);
+  // Esc sai do modo foco (a barra volta).
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFocusMode(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusMode]);
   const mudarAnim = (a: AnimStyle) => { setAnimStyle(a); try { localStorage.setItem("anim:style", a); } catch {} };
   function saveQuick(ids: string[]) {
     setQuickIds(ids);
@@ -623,7 +639,8 @@ export default function Home() {
     try { localStorage.setItem("os:theme", next); } catch {}
     // Cada tema já nasce com a disposição que lembra o sistema escolhido.
     mudarDock(next === "linux" ? "left" : "bottom");
-    mudarAnim(next);
+    // Terminal é seco e rápido — sem animação enfeitada.
+    mudarAnim(next === "terminal" ? "none" : next);
   };
   const abrirJanela = (id: string) => {
     setJanelas((js) => js.some((j) => j.id === id)
@@ -825,6 +842,13 @@ export default function Home() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+        <button
+          onClick={() => setFocusMode(true)}
+          title="Modo foco / tela cheia — esconde a barra e a dock (Esc para sair)"
+          className="p-2 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer"
+        >
+          <Maximize2 size={16} />
+        </button>
         <EnvironmentSwitcher />
         <ProfileMenu
           name={displayName}
@@ -851,6 +875,17 @@ export default function Home() {
         />
         </div>
       </header>
+
+      {/* Sair do modo foco: botão discreto sempre visível quando a barra some. */}
+      {focusMode && (
+        <button
+          onClick={() => setFocusMode(false)}
+          title="Sair do modo foco (Esc)"
+          className="fixed top-2 right-2 z-[120] p-2 rounded-lg bg-black/50 hover:bg-black/70 text-gray-200 backdrop-blur cursor-pointer opacity-40 hover:opacity-100 transition-opacity"
+        >
+          <Minimize2 size={16} />
+        </button>
+      )}
 
       <main className={`workspace-main flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
         {/* key={tab} faz a tela re-animar a cada troca de app. A barreira

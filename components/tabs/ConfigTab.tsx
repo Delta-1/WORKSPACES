@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Headphones, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal } from "lucide-react";
+import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Headphones, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal, SquareTerminal } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
 import AiConfigSection from "./AiConfigSection";
@@ -34,6 +34,7 @@ const OS_THEMES = [
   { id: "mac", name: "macOS", desc: "Vidro, dock e movimentos fluidos", icon: Laptop },
   { id: "windows", name: "Windows", desc: "Mica, barra de tarefas e precisão", icon: PanelsTopLeft },
   { id: "linux", name: "Linux", desc: "Ubuntu, dock lateral e foco", icon: Terminal },
+  { id: "terminal", name: "Terminal", desc: "Cara de CMD hacker: preto, verde-fósforo, monoespaçado, CRT", icon: SquareTerminal },
 ] as const;
 
 type SectionId = "empresa" | "aparencia" | "atendimento" | "instalacao" | "ferramentas" | "servidores" | "ia" | "chatbot" | "notificacoes";
@@ -117,8 +118,8 @@ export default function ConfigTab({
   onReplayTutorials?: () => void;
   dockPosition?: "bottom" | "top" | "left" | "right";
   onDockPosition?: (p: "bottom" | "top" | "left" | "right") => void;
-  osTheme?: "workspace" | "mac" | "windows" | "linux";
-  onOsTheme?: (theme: "workspace" | "mac" | "windows" | "linux") => void;
+  osTheme?: "workspace" | "mac" | "windows" | "linux" | "terminal";
+  onOsTheme?: (theme: "workspace" | "mac" | "windows" | "linux" | "terminal") => void;
   animStyle?: "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
   onAnimStyle?: (a: "workspace" | "mac" | "windows" | "linux" | "fun" | "none") => void;
 }) {

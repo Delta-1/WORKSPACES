@@ -706,6 +706,58 @@ html[data-os-theme="linux"] .workspace-window.is-minimizing { animation: os-linu
   html[data-os-theme="mac"] .workspace-window-title { padding-right: 42px; }
 }
 
+/* ── TERMINAL / HACKER — preto, verde-fósforo, monoespaçado, CRT ───────────── */
+html[data-os-theme="terminal"] {
+  --os-font: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --os-wallpaper: #01060a;
+  --os-wallpaper-glow: radial-gradient(circle at 50% -10%, rgba(34,255,136,.10), transparent 55%), linear-gradient(180deg, rgba(2,10,8,.5), rgba(1,6,10,.85));
+  --os-header-bg: rgba(2, 9, 12, .92);
+  --os-header-shadow: 0 1px 0 rgba(34,255,136,.22), 0 0 26px rgba(34,255,136,.07);
+  --os-window-radius: 6px;
+  --os-window-bg: rgba(3, 11, 14, .96);
+  --os-window-content: rgba(1, 7, 10, .6);
+  --os-window-border: rgba(34,255,136,.30);
+  --os-window-shadow: 0 24px 70px rgba(0,0,0,.7), 0 0 0 1px rgba(34,255,136,.10) inset;
+  --os-titlebar-bg: linear-gradient(180deg, rgba(34,255,136,.10), rgba(34,255,136,.02));
+  --os-titlebar-height: 34px;
+  --os-dock-radius: 8px;
+  --os-dock-bg: linear-gradient(160deg, rgba(3,14,11,.94), rgba(2,9,13,.94));
+  --os-dock-border: rgba(34,255,136,.38);
+  --os-drawer-radius: 10px;
+  --os-drawer-bg: rgba(2, 11, 13, .95);
+  --os-blur: 10px;
+}
+/* Tudo em monoespaçada — a "cara de terminal". */
+html[data-os-theme="terminal"] .workspace-shell,
+html[data-os-theme="terminal"] .workspace-header,
+html[data-os-theme="terminal"] .workspace-main,
+html[data-os-theme="terminal"] .workspace-dock { font-family: var(--os-font) !important; letter-spacing: .01em; }
+html[data-os-theme="terminal"] .workspace-header { border-bottom: 1px solid rgba(34,255,136,.24); }
+html[data-os-theme="terminal"] .workspace-dock-surface {
+  background: #030d0f !important;
+  border: 1px solid rgba(34,255,136,.4) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 30px rgba(34,255,136,.16), 0 0 0 1px rgba(34,255,136,.08) inset !important;
+}
+html[data-os-theme="terminal"] .workspace-dock-item { border-radius: 7px; }
+html[data-os-theme="terminal"] .workspace-dock-item:hover { color: #7dffb0; background: rgba(34,255,136,.12); transform: translateY(-3px); }
+html[data-os-theme="terminal"] .workspace-running-indicator { background: #22ff88; box-shadow: 0 0 8px rgba(34,255,136,.8); }
+/* Camada de scanlines + brilho de fósforo por cima de tudo (não pega clique). */
+html[data-os-theme="terminal"] .workspace-shell::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 6;
+  background:
+    repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,24,12,.30) 2px 3px),
+    radial-gradient(130% 90% at 50% 0%, rgba(34,255,136,.05), transparent 60%);
+  opacity: .45;
+}
+
+/* ── MODO FOCO / TELA CHEIA — some a barra de cima e a dock; app ocupa tudo ── */
+html[data-focus="1"] .workspace-header { display: none !important; }
+html[data-focus="1"] .workspace-main { padding: 0 !important; }
+/* A dock (barra de atalhos) some sozinha e reaparece ao encostar o mouse nela. */
+html[data-focus="1"] .workspace-dock { opacity: 0; transition: opacity .2s ease; }
+html[data-focus="1"] .workspace-dock:hover { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) {
   .workspace-window.is-closing,
   .workspace-window.is-minimizing,
