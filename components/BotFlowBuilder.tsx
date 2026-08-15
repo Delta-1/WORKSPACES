@@ -109,7 +109,7 @@ export default function BotFlowBuilder({
   const [edges, setEdges] = useState<FlowEdge[]>(initial?.edges ?? []);
   const [selected, setSelected] = useState<string | null>(null);
   const [connectFrom, setConnectFrom] = useState<{ node: string; handle: string } | null>(null);
-  const [view, setView] = useState({ tx: 0, ty: 0 });
+  const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
   const [saving, setSaving] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
@@ -117,9 +117,15 @@ export default function BotFlowBuilder({
 
   const selNode = nodes.find((n) => n.id === selected) ?? null;
 
+  // Ponto no "mundo" (coordenadas do fluxo) para o centro visível, respeitando
+  // pan e zoom — assim o bloco novo nasce onde a pessoa está olhando.
+  const spawnPos = () => ({
+    x: (140 - view.tx) / view.scale + Math.random() * 60,
+    y: (120 - view.ty) / view.scale + Math.random() * 60,
+  });
   const addNode = (type: FlowNode["type"]) => {
     const id = uid();
-    const base = { x: 120 - view.tx + Math.random() * 60, y: 120 - view.ty + Math.random() * 60 };
+    const base = spawnPos();
     const data: FlowNode["data"] =
       type === "message" ? { text: "Olá! Como posso ajudar?" }
       : type === "ask" ? { text: "Me conte o que você precisa." }
@@ -130,6 +136,13 @@ export default function BotFlowBuilder({
       : type === "tool" ? { tool: toolOptionsFor(agentCapabilities)[0]?.id ?? "" }
       : {};
     setNodes((p) => [...p, { id, type, x: base.x, y: base.y, data }]);
+    setSelected(id);
+  };
+  // Adiciona um nó de FERRAMENTA já apontando pra capacidade escolhida na paleta.
+  const addToolNode = (capId: string) => {
+    const id = uid();
+    const base = spawnPos();
+    setNodes((p) => [...p, { id, type: "tool", x: base.x, y: base.y, data: { tool: capId } }]);
     setSelected(id);
   };
 
@@ -162,7 +175,7 @@ export default function BotFlowBuilder({
   const onNodeDown = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
     const n = nodes.find((x) => x.id === id)!;
-    dragRef.current = { id, dx: e.clientX - (n.x + view.tx), dy: e.clientY - (n.y + view.ty) };
+    dragRef.current = { id, dx: e.clientX - (n.x * view.scale + view.tx), dy: e.clientY - (n.y * view.scale + view.ty) };
     setSelected(id);
     if (connectFrom) completeConnect(id);
   };
@@ -174,18 +187,33 @@ export default function BotFlowBuilder({
   const onMove = (e: React.PointerEvent) => {
     if (dragRef.current) {
       const { id, dx, dy } = dragRef.current;
-      const nx = e.clientX - dx - view.tx;
-      const ny = e.clientY - dy - view.ty;
+      const nx = (e.clientX - dx - view.tx) / view.scale;
+      const ny = (e.clientY - dy - view.ty) / view.scale;
       setNodes((p) => p.map((n) => (n.id === id ? { ...n, x: nx, y: ny } : n)));
     } else if (panRef.current) {
       const pn = panRef.current;
-      setView({ tx: pn.tx + (e.clientX - pn.x), ty: pn.ty + (e.clientY - pn.y) });
+      setView((v) => ({ ...v, tx: pn.tx + (e.clientX - pn.x), ty: pn.ty + (e.clientY - pn.y) }));
     }
   };
   const onUp = () => {
     dragRef.current = null;
     panRef.current = null;
   };
+  // Zoom com o scroll (estilo n8n), mantendo fixo o ponto embaixo do cursor.
+  const onWheel = (e: React.WheelEvent) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    setView((v) => {
+      const s = Math.min(1.8, Math.max(0.4, v.scale * (e.deltaY < 0 ? 1.1 : 0.9)));
+      const wx = (cx - v.tx) / v.scale;
+      const wy = (cy - v.ty) / v.scale;
+      return { tx: cx - wx * s, ty: cy - wy * s, scale: s };
+    });
+  };
+  const zoomBy = (f: number) => setView((v) => ({ ...v, scale: Math.min(1.8, Math.max(0.4, v.scale * f)) }));
+  const resetView = () => setView({ tx: 0, ty: 0, scale: 1 });
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -247,6 +275,17 @@ export default function BotFlowBuilder({
               </button>
             );
           })}
+          {/* Cada FERRAMENTA como um nó pronto — é só clicar pra jogar no fluxo. */}
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-4 mb-1">Ferramentas</p>
+          {toolOptionsFor(agentCapabilities).length === 0 ? (
+            <p className="text-[10px] text-gray-500">Ligue capacidades no agente para conectá-las aqui.</p>
+          ) : toolOptionsFor(agentCapabilities).map((c) => (
+            <button key={c.id} onClick={() => addToolNode(c.id)} title={c.desc} className="w-full flex items-center gap-2 text-xs px-2.5 py-2 rounded-lg bg-cyan-500/5 hover:bg-cyan-500/15 cursor-pointer text-left">
+              <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-[#06b6d4]"><Puzzle size={13} className="text-white" /></span>
+              <span className="min-w-0 flex-1"><span className="block font-semibold truncate">{c.label}</span></span>
+              <Plus size={12} className="text-gray-500 ml-auto shrink-0" />
+            </button>
+          ))}
           {connectFrom && (
             <p className="text-[10px] text-amber-300 bg-amber-950/40 border border-amber-500/30 rounded-lg p-2 mt-2">Clique no bloco de destino para conectar. (Esc cancela)</p>
           )}
@@ -259,10 +298,11 @@ export default function BotFlowBuilder({
           onPointerMove={onMove}
           onPointerUp={onUp}
           onPointerLeave={onUp}
+          onWheel={onWheel}
           className="flex-1 relative overflow-hidden bg-[#070b12] cursor-grab active:cursor-grabbing"
-          style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "22px 22px" }}
+          style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: `${22 * view.scale}px ${22 * view.scale}px`, backgroundPosition: `${view.tx}px ${view.ty}px` }}
         >
-          <div className="absolute inset-0" style={{ transform: `translate(${view.tx}px, ${view.ty}px)` }}>
+          <div className="absolute inset-0 origin-top-left" style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})` }}>
             {/* Arestas */}
             <svg className="absolute inset-0 pointer-events-none" style={{ overflow: "visible", width: 1, height: 1 }}>
               {edges.map((e) => {
@@ -299,6 +339,13 @@ export default function BotFlowBuilder({
                   style={{ left: n.x, top: n.y, width: NODE_W, borderColor: isSel ? d.color : "rgba(255,255,255,0.12)" }}
                   className="absolute rounded-xl bg-[#0d131e] border-2 shadow-lg cursor-grab active:cursor-grabbing select-none"
                 >
+                  {/* Porta de ENTRADA (estilo n8n) — só visual; conecta soltando no bloco. */}
+                  {n.type !== "start" && (
+                    <span
+                      className="absolute left-1/2 -top-1.5 -translate-x-1/2 w-3 h-3 rounded-full border-2 border-[#0d131e]"
+                      style={{ background: connectFrom ? "#fbbf24" : d.color }}
+                    />
+                  )}
                   <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-t-xl" style={{ background: `${d.color}22` }}>
                     <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: d.color }}><d.icon size={12} className="text-white" /></span>
                     <span className="text-[11px] font-bold truncate">{d.label}</span>
@@ -343,6 +390,16 @@ export default function BotFlowBuilder({
                 </div>
               );
             })}
+          </div>
+
+          {/* Controles de zoom (estilo n8n) */}
+          <div
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute bottom-3 right-3 flex items-center gap-1 bg-[#0d131e]/90 border border-white/10 rounded-lg px-1 py-1 backdrop-blur"
+          >
+            <button onClick={() => zoomBy(0.9)} title="Diminuir" className="w-7 h-7 rounded-md hover:bg-white/10 cursor-pointer text-gray-300 grid place-items-center">−</button>
+            <button onClick={resetView} title="Encaixar / 100%" className="px-2 h-7 rounded-md hover:bg-white/10 cursor-pointer text-[11px] text-gray-300 tabular-nums">{Math.round(view.scale * 100)}%</button>
+            <button onClick={() => zoomBy(1.1)} title="Aumentar" className="w-7 h-7 rounded-md hover:bg-white/10 cursor-pointer text-gray-300 grid place-items-center">+</button>
           </div>
         </div>
 
