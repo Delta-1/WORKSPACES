@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, BrainCircuit, FileText, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { Bot, BrainCircuit, FileText, FlaskConical, GitBranch, Monitor, Plug, Plus, Save, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { htmlToText } from "@/lib/extract-text";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
@@ -291,6 +291,29 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
   const set = (patch: Partial<Agent>) => setF((p) => ({ ...p, ...patch }));
   const caps = f.capabilities ?? [];
   const toggleCap = (id: string) => set({ capabilities: caps.includes(id) ? caps.filter((c) => c !== id) : [...caps, id] });
+  // EVA — a criadora: monta o agente conversando. Cada resposta dela aplica um
+  // patch nos campos do editor na hora.
+  const [evaOpen, setEvaOpen] = useState(false);
+  const [evaMsgs, setEvaMsgs] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  const [evaInput, setEvaInput] = useState("");
+  const [evaBusy, setEvaBusy] = useState(false);
+  async function askEva() {
+    const txt = evaInput.trim();
+    if (!txt || evaBusy) return;
+    const novo = [...evaMsgs, { role: "user" as const, text: txt }];
+    setEvaMsgs(novo); setEvaInput(""); setEvaBusy(true);
+    try {
+      const res = await fetch("/api/eva", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: novo, bot: { name: f.name, persona: f.persona, instructions: f.instructions, greeting: f.greeting, capabilities: caps, gender: f.gender, humanized: f.humanized } }),
+      });
+      const data = await res.json() as { reply: string; patch?: Partial<Agent> };
+      if (data.patch && Object.keys(data.patch).length) set(data.patch);
+      setEvaMsgs((m) => [...m, { role: "assistant", text: data.reply || "Prontinho! ✨" }]);
+    } catch {
+      setEvaMsgs((m) => [...m, { role: "assistant", text: "Tive um probleminha aqui, tenta de novo?" }]);
+    } finally { setEvaBusy(false); }
+  }
   const apis = f.apis ?? [];
   const setApi = (i: number, patch: Partial<AgentApi>) => set({ apis: apis.map((a, k) => (k === i ? { ...a, ...patch } : a)) });
   const addApi = () => set({ apis: [...apis, { name: "", url: "", description: "" }] });
@@ -392,8 +415,41 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
       <div className="w-full max-w-lg max-h-[88vh] overflow-y-auto custom-scroll bg-[#0b0f16] border border-white/10 rounded-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold flex items-center gap-2"><FlaskConical size={15} className="text-indigo-400" /> {f.id ? "Editar agente" : "Novo agente"}</h3>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setEvaOpen((v) => !v)} className={`flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${evaOpen ? "bg-fuchsia-600 text-white" : "bg-fuchsia-600/15 text-fuchsia-300 hover:bg-fuchsia-600/25"}`}>
+              <Sparkles size={13} /> Criar com a EVA
+            </button>
+            <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 cursor-pointer text-gray-300"><X size={16} /></button>
+          </div>
         </div>
+
+        {evaOpen && (
+          <div className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-950/15 p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-full bg-fuchsia-600/30 border border-fuchsia-500/50 grid place-items-center"><Sparkles size={12} className="text-fuchsia-300" /></div>
+              <p className="text-xs font-semibold text-fuchsia-200">EVA — a criadora</p>
+              <span className="text-[10px] text-gray-500">descreva o bot e eu monto pra você</span>
+            </div>
+            <div className="max-h-52 overflow-y-auto custom-scroll space-y-1.5 mb-2">
+              {evaMsgs.length === 0 && (
+                <p className="text-[11px] text-gray-400">Ex.: <i>“Quero uma atendente de vendas de loja de roupas, simpática, que consulta arquivos e cria tarefas.”</i> Eu vou preenchendo o agente aqui do lado. ✨</p>
+              )}
+              {evaMsgs.map((m, i) => (
+                <div key={i} className={`text-[12px] px-2.5 py-1.5 rounded-lg max-w-[88%] ${m.role === "user" ? "ml-auto bg-white/10" : "bg-fuchsia-600/15 text-fuchsia-100"}`}>{m.text}</div>
+              ))}
+              {evaBusy && <div className="text-[12px] px-2.5 py-1.5 rounded-lg bg-fuchsia-600/15 text-fuchsia-200 w-fit">montando… ✨</div>}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                value={evaInput} onChange={(e) => setEvaInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") askEva(); }}
+                placeholder="Conte o que o bot deve fazer…"
+                className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-fuchsia-500/50"
+              />
+              <button onClick={askEva} disabled={evaBusy || !evaInput.trim()} className="px-3 py-2 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 text-white text-sm cursor-pointer">Enviar</button>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <input value={f.name ?? ""} onChange={(e) => set({ name: e.target.value })} placeholder="Nome do agente (ex.: Yumi)" className="flex-1 bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none" />
