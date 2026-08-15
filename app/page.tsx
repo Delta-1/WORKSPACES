@@ -65,6 +65,7 @@ import { detectBrowserLanguage, normalizeAppLanguage, rememberLanguage, type App
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
 export type DockPosition = "bottom" | "top" | "left" | "right";
 export type OsTheme = "workspace" | "mac" | "windows" | "linux" | "terminal";
+export type Palette = "matrix" | "red" | "amber" | "cyan" | "magenta" | "blue" | "white";
 export type AnimStyle = "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
 
 const APPS: AppDef[] = [
@@ -146,6 +147,8 @@ export default function Home() {
   // Modo foco / tela cheia: esconde a barra de cima e a dock some sozinha
   // (reaparece ao encostar o mouse na beirada). Esc sai.
   const [focusMode, setFocusMode] = useState(false);
+  // Paleta de cores (combos que casam) — aplicada no tema Terminal.
+  const [palette, setPalette] = useState<Palette>("matrix");
   const [remoteDesktopAvailable, setRemoteDesktopAvailable] = useState(true);
   // Janelas flutuantes abertas (abrir Kanban e Calendário ao mesmo tempo).
   const [janelas, setJanelas] = useState<{ id: string; z: number; min: boolean }[]>([]);
@@ -556,6 +559,8 @@ export default function Home() {
       const os = localStorage.getItem("os:theme") as OsTheme | null;
       if (os === "workspace" || os === "mac" || os === "windows" || os === "linux" || os === "terminal") setOsTheme(os);
       if (localStorage.getItem("focus:mode") === "1") setFocusMode(true);
+      const pal = localStorage.getItem("os:palette") as Palette | null;
+      if (pal && ["matrix","red","amber","cyan","magenta","blue","white"].includes(pal)) setPalette(pal);
       const a = localStorage.getItem("anim:style") as AnimStyle | null;
       if (a === "workspace" || a === "mac" || a === "windows" || a === "linux" || a === "fun" || a === "none") setAnimStyle(a);
     } catch { /* ignore */ }
@@ -579,6 +584,8 @@ export default function Home() {
   // Aplica o estilo de animação na raiz — o CSS em globals.css faz o resto.
   useEffect(() => { document.documentElement.setAttribute("data-anim", animStyle); }, [animStyle]);
   useEffect(() => { document.documentElement.setAttribute("data-os-theme", osTheme); }, [osTheme]);
+  useEffect(() => { document.documentElement.setAttribute("data-palette", palette); }, [palette]);
+  const mudarPalette = (p: Palette) => { setPalette(p); try { localStorage.setItem("os:palette", p); } catch {} };
   // Modo foco: marca a raiz (o CSS esconde barra + dock) e guarda a preferência.
   useEffect(() => {
     document.documentElement.setAttribute("data-focus", focusMode ? "1" : "0");
@@ -725,6 +732,7 @@ export default function Home() {
           dockPosition={dockPosition} onDockPosition={mudarDock}
           osTheme={osTheme} onOsTheme={mudarOsTheme}
           animStyle={animStyle} onAnimStyle={mudarAnim}
+          palette={palette} onPalette={mudarPalette}
         />
       );
       default: return null;

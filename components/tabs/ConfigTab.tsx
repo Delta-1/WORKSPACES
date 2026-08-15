@@ -4,6 +4,18 @@ import { useEffect, useState } from "react";
 import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Headphones, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal, SquareTerminal } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import type { CompanySettingsRow } from "@/lib/types";
+import type { Palette as PaletteId } from "@/app/page";
+
+// Presets de paleta (combos que casam) para o tema Terminal.
+const PALETTES: { id: PaletteId; name: string; accent: string; bg: string }[] = [
+  { id: "matrix", name: "Matrix", accent: "#22ff88", bg: "#01060a" },
+  { id: "red", name: "Sangue", accent: "#ff4d4d", bg: "#0a0202" },
+  { id: "amber", name: "Âmbar", accent: "#ffb000", bg: "#0a0600" },
+  { id: "cyan", name: "Ciano", accent: "#22d3ee", bg: "#010a0c" },
+  { id: "magenta", name: "Magenta", accent: "#e879f9", bg: "#08020a" },
+  { id: "blue", name: "Azul", accent: "#5b9dff", bg: "#02060f" },
+  { id: "white", name: "Fantasma", accent: "#d6dde6", bg: "#050607" },
+];
 import AiConfigSection from "./AiConfigSection";
 import ChatbotSection from "./ChatbotSection";
 import ServersSection from "./ServersSection";
@@ -76,6 +88,8 @@ export default function ConfigTab({
   onOsTheme,
   animStyle,
   onAnimStyle,
+  palette,
+  onPalette,
 }: {
   companyName: string;
   companyCode?: string | null;
@@ -122,6 +136,8 @@ export default function ConfigTab({
   onOsTheme?: (theme: "workspace" | "mac" | "windows" | "linux" | "terminal") => void;
   animStyle?: "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
   onAnimStyle?: (a: "workspace" | "mac" | "windows" | "linux" | "fun" | "none") => void;
+  palette?: PaletteId;
+  onPalette?: (p: PaletteId) => void;
 }) {
   const [name, setName] = useState(companyName);
   const [notifMuted, setNotifMuted] = useState(false);
@@ -347,6 +363,33 @@ export default function ConfigTab({
                             </span>
                             {selected && <Check size={15} className="text-emerald-400 shrink-0" />}
                           </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {onPalette && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider">Paleta de cores</label>
+                  <p className="text-[11px] text-gray-500 mt-1 mb-3">Combos que casam, para o tema <b>Terminal</b>. Escolha o clima — o acento, o brilho e o fundo mudam juntos.</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                    {PALETTES.map((p) => {
+                      const on = palette === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => onPalette(p.id)}
+                          aria-pressed={on}
+                          title={p.name}
+                          className={`rounded-xl p-2 border cursor-pointer transition-all ${on ? "ring-2 ring-offset-0" : "border-white/10 hover:border-white/25 hover:-translate-y-0.5"}`}
+                          style={on ? { borderColor: p.accent, boxShadow: `0 0 0 2px ${p.accent}55` } : undefined}
+                        >
+                          <span className="block rounded-lg h-10 relative overflow-hidden" style={{ background: p.bg }}>
+                            <span className="absolute inset-x-2 bottom-2 h-1.5 rounded-full" style={{ background: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+                            <span className="absolute left-2 top-2 text-[9px] font-mono" style={{ color: p.accent }}>{'>'}_</span>
+                          </span>
+                          <span className="block text-[10px] font-semibold mt-1.5 text-center" style={{ color: on ? p.accent : undefined }}>{p.name}</span>
                         </button>
                       );
                     })}

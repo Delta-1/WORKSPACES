@@ -686,6 +686,11 @@ html[data-os-theme="linux"] .workspace-window.is-minimizing { animation: os-linu
 .os-theme-preview--mac { background: radial-gradient(circle at 75% 20%, #7d58d5, transparent 38%), linear-gradient(145deg,#142447,#27152f); }
 .os-theme-preview--windows { background: radial-gradient(circle at 70% 30%, #116cc1, transparent 38%), #071426; border-radius: 5px; }
 .os-theme-preview--linux { background: radial-gradient(circle at 75% 18%, #c84a26, transparent 35%), linear-gradient(145deg,#3b1239,#170c19); }
+.os-theme-preview--terminal { background: repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,0,0,.5) 2px 3px), radial-gradient(circle at 50% 0%, rgba(34,255,136,.18), transparent 55%), #01060a; border-radius: 4px; }
+.os-theme-preview--terminal .os-preview-bar { background: rgba(1,8,6,.9); }
+.os-theme-preview--terminal .os-preview-bar i { background: #22ff88; box-shadow: 0 0 4px rgba(34,255,136,.8); }
+.os-theme-preview--terminal .os-preview-panel b { background: rgba(34,255,136,.5) !important; }
+.os-theme-preview--terminal .os-preview-dock { background: rgba(34,255,136,.14); box-shadow: 0 0 0 1px rgba(34,255,136,.3); border-radius: 4px; }
 .os-preview-bar { display: flex; align-items: center; gap: 3px; height: 14px; padding: 0 6px; background: rgba(10,12,18,.72); }
 .os-preview-bar i { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,.45); }
 .os-theme-preview--mac .os-preview-bar i:nth-child(1) { background: #ff5f57; }
@@ -706,48 +711,57 @@ html[data-os-theme="linux"] .workspace-window.is-minimizing { animation: os-linu
   html[data-os-theme="mac"] .workspace-window-title { padding-right: 42px; }
 }
 
-/* ── TERMINAL / HACKER — preto, verde-fósforo, monoespaçado, CRT ───────────── */
+/* ── TERMINAL / HACKER — preto + acento da paleta, monoespaçado, CRT ───────── */
 html[data-os-theme="terminal"] {
+  /* Acento vem da PALETA (data-palette). Padrão: verde-fósforo (Matrix). */
+  --term: #22ff88; --term-rgb: 34 255 136; --term-bg: #01060a;
   --os-font: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --os-wallpaper: #01060a;
-  --os-wallpaper-glow: radial-gradient(circle at 50% -10%, rgba(34,255,136,.10), transparent 55%), linear-gradient(180deg, rgba(2,10,8,.5), rgba(1,6,10,.85));
-  --os-header-bg: rgba(2, 9, 12, .92);
-  --os-header-shadow: 0 1px 0 rgba(34,255,136,.22), 0 0 26px rgba(34,255,136,.07);
+  --os-wallpaper: var(--term-bg);
+  --os-wallpaper-glow: radial-gradient(circle at 50% -10%, rgb(var(--term-rgb) / .12), transparent 55%), linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.78));
+  --os-header-bg: rgba(3, 6, 9, .92);
+  --os-header-shadow: 0 1px 0 rgb(var(--term-rgb) / .22), 0 0 26px rgb(var(--term-rgb) / .07);
   --os-window-radius: 6px;
-  --os-window-bg: rgba(3, 11, 14, .96);
-  --os-window-content: rgba(1, 7, 10, .6);
-  --os-window-border: rgba(34,255,136,.30);
-  --os-window-shadow: 0 24px 70px rgba(0,0,0,.7), 0 0 0 1px rgba(34,255,136,.10) inset;
-  --os-titlebar-bg: linear-gradient(180deg, rgba(34,255,136,.10), rgba(34,255,136,.02));
+  --os-window-bg: rgba(6, 9, 12, .96);
+  --os-window-content: rgba(2, 4, 7, .6);
+  --os-window-border: rgb(var(--term-rgb) / .30);
+  --os-window-shadow: 0 24px 70px rgba(0,0,0,.7), 0 0 0 1px rgb(var(--term-rgb) / .10) inset;
+  --os-titlebar-bg: linear-gradient(180deg, rgb(var(--term-rgb) / .10), rgb(var(--term-rgb) / .02));
   --os-titlebar-height: 34px;
   --os-dock-radius: 8px;
-  --os-dock-bg: linear-gradient(160deg, rgba(3,14,11,.94), rgba(2,9,13,.94));
-  --os-dock-border: rgba(34,255,136,.38);
+  --os-dock-bg: linear-gradient(160deg, rgba(8,10,13,.94), rgba(4,6,9,.94));
+  --os-dock-border: rgb(var(--term-rgb) / .38);
   --os-drawer-radius: 10px;
-  --os-drawer-bg: rgba(2, 11, 13, .95);
+  --os-drawer-bg: rgba(5, 8, 11, .95);
   --os-blur: 10px;
 }
+/* PALETAS — combos que casam (só valem no tema Terminal). */
+html[data-os-theme="terminal"][data-palette="red"]     { --term:#ff5a5a; --term-rgb:255 90 90;  --term-bg:#0a0203; }
+html[data-os-theme="terminal"][data-palette="amber"]   { --term:#ffb62e; --term-rgb:255 182 46; --term-bg:#0a0600; }
+html[data-os-theme="terminal"][data-palette="cyan"]    { --term:#2fd9f0; --term-rgb:47 217 240;  --term-bg:#01090c; }
+html[data-os-theme="terminal"][data-palette="magenta"] { --term:#ef7bfb; --term-rgb:239 123 251; --term-bg:#08030b; }
+html[data-os-theme="terminal"][data-palette="blue"]    { --term:#5b9dff; --term-rgb:91 157 255;  --term-bg:#02060f; }
+html[data-os-theme="terminal"][data-palette="white"]   { --term:#d6dde6; --term-rgb:214 221 230; --term-bg:#050607; }
 /* Tudo em monoespaçada — a "cara de terminal". */
 html[data-os-theme="terminal"] .workspace-shell,
 html[data-os-theme="terminal"] .workspace-header,
 html[data-os-theme="terminal"] .workspace-main,
 html[data-os-theme="terminal"] .workspace-dock { font-family: var(--os-font) !important; letter-spacing: .01em; }
-html[data-os-theme="terminal"] .workspace-header { border-bottom: 1px solid rgba(34,255,136,.24); }
+html[data-os-theme="terminal"] .workspace-header { border-bottom: 1px solid rgb(var(--term-rgb) / .24); }
 html[data-os-theme="terminal"] .workspace-dock-surface {
-  background: #030d0f !important;
-  border: 1px solid rgba(34,255,136,.4) !important;
+  background: rgba(4,6,9,.94) !important;
+  border: 1px solid rgb(var(--term-rgb) / .4) !important;
   border-radius: 8px !important;
-  box-shadow: 0 0 30px rgba(34,255,136,.16), 0 0 0 1px rgba(34,255,136,.08) inset !important;
+  box-shadow: 0 0 30px rgb(var(--term-rgb) / .16), 0 0 0 1px rgb(var(--term-rgb) / .08) inset !important;
 }
 html[data-os-theme="terminal"] .workspace-dock-item { border-radius: 7px; }
-html[data-os-theme="terminal"] .workspace-dock-item:hover { color: #7dffb0; background: rgba(34,255,136,.12); transform: translateY(-3px); }
-html[data-os-theme="terminal"] .workspace-running-indicator { background: #22ff88; box-shadow: 0 0 8px rgba(34,255,136,.8); }
+html[data-os-theme="terminal"] .workspace-dock-item:hover { color: var(--term); background: rgb(var(--term-rgb) / .12); transform: translateY(-3px); }
+html[data-os-theme="terminal"] .workspace-running-indicator { background: var(--term); box-shadow: 0 0 8px rgb(var(--term-rgb) / .8); }
 /* Camada de scanlines + brilho de fósforo por cima de tudo (não pega clique). */
 html[data-os-theme="terminal"] .workspace-shell::after {
   content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 6;
   background:
-    repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,24,12,.30) 2px 3px),
-    radial-gradient(130% 90% at 50% 0%, rgba(34,255,136,.05), transparent 60%);
+    repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,0,0,.32) 2px 3px),
+    radial-gradient(130% 90% at 50% 0%, rgb(var(--term-rgb) / .05), transparent 60%);
   opacity: .45;
 }
 
