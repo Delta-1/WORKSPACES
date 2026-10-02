@@ -217,3 +217,15 @@ workflow**. Depois copie o link do arquivo em Releases e cole no site em
 
 *Documento gerado automaticamente como registro das atualizações. Sempre que
 tiver uma novidade grande, ela entra aqui.*
+
+## Atendimento em equipe — contatos, Kanban, relatórios e figurinhas
+
+- Agenda dentro de Mensagens, com pesquisa por nome/número, escolha da linha e histórico dos atendimentos anteriores.
+- Nome salvo preservado; nome de perfil não substitui nome manual/agenda.
+- Funcionários sempre no Kanban, com atendimento exclusivo, transferência e supervisão do líder.
+- Timer, primeira resposta e finalização com **Resolvido / Não resolvido** e observação opcional.
+- Aplicativo **Relatórios**, com filtros por funcionário/período/contato/resultado e impressão em PDF.
+- Banco de figurinhas por empresa, salvar recebidas e envio nativo pelo WhatsApp.
+- Novo workflow **Build Workspace Apps (EXE + APK)** para o aplicativo completo Windows/Android.
+
+Detalhes de uso e implantação: [Atendimento em equipe](../docs/atendimento-equipe.md).

@@ -35,7 +35,7 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
   }, [companyId]);
 
   useEffect(() => {
-    load();
+    void Promise.resolve().then(load);
     if (!supabase) return;
     const ch = supabase.channel("contacts-tab").on("postgres_changes", { event: "*", schema: "public", table: "contacts" }, () => load()).subscribe();
     return () => { if (supabase) supabase.removeChannel(ch); };
@@ -49,7 +49,7 @@ export default function ContactsTab({ profile, onOpenMessages }: { profile: Prof
       const jid = `${digits.startsWith("55") ? digits : `55${digits}`}@s.whatsapp.net`;
       const finalPhone = digits.startsWith("55") ? digits : `55${digits}`;
       const { error } = await supabase.from("contacts").upsert(
-        { company_id: companyId, phone: finalPhone, name: name.trim() || null, jid },
+        { company_id: companyId, phone: finalPhone, name: name.trim() || null, saved_name: name.trim() || null, name_source: "manual", jid },
         { onConflict: "company_id,phone" }
       );
       if (error) { alert("Erro ao salvar: " + error.message); return; }
@@ -245,7 +245,7 @@ function EditContactModal({ contact, onClose, onSaved }: { contact: Contact; onC
     setBusy(true); setErr(null);
     try {
       const finalPhone = digits.startsWith("55") ? digits : `55${digits}`;
-      const patch: Record<string, string | null> = { name: name.trim() || null };
+      const patch: Record<string, string | null> = { name: name.trim() || null, saved_name: name.trim() || null, name_source: "manual" };
       // Só mexe no telefone/jid se realmente mudou (evita conflito de unicidade à toa).
       if (finalPhone !== contact.phone) { patch.phone = finalPhone; patch.jid = `${finalPhone}@s.whatsapp.net`; }
       const { error } = await supabase.from("contacts").update(patch).eq("id", contact.id);

@@ -25,6 +25,7 @@ import OrgChartTab from "@/components/tabs/OrgChartTab";
 import KanbanTab from "@/components/tabs/KanbanTab";
 import CalendarTab from "@/components/tabs/CalendarTab";
 import RemoteAccessTab from "@/components/tabs/RemoteAccessTab";
+import ReportsTab from "@/components/tabs/ReportsTab";
 import AtendimentosTab from "@/components/tabs/AtendimentosTab";
 import AnnouncementsTab from "@/components/tabs/AnnouncementsTab";
 import EmployeesTab from "@/components/tabs/EmployeesTab";
@@ -78,6 +79,7 @@ const APPS: AppDef[] = [
   { id: "estudio", label: "Estúdio", icon: FileText, accent: "bg-blue-900/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "mensagens", label: "Mensagens", icon: MessagesSquare, accent: "bg-green-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "contatos", label: "Contatos", icon: Users, accent: "bg-emerald-800/60", roles: ["gestor", "gerente", "funcionario"] },
+  { id: "relatorios", label: "Relatórios", icon: ClipboardList, accent: "bg-sky-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "atendimentos", label: "Atendimentos", icon: ClipboardList, accent: "bg-cyan-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "chat", label: "Copiloto IA", icon: Bot, accent: "bg-indigo-800/60", roles: ["gestor", "gerente", "funcionario"] },
   { id: "arquivos", label: "Arquivos", icon: Network, accent: "bg-blue-800/60", roles: ["gestor", "gerente", "funcionario"] },
@@ -649,6 +651,7 @@ export default function Home() {
       case "estudio": case "academico": case "apresentacoes": return <StudioTab profile={profile} />;
       case "mensagens": return <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />;
       case "contatos": return <ContactsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />;
+      case "relatorios": return <ReportsTab profile={profile} />;
       case "atendimentos": return <AtendimentosTab profile={profile} />;
       case "chat": return <ChatTab />;
       case "arquivos": return <FilesGraphTab profile={profile} />;
