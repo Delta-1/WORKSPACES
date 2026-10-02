@@ -47,3 +47,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 whatsapp-service/.next/
+
+/desktop-app/node_modules/
+/desktop-app/dist/
+/android-workspace/.gradle/
+/android-workspace/local.properties
+/android-workspace/**/build/
+/supabase/.temp/

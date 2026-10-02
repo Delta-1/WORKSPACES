@@ -20,6 +20,7 @@ export const APP_FEATURE: Record<string, FeatureId> = {
   mensagens: "mensagens",
   contatos: "mensagens",
   atendimentos: "mensagens",
+  relatorios: "mensagens",
   remoto: "remoto",
   labs: "labs",
   chat: "labs",

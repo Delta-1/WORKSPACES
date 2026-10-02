@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Clock, DollarSign, FileImage, MessageSquare, Pencil, Plus, Send, Settings, Trash2, Users, X, Zap } from "lucide-react";
+import { messageAuthHeaders } from "@/lib/message-auth";
 import { supabase } from "@/lib/supabase-client";
 import type { Profile } from "@/lib/types";
 import { BILLING_DEFAULT_TEMPLATE, BILLING_TEMPLATES, fillTemplate, nextDueDate, fmtDatePt, renderExtrato, itemsTotal, newBillingItem, withKeys, type BillingItem } from "@/lib/billing";
@@ -118,7 +119,7 @@ export default function BillingTab({ profile, onOpenMessages, embutido, secao, t
       nome: t.name || "", valor: t.valor, vencimento: fmtDatePt(t.due_date), pix, empresa: settings.pix_name || "",
       extrato: renderExtrato(itens, t.motivo || charge?.motivo), motivo: t.motivo || charge?.motivo || "",
     });
-    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...await messageAuthHeaders() }, body: JSON.stringify({ to, text, numberId: charge?.number_id || numbers[0]?.id || undefined }) });
     await supabase.from("billing_targets").update({ status: "enviado", sent_at: new Date().toISOString() }).eq("id", t.id);
     flash("Cobrança enviada no WhatsApp."); load();
   }
@@ -344,7 +345,7 @@ function NewChargeModal({ cid, contacts, agents, numbers, settings, onClose, onS
     const num = numbers.find((n) => n.id === f.number_id);
     const to = num?.phone_number;
     if (!to) { alert("Nenhum número de WhatsApp conectado para o teste."); return; }
-    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text: `🧪 (teste do Cobrador)\n\n${previewText}`, numberId: f.number_id, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+    await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...await messageAuthHeaders() }, body: JSON.stringify({ to, text: `🧪 (teste do Cobrador)\n\n${previewText}`, numberId: f.number_id, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
     alert("Mensagem de teste enviada para o próprio número conectado.");
   }
 

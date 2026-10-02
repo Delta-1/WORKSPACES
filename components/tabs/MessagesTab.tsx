@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import ContactsPicker from "@/components/messages/ContactsPicker";
+import AttendanceActions from "@/components/messages/AttendanceActions";
+import StickersPicker, { saveReceivedSticker } from "@/components/messages/StickersPicker";
+import { contactDisplayName } from "@/lib/attendance";
 import ToolsPicker from "../ToolsPicker";
+import { messageAuthHeaders } from "@/lib/message-auth";
 import { supabase } from "@/lib/supabase-client";
 import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
@@ -24,7 +29,7 @@ type ContactReport = {
 };
 type ConvRow = Conversation & {
   group_id: string | null;
-  contacts: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt"> | null;
+  contacts: Pick<Contact, "id" | "saved_name" | "push_name" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt"> | null;
 };
 
 /** Avatar da conversa. Grupo ganha ícone próprio — não a inicial do nome. */
@@ -47,13 +52,7 @@ function ConvAvatar({ c }: { c: ConvRow["contacts"] }) {
   );
 }
 
-function contactLabel(c?: { name?: string | null; phone?: string | null } | null): string {
-  if (!c) return "Contato";
-  if (c.name && c.name.trim()) return c.name;
-  const p = (c.phone || "").replace(/\D/g, "");
-  if (p.length >= 8 && p.length <= 13) return "+" + p;
-  return "Contato WhatsApp";
-}
+const contactLabel = contactDisplayName;
 // Etiqueta de status do atendimento (aparece no chat e reflete no WhatsApp).
 function StatusTag({ status, small }: { status?: string | null; small?: boolean }) {
   const base = `${small ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} rounded-full font-semibold whitespace-nowrap`;
@@ -83,7 +82,8 @@ const LAYOUTS: { id: MsgLayout; label: string; desc: string }[] = [
 ];
 
 export default function MessagesTab({ profile, openTarget, onTargetHandled }: { profile: Profile | null; openTarget?: { phone: string; name: string } | null; onTargetHandled?: () => void }) {
-  const [server, setServer] = useState<string>("whatsapp"); // "whatsapp" | "equipe" | <groupId>
+  const [server, setServer] = useState<string>("whatsapp");
+  const activeNumberId = server.startsWith("wa:") ? server.slice(3) : null; // "whatsapp" | "equipe" | <groupId>
   const [conversations, setConversations] = useState<ConvRow[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [colleagues, setColleagues] = useState<Profile[]>([]);
@@ -94,6 +94,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
+  const [showContacts, setShowContacts] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
   const [listMenu, setListMenu] = useState(false);
@@ -112,7 +114,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [unread, setUnread] = useState<Record<string, number>>({});
   useEffect(() => {
     try {
-      setUnread(JSON.parse(localStorage.getItem("wa:unread") || "{}"));
+      const saved = JSON.parse(localStorage.getItem("wa:unread") || "{}");
+      queueMicrotask(() => setUnread(saved));
     } catch {
       /* ignore */
     }
@@ -138,20 +141,20 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
   // Layout do Mensagens (por pessoa; a empresa define um padrão). 3 opções:
   // "classic" (WhatsApp normal), "kanban" (fluxo de atendimento) e "crm" (fluxo n8n).
-  const [layout, setLayoutState] = useState<MsgLayout>(() => {
+  const [preferredLayout, setLayoutState] = useState<MsgLayout>(() => {
     try { const s = localStorage.getItem("msg:layout"); if (s === "classic" || s === "kanban" || s === "crm") return s; } catch { /* ignore */ }
     return "classic";
   });
   const [showLayoutPicker, setShowLayoutPicker] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0); // 0 = sem tutorial
   const [asCompanyDefault, setAsCompanyDefault] = useState(false); // gestor: definir padrão da equipe
-  function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
+  const isEmployee = profile?.role === "funcionario";
+  const layout: MsgLayout = isEmployee ? "kanban" : preferredLayout;
+  function setLayout(l: MsgLayout) { if (isEmployee) return; setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
   const isGestor = profile?.role === "gestor";
 
-  // Trava opcional (por empresa) de atendimento exclusivo: quando ligada, quem
-  // responde primeiro "assume" a conversa e outros atendentes não conseguem mais
-  // responder ali, evitando duplicidade. Nem toda empresa quer essa trava.
-  const [kanbanLock, setKanbanLock] = useState(false);
+  // Atendimento exclusivo é obrigatório e validado pelo banco.
+
 
   // Som de notificação (toca quando chega mensagem nova de cliente). A escolha é
   // por pessoa (salva no aparelho), semeada com o padrão da empresa. A empresa
@@ -228,11 +231,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     }
     const { data } = await supabase
       .from("conversations")
-      .select("*, group_id, contacts(id, name, phone, jid, avatar_url, copilot_access, remote_agent_id, is_group, billing_exempt)")
+      .select("*, group_id, contacts(id, saved_name, push_name, name, phone, jid, avatar_url, copilot_access, remote_agent_id, is_group, billing_exempt)")
       .eq("company_id", profile.company_id)
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (data) setConversations(data as unknown as ConvRow[]);
-  }, [profile?.company_id]);
+  }, [profile]);
 
   const loadSide = useCallback(async () => {
     if (!supabase || !profile?.company_id) {
@@ -250,11 +253,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setGroups((g.data as Group[]) ?? []);
     setColleagues((p.data as Profile[]) ?? []);
     setNumbers((n.data as WhatsappNumber[]) ?? []);
-  }, [profile?.id, profile?.company_id]);
+  }, [profile]);
 
   useEffect(() => {
-    loadConversations();
-    loadSide();
+    void Promise.resolve().then(() => { void loadConversations(); void loadSide(); });
   }, [loadConversations, loadSide]);
 
   // Primeira vez no Mensagens: pergunta o layout (semeando com o padrão da empresa)
@@ -265,7 +267,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     try { onboarded = localStorage.getItem("msg:onboarded") === "1"; } catch { /* ignore */ }
     supabase.from("company_settings").select("messages_layout,notification_sound,notification_sound_url,messages_kanban_lock").eq("company_id", profile.company_id).maybeSingle().then(({ data }) => {
       const cl = data?.messages_layout as MsgLayout | null;
-      setKanbanLock(!!(data as { messages_kanban_lock?: boolean } | null)?.messages_kanban_lock);
+
       // Som personalizado da empresa (URL) sempre carrega; toca quando escolhido "custom".
       const url = (data as { notification_sound_url?: string | null } | null)?.notification_sound_url ?? null;
       setNotifSoundUrl(url);
@@ -274,7 +276,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       try { hasOwn = !!localStorage.getItem("msg:notifsound"); } catch { /* ignore */ }
       const cs = (data as { notification_sound?: string | null } | null)?.notification_sound;
       if (!hasOwn && cs) setNotifSound(cs as NotifSoundId);
-      if (!onboarded) {
+      if (!onboarded && profile.role !== "funcionario") {
         if (cl === "classic" || cl === "kanban" || cl === "crm") setLayout(cl);
         setShowLayoutPicker(true);
       }
@@ -289,7 +291,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const refresh = () => {
       loadConversations();
       const id = selConvRef.current;
-      if (id && supabase) supabase.from("whatsapp_messages").select("*").eq("conversation_id", id).order("at").then(({ data }) => { if (data) setMessages(data); });
+      if (id && supabase) void fetchThread(id).then(data => { if (selConvRef.current === id) setMessages(data); }).catch(() => {});
     };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
@@ -301,6 +303,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const ch = supabase
       .channel(`messages-tab-${profile.company_id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
       .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
@@ -337,6 +340,22 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     };
   }, [loadConversations, loadSide, profile?.id, profile?.company_id]);
 
+  async function fetchThread(id: string): Promise<WhatsappMessageRow[]> {
+    if (!supabase) return [];
+    const { data: current } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).maybeSingle();
+    if (!current) return [];
+    let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
+    related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
+    const { data: all } = await related;
+    const rows: WhatsappMessageRow[] = [];
+    for (let offset = 0;; offset += 500) {
+      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", (all ?? [{ id }]).map(c => c.id)).order("at").order("id").range(offset, offset + 499);
+      if (error) throw new Error(error.message);
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < 500) return rows;
+    }
+  }
+
   async function openConv(id: string) {
     setSelColleagueId(null);
     selColRef.current = null;
@@ -344,8 +363,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     selConvRef.current = id;
     setUnread((prev) => (prev[id] ? { ...prev, [id]: 0 } : prev)); // zera as não-lidas ao abrir
     if (!supabase) return;
-    const { data } = await supabase.from("whatsapp_messages").select("*").eq("conversation_id", id).order("at");
-    setMessages(data ?? []);
+    setMessages([]);
+    try { const data = await fetchThread(id); if (selConvRef.current === id) setMessages(data); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao carregar histórico."); }
     scrollBottom();
   }
 
@@ -498,13 +517,6 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     loadConversations();
   }
 
-  // Finaliza o atendimento (a etiqueta some).
-  async function finalizeConv() {
-    if (!supabase || !profile?.company_id || !selConv) return;
-    await supabase.from("conversations").update({ status: "fechado", closed_at: new Date().toISOString() }).eq("id", selConv.id).eq("company_id", profile.company_id);
-    loadConversations();
-  }
-
   async function openColleague(id: string) {
     setSelConvId(null);
     selConvRef.current = null;
@@ -544,17 +556,17 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     // Sem código do país e com cara de número BR → assume Brasil (55).
     if (phone.length <= 11 && !phone.startsWith("55")) phone = "55" + phone;
 
-    const { data: found } = await supabase.from("contacts").select("*").eq("phone", phone).limit(1);
+    const { data: found } = await supabase.from("contacts").select("*").eq("company_id", profile.company_id).eq("phone", phone).limit(1);
     let contactId = found?.[0]?.id as string | undefined;
     if (!contactId) {
-      const { data: created, error } = await supabase.from("contacts").insert({ phone, name: name.trim() || null }).select("*").single();
+      const { data: created, error } = await supabase.from("contacts").insert({ company_id: profile.company_id, phone, name: name.trim() || null, saved_name: name.trim() || null, name_source: name.trim() ? "manual" : null }).select("*").single();
       if (error || !created) {
         alert("Erro ao criar contato: " + (error?.message ?? "desconhecido"));
         return;
       }
       contactId = created.id;
     } else if (name.trim() && !found?.[0]?.name) {
-      await supabase.from("contacts").update({ name: name.trim() }).eq("id", contactId);
+      await supabase.from("contacts").update({ name: name.trim(), saved_name: name.trim(), name_source: "manual" }).eq("id", contactId);
     }
 
     const numberId =
@@ -568,14 +580,14 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       .select("id")
       .eq("company_id", profile.company_id)
       .eq("contact_id", contactId)
-      .neq("status", "fechado")
+      .eq("number_id", numberId)
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(1);
     let convId = existingConv?.[0]?.id as string | undefined;
     if (!convId) {
       const { data: newConv, error } = await supabase
         .from("conversations")
-        .insert({ company_id: profile.company_id, contact_id: contactId, number_id: numberId, status: "atendendo" })
+        .insert({ company_id: profile.company_id, contact_id: contactId, number_id: numberId, status: "espera", sector_id: profile.sector_id })
         .select("id")
         .single();
       if (error || !newConv) {
@@ -588,6 +600,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setShowNewChat(false);
     setServer(numberId ? `wa:${numberId}` : "whatsapp");
     if (convId) openConv(convId);
+  }
+
+  async function openExistingContact(contact: Contact, numberId: string) {
+    if (!supabase || !profile?.company_id) return;
+    const { data: existing, error } = await supabase.from("conversations").select("id")
+      .eq("company_id", profile.company_id).eq("contact_id", contact.id).eq("number_id", numberId)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) throw error;
+    let id = existing?.id;
+    if (!id) {
+      const { data, error: e } = await supabase.from("conversations").insert({ company_id: profile.company_id, contact_id: contact.id, number_id: numberId, sector_id: profile.sector_id, status: "espera" }).select("id").single();
+      if (e) throw e;
+      id = data.id;
+    }
+    await loadConversations(); setServer(`wa:${numberId}`); await openConv(id);
   }
 
   // Abertura vinda de fora (ex.: botão "Mensagens" no card do cliente): abre a
@@ -612,29 +639,25 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Se a trava está ligada e a conversa já foi assumida por outra pessoa,
   // devolve o motivo do bloqueio (senão null = pode responder normalmente).
   function blockedByLock(conv: ConvRow | null): string | null {
-    if (!conv || !kanbanLock) return null;
-    if (conv.status !== "atendendo") return null;
-    if (!conv.assignee_id || conv.assignee_id === profile?.id) return null;
-    const owner = colleagues.find((c) => c.id === conv.assignee_id);
-    return `Esta conversa já está sendo atendida por ${owner?.full_name || owner?.email || "outro atendente"} — para evitar duplicidade, só quem assumiu pode responder.`;
+    if (!conv) return null;
+    if (conv.status === "atendendo" && conv.assignee_id && conv.assignee_id !== profile?.id) {
+      const owner = colleagues.find(c => c.id === conv.assignee_id);
+      return `Atendimento de ${owner?.full_name || owner?.email || "outro atendente"}. Solicite uma transferência para responder.`;
+    }
+    return null;
   }
-  // Ao responder, "assume" a conversa (fica marcada com quem está atendendo) —
-  // só assume se ainda não tem dono, pra não tirar a conversa de quem já pegou.
-  async function claimConversation(conv: ConvRow) {
-    if (!supabase || !profile?.id || !profile.company_id) return;
-    const patch: Partial<Pick<ConvRow, "assignee_id" | "status">> = {};
-    if (!conv.assignee_id) patch.assignee_id = profile.id;
-    if (conv.status === "espera") patch.status = "atendendo";
-    if (Object.keys(patch).length === 0) return;
-    setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, ...patch } : c)));
-    await supabase.from("conversations").update(patch).eq("id", conv.id).eq("company_id", profile.company_id);
+  async function claimConversation(conv: ConvRow): Promise<boolean> {
+    if (!supabase || !profile?.id) return false;
+    const { error } = await supabase.rpc("attendance_action", { cid: conv.id, action: "claim" });
+    if (error) { alert(error.message); await loadConversations(); return false; }
+    await loadConversations(); return true;
   }
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const lockMsg = blockedByLock(selConv);
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
   const connectedCount = numbers.filter((n) => n.status === "connected").length;
-  const activeNumberId = server.startsWith("wa:") ? server.slice(3) : null;
+
   // Número desta conversa; senão o número do "servidor" ativo; senão o conectado.
   const selNumber = selConv?.number_id
     ? numbers.find((n) => n.id === selConv.number_id) ?? null
@@ -691,7 +714,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   async function uploadMedia(blob: Blob, filename: string, mime: string) {
     if (!supabase) return null;
     const ext = (filename.split(".").pop() || mime.split("/")[1] || "bin").slice(0, 8);
-    const path = `out/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const path = `out/${crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage.from("wa-media").upload(path, blob, { contentType: mime, upsert: false });
     if (error) return null;
     const { data } = supabase.storage.from("wa-media").getPublicUrl(path);
@@ -702,10 +725,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!selConv?.contacts) return;
     const block = blockedByLock(selConv);
     if (block) { alert(block); return; }
-    claimConversation(selConv);
+    if (!await claimConversation(selConv)) return;
     // Bolha otimista da mídia enviada — aparece na hora.
     const temp: WhatsappMessageRow = {
-      id: `temp-${Date.now()}`,
+      id: `temp-${crypto.randomUUID()}`,
       conversation_id: selConv.id,
       direction: "out",
       text: caption || null,
@@ -718,21 +741,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     };
     setMessages((prev) => [...prev, temp]);
     scrollBottom();
-    // Salva a mídia no banco JÁ (não some) e manda o id ao serviço (sem duplicar).
-    let messageId: string | null = null;
-    const cid = (selConv as { company_id?: string | null }).company_id ?? profile?.company_id ?? null;
-    if (supabase) {
-      const { data: row } = await supabase.from("whatsapp_messages")
-        .insert({ conversation_id: selConv.id, direction: "out", text: caption || null, media_type: media.type, media_url: media.url, media_name: media.name, media_mime: media.mime, company_id: cid, sender_id: profile?.id ?? null })
-        .select("id").single();
-      messageId = row?.id ?? null;
-    }
+    const messageId = null;
     const headers = await authHeaders();
-    await fetch("/api/whatsapp/send", {
+    const response = await fetch("/api/whatsapp/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, media, text: caption || undefined, messageId }),
+      body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId }),
     });
+      const payload = await response.json();
+    if (!response.ok || !payload.success) { setMessages(prev => prev.filter(m => m.id !== temp.id)); throw new Error(payload.message || payload.error || "Falha no envio da mídia."); }
   }
 
   async function send() {
@@ -752,17 +769,17 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (!selConv?.contacts) return;
     const block = blockedByLock(selConv);
     if (block) { alert(block); return; }
-    claimConversation(selConv);
+    setSending(true);
+    if (!await claimConversation(selConv)) { setSending(false); return; }
     // Envio INSTANTÂNEO: limpa o campo já e manda em segundo plano; a mensagem
     // enviada aparece sozinha pelo realtime (sem esperar a resposta do servidor).
     const text = input.trim();
     const to = selConv.contacts.jid || selConv.contacts.phone;
     const numberId = selConv.number_id;
-    const cid = (selConv as { company_id?: string | null }).company_id ?? profile?.company_id ?? null;
     setInput("");
     // Bolha otimista: aparece NA HORA (não espera o servidor nem o realtime).
     const temp: WhatsappMessageRow = {
-      id: `temp-${Date.now()}`,
+      id: `temp-${crypto.randomUUID()}`,
       conversation_id: selConv.id,
       direction: "out",
       text,
@@ -777,45 +794,40 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     scrollBottom();
     (async () => {
       try {
-        // 1) SALVA a mensagem no banco JÁ (não some mais, mesmo se o WhatsApp estiver
-        // instável). 2) manda pro serviço com o id, que só atualiza o wa_id (sem duplicar).
-        let messageId: string | null = null;
-        if (supabase) {
-          const { data: row } = await supabase.from("whatsapp_messages")
-            .insert({ conversation_id: selConv.id, direction: "out", text, company_id: cid, sender_id: profile?.id ?? null })
-            .select("id").single();
-          messageId = row?.id ?? null;
-        }
+        // O serviço registra o envio aceito e atribui a mensagem ao responsável.
+        const messageId = null;
         const headers = await authHeaders();
         const res = await fetch("/api/whatsapp/send", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...headers },
-          body: JSON.stringify({ to, text, senderId: profile?.id, numberId, messageId }),
+          body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id, messageId }),
         });
         const data = await res.json();
-        if (!data.success && !messageId) {
-          alert(data.message ?? "Erro ao enviar. Algum número conectado?");
+        if (!res.ok || !data.success) {
+          setMessages(prev => prev.filter(m => m.id !== temp.id));
+          alert(data.message ?? data.error ?? "Erro ao enviar. Algum número conectado?");
           setInput((cur) => cur || text); // devolve o texto se nem salvou
         }
       } catch {
+        setMessages(prev => prev.filter(m => m.id !== temp.id));
         alert("Erro ao enviar a mensagem.");
         setInput((cur) => cur || text);
-      }
+      } finally { setSending(false); }
     })();
   }
 
   // Manda o link de uma ferramenta/aplicativo pelo WhatsApp (com bolha otimista).
-  function sendToolLink(t: Tool) {
+  async function sendToolLink(t: Tool) {
     setShowTools(false);
     if (!selConv?.contacts) return;
     const block = blockedByLock(selConv);
     if (block) { alert(block); return; }
-    claimConversation(selConv);
+    if (!await claimConversation(selConv)) return;
     const text = `📦 ${t.name}${t.description ? `\n${t.description}` : ""}\n${t.url}`;
     const to = selConv.contacts.jid || selConv.contacts.phone;
     const numberId = selConv.number_id;
     const temp: WhatsappMessageRow = {
-      id: `temp-${Date.now()}`, conversation_id: selConv.id, direction: "out", text,
+      id: `temp-${crypto.randomUUID()}`, conversation_id: selConv.id, direction: "out", text,
       media_type: null, media_url: null, media_name: null, media_mime: null, sender_id: profile?.id ?? null, at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, temp]);
@@ -823,7 +835,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     (async () => {
       try {
         const headers = await authHeaders();
-        const res = await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ to, text, senderId: profile?.id, numberId }) });
+        const res = await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id }) });
         const data = await res.json();
         if (!data.success) alert(data.message ?? "Erro ao enviar.");
       } catch { alert("Erro ao enviar a ferramenta."); }
@@ -838,9 +850,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     try {
       const mime = file.type || "application/octet-stream";
       const uploaded = await uploadMedia(file, file.name, mime);
-      if (uploaded) await sendMedia({ type: mediaTypeFromMime(mime), ...uploaded }, input.trim());
+      if (!uploaded) throw new Error("Não consegui carregar o arquivo.");
+      await sendMedia({ type: mediaTypeFromMime(mime), ...uploaded }, input.trim());
       setInput("");
-    } finally {
+    } catch (e) { alert(e instanceof Error ? e.message : "Falha ao enviar arquivo."); } finally {
       setSending(false);
     }
   }
@@ -862,8 +875,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const uploaded = await uploadMedia(blob, "audio.webm", "audio/webm");
-        if (uploaded) await sendMedia({ type: "audio", ...uploaded });
+        try {
+          const uploaded = await uploadMedia(blob, "audio.webm", "audio/webm");
+          if (!uploaded) throw new Error("Não consegui carregar o áudio.");
+          await sendMedia({ type: "audio", ...uploaded });
+        } catch (e) { alert(e instanceof Error ? e.message : "Falha ao enviar áudio."); }
       };
       recorderRef.current = rec;
       rec.start();
@@ -886,7 +902,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   // "servidor" atual: "whatsapp" = todas; "wa:<numeroId>" = só desse número;
   // "<grupoId>" = só desse grupo. (activeNumberId definido acima)
-  const visibleConvs = useMemo(() => {
+  const visibleConvs = (() => {
     const q = query.toLowerCase();
     return conversations.filter((c) => {
       if (!showHidden && hidden.has(c.id)) return false; // escondidas somem da lista
@@ -895,9 +911,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       } else if (server !== "whatsapp" && server !== "equipe" && c.group_id !== server) {
         return false;
       }
-      return !q || contactLabel(c.contacts).toLowerCase().includes(q);
+      return !q || `${contactLabel(c.contacts)} ${c.contacts?.phone || ""}`.toLowerCase().includes(q);
     });
-  }, [conversations, query, server, activeNumberId, hidden, showHidden]);
+  })();
 
   const hiddenCount = useMemo(() => conversations.filter((c) => hidden.has(c.id)).length, [conversations, hidden]);
 
@@ -909,6 +925,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         <div className="min-w-0 flex-1">
           <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
           {!compact && (c.status === "espera" || c.status === "atendendo" ? <div className="mt-0.5"><StatusTag status={c.status} small /></div> : <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>)}
+          {c.assignee_id && <p className="text-[10px] text-emerald-300 truncate">{c.assignee_id === profile?.id ? "Você" : colleagues.find(p => p.id === c.assignee_id)?.full_name || "Outro atendente"}</p>}
           {compact && <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>}
         </div>
         {(unread[c.id] || 0) > 0 && <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">{unread[c.id] > 99 ? "99+" : unread[c.id]}</span>}
@@ -916,8 +933,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     );
   }
   // Agrupamento para o Kanban.
-  const kanbanTodo = useMemo(() => visibleConvs.filter((c) => c.status === "espera" || (!c.status && (unread[c.id] || 0) > 0)), [visibleConvs, unread]);
-  const kanbanDoing = useMemo(() => visibleConvs.filter((c) => c.status === "atendendo"), [visibleConvs]);
+  const kanbanTodo = visibleConvs.filter((c) => c.status === "espera" || (!c.status && (unread[c.id] || 0) > 0));
+  const kanbanDone = visibleConvs.filter(c => c.status === "fechado" || c.status === "cancelado");
+  const kanbanDoing = visibleConvs.filter((c) => c.status === "atendendo");
 
   const currentGroupName = activeNumberId
     ? numbers.find((n) => n.id === activeNumberId)?.label ?? "Número"
@@ -952,6 +970,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
           <MessageSquare size={20} />
         </ServerIcon>
+        <ServerIcon active={showContacts} onClick={() => setShowContacts(true)} title="Contatos — pesquisar e conversar"><UserPlus size={20} /></ServerIcon>
         {/* Um ícone por número de WhatsApp: acesso múltiplo, todos no mesmo lugar */}
         {numbers.map((n) => (
           <ServerIcon
@@ -971,9 +990,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             </span>
           </ServerIcon>
         ))}
-        <ServerIcon active={showConnect} onClick={() => setShowConnect(true)} title="Adicionar / conectar número de WhatsApp">
+        {!isEmployee && <ServerIcon active={showConnect} onClick={() => setShowConnect(true)} title="Adicionar / conectar número de WhatsApp">
           <Plug size={16} />
-        </ServerIcon>
+        </ServerIcon>}
         <div className="w-8 h-px bg-white/10 my-1" />
         <ServerIcon active={server === "equipe"} onClick={() => setServer("equipe")} title="Equipe (interno)">
           <Users size={20} />
@@ -994,14 +1013,14 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           <button onClick={() => setShowSoundPicker(true)} title="Som de notificação" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
             <Bell size={18} />
           </button>
-          <button onClick={() => setShowLayoutPicker(true)} title="Trocar o layout do Mensagens" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
+          {!isEmployee && <button onClick={() => setShowLayoutPicker(true)} title="Trocar o layout do Mensagens" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
             {layout === "kanban" ? <Columns3 size={18} /> : layout === "crm" ? <Workflow size={18} /> : <LayoutGrid size={18} />}
-          </button>
+          </button>}
         </div>
       </div>
 
       {/* Coluna de canais/contatos (clássico e CRM) */}
-      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${layout === "kanban" ? "hidden" : hasSel ? "hidden md:flex" : "flex"}`}>
+      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${(layout === "kanban" && server !== "equipe") ? "hidden" : hasSel ? "hidden md:flex" : "flex"}`}>
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
@@ -1123,10 +1142,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       </div>
 
       {/* Layout KANBAN: colunas de atendimento (A fazer / Em andamento) */}
-      {layout === "kanban" && (
-        <div className={`shrink-0 flex gap-0 overflow-x-auto border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
-          {([["A fazer", kanbanTodo, "bg-amber-500"], ["Em andamento", kanbanDoing, "bg-emerald-500"]] as [string, ConvRow[], string][]).map(([title, list, dot]) => (
-            <div key={title} className="w-[46vw] sm:w-60 shrink-0 flex flex-col border-r border-white/10 last:border-r-0">
+      {layout === "kanban" && server !== "equipe" && (
+        <div className={`min-w-0 md:max-w-[55%] flex-1 md:flex-none flex gap-0 overflow-x-auto border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
+          {([["A fazer", kanbanTodo, "bg-amber-500"], ["Em andamento", kanbanDoing, "bg-emerald-500"], ["Finalizados", kanbanDone, "bg-sky-500"]] as [string, ConvRow[], string][]).map(([title, list, dot]) => (
+            <div key={title} className="w-[62vw] sm:w-56 shrink-0 flex flex-col border-r border-white/10 last:border-r-0">
               <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2 shrink-0">
                 <span className={`w-2 h-2 rounded-full ${dot}`} />
                 <span className="text-xs font-bold">{title}</span>
@@ -1187,16 +1206,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                       <DollarSign size={12} /> Cobrar
                     </button>
                   )}
-                  {selConv.status !== "fechado" && (
-                    <button
-                      onClick={finalizeConv}
-                      title="Finalizar atendimento (a etiqueta some)"
-                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer bg-white/5 text-gray-300 hover:bg-emerald-600 hover:text-white transition-colors"
-                    >
-                      <Check size={12} /> Finalizar
-                    </button>
-                  )}
-                  <button
+                  {!isEmployee && <button
                     onClick={toggleBot}
                     title={botOn ? "Bot ligado — responde os clientes sozinho. Clique para desligar." : "Bot desligado. Clique para o robô responder automaticamente."}
                     className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer transition-colors ${
@@ -1204,14 +1214,14 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                     }`}
                   >
                     <Bot size={12} /> {botOn ? "Bot ON" : "Bot OFF"}
-                  </button>
-                  <button
+                  </button>}
+                  {!isEmployee && <button
                     onClick={() => setShowBotSetup(true)}
                     title="Escolher tipo de automação do WhatsApp para este número"
                     className="max-md:hidden p-1.5 rounded-lg hover:bg-white/10 text-sky-300 cursor-pointer"
                   >
                     <Bot size={15} />
-                  </button>
+                  </button>}
                   <button
                     onClick={() => setShowConnect(true)}
                     title="Configurar / conectar WhatsApp"
@@ -1232,12 +1242,12 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                         <div className="fixed inset-0 z-40" onClick={() => setChatMenu(false)} />
                         <div className="absolute right-0 top-9 z-50 w-48 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
                           {/* No celular estas duas entram aqui (ficam escondidas no cabeçalho) */}
-                          <button onClick={() => { setChatMenu(false); setShowBotSetup(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                          {!isEmployee && <button onClick={() => { setChatMenu(false); setShowBotSetup(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Bot size={13} className="text-sky-400" /> Configurar bot
-                          </button>
-                          <button onClick={() => { setChatMenu(false); setShowConnect(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
+                          </button>}
+                          {!isEmployee && <button onClick={() => { setChatMenu(false); setShowConnect(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Plug size={13} className="text-gray-300" /> Conectar WhatsApp
-                          </button>
+                          </button>}
                           <button onClick={openContactLog} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <FileText size={13} className="text-sky-400" /> Histórico do contato
                           </button>
@@ -1261,10 +1271,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               )}
             </div>
 
+            {selConv && profile && <AttendanceActions key={selConv.id} conversation={selConv} profile={profile} colleagues={colleagues} onChanged={loadConversations} />}
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} />
+                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
@@ -1276,6 +1287,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 <Users size={13} /> {lockMsg}
               </div>
             )}
+            {selConv && profile && <button disabled={!!lockMsg || sending} onClick={() => setShowStickers(true)} className="px-3 py-1 text-xs text-emerald-300 text-left">☺ Figurinhas</button>}
             <div className="p-2 md:p-3 border-t border-white/10 flex items-center gap-1.5 md:gap-2 shrink-0 relative pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               {showEmoji && (
                 <div className="absolute bottom-full left-2 mb-2 w-72 max-w-[calc(100vw-1.5rem)] max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
@@ -1378,6 +1390,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         </div>
       )}
 
+      {showContacts && profile?.company_id && <ContactsPicker companyId={profile.company_id} numbers={numbers} initialNumber={activeNumberId} onSelect={openExistingContact} onNew={() => { setShowContacts(false); setShowNewChat(true); }} onClose={() => setShowContacts(false)} />}
+      {showStickers && profile && <StickersPicker profile={profile} onSend={sendMedia} onClose={() => setShowStickers(false)} />}
       {showNewChat && (
         <NewChatModal
           onClose={() => setShowNewChat(false)}
@@ -1519,7 +1533,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       )}
 
       {/* Escolher o layout do Mensagens (1ª vez ou pelo botão). */}
-      {showLayoutPicker && (
+      {showLayoutPicker && !isEmployee && (
         <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowLayoutPicker(false)}>
           <div className="w-full max-w-lg bg-[#0b0f16] border border-white/10 rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-bold mb-1">Como você quer usar o Mensagens?</h3>
@@ -1553,21 +1567,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 Definir o layout escolhido como <b>padrão da equipe</b> (novos funcionários já começam com ele).
               </label>
             )}
-            {isGestor && (
-              <label className="flex items-start gap-2 mt-3 pt-3 border-t border-white/10 text-[11px] text-gray-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={kanbanLock}
-                  onChange={(e) => {
-                    const v = e.target.checked;
-                    setKanbanLock(v);
-                    if (supabase && profile?.company_id) supabase.from("company_settings").update({ messages_kanban_lock: v }).eq("company_id", profile.company_id);
-                  }}
-                  className="accent-emerald-500 mt-0.5"
-                />
-                <span>Atendimento exclusivo: quando alguém responde uma conversa, ela fica <b>Em andamento</b> só para essa pessoa — outros atendentes não conseguem mais mandar mensagem ali (evita duplicidade). Vale pra qualquer layout, não só o Kanban.</span>
-              </label>
-            )}
+            <p className="text-xs text-gray-400 mt-3">Funcionários utilizam sempre Kanban. Cada atendimento tem um responsável; para outro responder, use Transferir.</p>
           </div>
         </div>
       )}
@@ -1611,15 +1611,15 @@ function CrmFlowArea({ companyId, activeNumberId, numbers }: { companyId: string
   const [bot, setBot] = useState<Chatbot | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    if (!supabase || !companyId) { setLoading(false); return; }
-    (async () => {
+    if (!supabase || !companyId) { queueMicrotask(() => setLoading(false)); return; }
+    void Promise.resolve().then(async () => {
       setLoading(true);
       const numBotId = activeNumberId ? (numbers.find((n) => n.id === activeNumberId)?.chatbot_id ?? null) : null;
       let b: Chatbot | null = null;
       if (numBotId) { const { data } = await supabase!.from("chatbots").select("*").eq("id", numBotId).maybeSingle(); b = data as Chatbot | null; }
       if (!b) { const { data } = await supabase!.from("chatbots").select("*").eq("company_id", companyId).neq("slot", "internal").order("created_at").limit(1).maybeSingle(); b = data as Chatbot | null; }
       setBot(b); setLoading(false);
-    })();
+    });
   }, [companyId, activeNumberId, numbers]);
 
   if (loading) return <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Carregando fluxo…</div>;
@@ -1825,13 +1825,13 @@ function ContactProfileModal({
   onSaved,
   onAccessMachine,
 }: {
-  contact: Pick<Contact, "id" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt">;
+  contact: Pick<Contact, "id" | "saved_name" | "push_name" | "name" | "phone" | "jid" | "avatar_url" | "copilot_access" | "remote_agent_id" | "is_group" | "billing_exempt">;
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
   onAccessMachine?: (agentId: string) => void;
 }) {
-  const [name, setName] = useState(contact.name ?? "");
+  const [name, setName] = useState(contact.saved_name ?? contact.name ?? "");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copilot, setCopilot] = useState(Boolean(contact.copilot_access));
@@ -1854,7 +1854,7 @@ function ContactProfileModal({
   async function save() {
     if (!supabase) return;
     setSaving(true);
-    await supabase.from("contacts").update({ name: name.trim() || null }).eq("id", contact.id);
+    await supabase.from("contacts").update({ name: name.trim() || null, saved_name: name.trim() || null, name_source: "manual" }).eq("id", contact.id);
     setSaving(false);
     onSaved();
   }
@@ -2050,11 +2050,11 @@ function ServerIcon({ active, onClick, title, children, badge = 0 }: { active: b
   );
 }
 
-function Bubble({ mine, at, text, mediaUrl, mediaType }: { mine: boolean; at: string; text: string | null; mediaUrl?: string | null; mediaType?: WhatsappMediaType | null }) {
+function Bubble({ mine, at, text, mediaUrl, mediaType, onSaveSticker }: { mine: boolean; at: string; text: string | null; mediaUrl?: string | null; mediaType?: WhatsappMediaType | null; onSaveSticker?: () => Promise<void> }) {
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm ${mine ? "bg-emerald-600 text-white" : "bg-[#1c232e]"}`}>
-        {mediaUrl && mediaType === "image" && (
+        {mediaUrl && (mediaType === "image" || mediaType === "sticker") && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={mediaUrl} alt="" className="rounded-lg max-w-full mb-1 max-h-60 object-contain" />
         )}
@@ -2064,6 +2064,7 @@ function Bubble({ mine, at, text, mediaUrl, mediaType }: { mine: boolean; at: st
             {mediaType === "video" ? "🎥 Vídeo" : "📄 Arquivo"}
           </a>
         )}
+        {onSaveSticker && <button onClick={() => void onSaveSticker()} className="block text-[10px] underline py-1">Salvar figurinha</button>}
         {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
         <p className={`text-[10px] mt-0.5 ${mine ? "text-emerald-100/70" : "text-gray-500"}`}>{fmtTime(at)}</p>
       </div>
@@ -2077,7 +2078,7 @@ function BillingPendingModal({ companyId, onClose, onOpenConv }: { companyId: st
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    if (!supabase || !companyId) { setLoading(false); return; }
+    if (!supabase || !companyId) { queueMicrotask(() => setLoading(false)); return; }
     supabase.from("billing_targets").select("id,name,phone,valor,due_date,status").eq("company_id", companyId).in("status", ["pendente", "lembrete", "enviado", "atrasado"]).order("due_date").then(({ data }) => { setRows((data as T[]) ?? []); setLoading(false); });
   }, [companyId]);
   const money = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
@@ -2135,7 +2136,7 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
     setRows((data as T[]) ?? []);
   }, [companyId, contact.id]);
   useEffect(() => {
-    load();
+    void Promise.resolve().then(load);
     if (supabase && companyId) supabase.from("company_settings").select("billing_pix_key").eq("company_id", companyId).maybeSingle().then(({ data }) => setPixKey((data as { billing_pix_key?: string } | null)?.billing_pix_key || ""));
   }, [load, companyId]);
 
@@ -2154,7 +2155,7 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
       }
       const extrato = renderExtrato(cleanItens, motivo);
       const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
-      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...await messageAuthHeaders() }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
       setValor(""); setMotivo(""); setItens([]); setImageUrl(null); setFollowupMin("0"); setMulta(""); await load();
     } finally { setBusy(false); }
   }

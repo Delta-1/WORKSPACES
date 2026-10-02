@@ -1,0 +1,8 @@
+{
+ "name":"workspace-desktop","version":"1.0.0","private":true,
+ "description":"Aplicativo completo do Workspace para equipes de atendimento",
+ "author":"Workspace","main":"src/main.cjs",
+ "scripts":{"start":"electron .","dist:win":"electron-builder --win nsis"},
+ "devDependencies":{"electron":"44.5.1","electron-builder":"26.15.3"},
+ "build":{"appId":"com.workspace.app","productName":"Workspace","files":["src/**/*"],"directories":{"output":"dist"},"win":{"target":"nsis"},"nsis":{"oneClick":false,"allowToChangeInstallationDirectory":true,"perMachine":false,"artifactName":"Workspace-Setup.exe","shortcutName":"Workspace"}}
+}
