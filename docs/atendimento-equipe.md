@@ -18,7 +18,7 @@ Funcionários usam **sempre Kanban**, mesmo se o navegador ou a empresa tiver um
 4. Use **Finalizar**, selecione **Resolvido** ou **Não resolvido** e confirme. A observação é opcional. Isso fecha o atendimento, sem apagar a conversa.
 5. Um atendimento pode ser reaberto; a participação anterior continua no relatório.
 
-O gestor acompanha a empresa. O líder acompanha os atendimentos e relatórios do seu setor, inclusive o responsável atual. O funcionário vê seus próprios registros no relatório. As regras são aplicadas no banco e no endpoint de envio, além da interface.
+O gestor acompanha a empresa. O líder acompanha os atendimentos e relatórios do seu setor, inclusive o responsável atual. Todos podem abrir a aba Relatórios. Somente líderes e cargos superiores podem consultar e emitir relatórios de funcionários; funcionários sem liderança não veem nem emitem esses dados, incluindo os próprios. O líder designado no organograma também recebe acesso aos relatórios dos setores que lidera. As regras são aplicadas no banco e no endpoint de envio, além da interface.
 
 ## Relatórios
 

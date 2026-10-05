@@ -224,7 +224,7 @@ tiver uma novidade grande, ela entra aqui.*
 - Nome salvo preservado; nome de perfil não substitui nome manual/agenda.
 - Funcionários sempre no Kanban, com atendimento exclusivo, transferência e supervisão do líder.
 - Timer, primeira resposta e finalização com **Resolvido / Não resolvido** e observação opcional.
-- Aplicativo **Relatórios**, com filtros por funcionário/período/contato/resultado e impressão em PDF.
+- Aplicativo **Relatórios**, com filtros por funcionário/período/contato/resultado e impressão em PDF. A aba é acessível a todos; consulta e emissão de relatórios de funcionários são exclusivas dos líderes dos respectivos setores e gestores da empresa.
 - Banco de figurinhas por empresa, salvar recebidas e envio nativo pelo WhatsApp.
 - Novo workflow **Build Workspace Apps (EXE + APK)** para o aplicativo completo Windows/Android.
 

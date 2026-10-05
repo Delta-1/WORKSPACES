@@ -29,11 +29,13 @@ alter table public.attendance_sessions enable row level security;
 grant select on public.attendance_sessions to authenticated;
 grant all on public.attendance_sessions to service_role;
 
--- Gestor sees the company; leader sees all sessions in their sector; employees see their own.
+-- Reports are restricted to company managers and sector leaders, including designated leaders.
 create policy attendance_sessions_read on public.attendance_sessions for select to authenticated using (
  company_id = public.active_company_id() and
- (public.my_role() = 'gestor' or assignee_id = auth.uid() or
-  (public.my_role() = 'gerente' and sector_id = public.my_sector()))
+ (public.my_role() = 'gestor' or
+  (public.my_role() = 'gerente' and sector_id = public.my_sector()) or
+  exists (select 1 from public.sectors s where s.id = attendance_sessions.sector_id
+   and s.company_id = attendance_sessions.company_id and s.leader_id = auth.uid()))
 );
 
 create table public.whatsapp_stickers (

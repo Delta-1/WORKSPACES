@@ -7,10 +7,34 @@ const labels={resolved:"Resolvido",unresolved:"Não resolvido",transferred:"Tran
 const day=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const escapeHtml=(s:unknown)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!));
 export default function ReportsTab({profile}:{profile:Profile|null}) {
+ return <ReportsAccess key={`${profile?.id}:${profile?.company_id}:${profile?.role}:${profile?.sector_id}`} profile={profile}/>;
+}
+function ReportsAccess({profile}:{profile:Profile|null}) {
+ const [access,setAccess]=useState<{sectors:string[]|null;error:string}|null>(null);
+ useEffect(()=>{
+  let active=true;
+  async function check(){
+   if(!profile?.company_id||!supabase){if(active)setAccess({sectors:[],error:""});return;}
+   if(profile.role==="gestor"){if(active)setAccess({sectors:null,error:""});return;}
+   const {data,error}=await supabase.from("sectors").select("id").eq("company_id",profile.company_id).eq("leader_id",profile.id);
+   if(!active)return;
+   if(error){setAccess({sectors:[],error:"Não foi possível verificar as permissões dos relatórios."});return;}
+   const sectors=new Set<string>((data??[]).map(s=>s.id));
+   if(profile.role==="gerente"&&profile.sector_id)sectors.add(profile.sector_id);
+   setAccess({sectors:[...sectors],error:""});
+  }
+  void check();return()=>{active=false;};
+ },[profile]);
+ if(!access)return <p className="p-4">Verificando acesso aos relatórios…</p>;
+ if(access.error)return <p role="alert" className="p-4 text-red-300">{access.error}</p>;
+ if(!profile||access.sectors?.length===0)return <div className="p-4 space-y-3"><h3 className="text-xl font-bold">Relatórios</h3><div className="rounded-xl bg-white/5 p-4"><h4 className="font-semibold">Atendimentos de Mensagens</h4><p className="mt-2 text-sm text-gray-400">A consulta e a emissão dos relatórios dos funcionários são exclusivas dos líderes de setor e cargos superiores. Procure seu líder para solicitar um relatório.</p></div></div>;
+ return <AttendanceReport profile={profile} sectorIds={access.sectors}/>;
+}
+function AttendanceReport({profile,sectorIds}:{profile:Profile;sectorIds:string[]|null}) {
  const [from,setFrom]=useState(()=>day(new Date(new Date().getFullYear(),new Date().getMonth(),1)));
  const [to,setTo]=useState(()=>day(new Date()));const [employee,setEmployee]=useState("");const [outcome,setOutcome]=useState("");const [query,setQuery]=useState("");
  const [staff,setStaff]=useState<Profile[]>([]);const [rows,setRows]=useState<AttendanceSession[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState("");
- useEffect(()=>{if(!supabase||!profile?.company_id)return;let req=supabase.from("profiles").select("*").eq("company_id",profile.company_id).order("full_name");if(profile.role==="gerente")req=req.eq("sector_id",profile.sector_id);if(profile.role==="funcionario")req=req.eq("id",profile.id);req.then(({data})=>setStaff(data??[]));},[profile?.company_id,profile?.role,profile?.id,profile?.sector_id]);
+ useEffect(()=>{if(!supabase||!profile.company_id)return;let active=true;let req=supabase.from("profiles").select("*").eq("company_id",profile.company_id).order("full_name");if(sectorIds)req=req.in("sector_id",sectorIds);req.then(({data})=>{if(active)setStaff(data??[]);});return()=>{active=false;};},[profile.company_id,sectorIds]);
  const load=useCallback(async()=>{
   if(!supabase||!profile?.company_id){setLoading(false);return;}
   if(!from||!to||from>to){setError("Selecione um período válido.");setRows([]);setLoading(false);return;}
@@ -19,12 +43,13 @@ export default function ReportsTab({profile}:{profile:Profile|null}) {
   const all:AttendanceSession[]=[];
   for(let offset=0;;offset+=500){
    let req=supabase.from("attendance_sessions").select("*").eq("company_id",profile.company_id).gte("started_at",new Date(`${from}T00:00:00`).toISOString()).lt("started_at",after.toISOString()).order("started_at",{ascending:false}).order("id").range(offset,offset+499);
+   if(sectorIds)req=req.in("sector_id",sectorIds);
    if(employee)req=req.eq("assignee_id",employee);if(outcome)req=req.eq("outcome",outcome);
    const {data,error:e}=await req;if(e){setError(e.message);setRows([]);setLoading(false);return;}
    all.push(...(data??[]));if((data??[]).length<500)break;
   }
   setRows(all);setLoading(false);
- },[profile,from,to,employee,outcome]);
+ },[profile,sectorIds,from,to,employee,outcome]);
  useEffect(()=>{void Promise.resolve().then(load);},[load]);
  const filtered=useMemo(()=>rows.filter(r=>!query||`${r.contact_name??""} ${r.contact_phone??""} ${r.protocol}`.toLowerCase().includes(query.toLowerCase())),[rows,query]);
  const metrics=attendanceMetrics(filtered);
