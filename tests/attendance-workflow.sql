@@ -46,10 +46,10 @@ do $$ begin
  if exists(select 1 from public.attendance_sessions) then raise exception 'Employee can read other reports'; end if;
 end $$;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
-do $$ begin if (select count(*) from public.attendance_sessions)<>1 then raise exception 'Leader cannot supervise sector'; end if; end $$;
+do $$ begin if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>1 then raise exception 'Leader cannot supervise sector'; end if; end $$;
 select public.attendance_action('50000000-0000-0000-0000-000000000001','transfer','10000000-0000-0000-0000-000000000002',null,'Escalated');
 do $$ begin
- if (select count(*) from public.attendance_sessions)<>2 then raise exception 'Transfer lost history'; end if;
+ if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>2 then raise exception 'Transfer lost history'; end if;
  if not exists(select 1 from public.attendance_sessions where outcome='transferred' and outgoing_count=1 and note='Escalated') then raise exception 'Transfer snapshot failed'; end if;
 end $$;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
@@ -61,14 +61,14 @@ select public.attendance_action('50000000-0000-0000-0000-000000000001','finish',
 select public.attendance_action('50000000-0000-0000-0000-000000000001','claim');
 do $$ begin if exists(select 1 from public.attendance_sessions) then raise exception 'Employee can read own completed report'; end if; end $$;
 reset role;
-do $$ begin if (select count(*) from public.attendance_sessions)<>3 then raise exception 'Reopen erased completed session'; end if; end $$;
+do $$ begin if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>3 then raise exception 'Reopen erased completed session'; end if; end $$;
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000005","role":"authenticated"}',true);
-do $$ begin if (select count(*) from public.attendance_sessions)<>3 then raise exception 'Manager cannot read company reports'; end if; end $$;
+do $$ begin if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>3 then raise exception 'Manager cannot read company reports'; end if; end $$;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000006","role":"authenticated"}',true);
 do $$ begin if exists(select 1 from public.attendance_sessions) then raise exception 'Leader can read another sector'; end if; end $$;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000007","role":"authenticated"}',true);
-do $$ begin if (select count(*) from public.attendance_sessions)<>3 then raise exception 'Designated sector leader cannot read reports'; end if; end $$;
+do $$ begin if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>3 then raise exception 'Designated sector leader cannot read reports'; end if; end $$;
 select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000004","role":"authenticated"}',true);
 do $$ begin
  if exists(select 1 from public.attendance_sessions) or exists(select 1 from public.contacts) then raise exception 'Company isolation failed'; end if;
