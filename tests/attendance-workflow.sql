@@ -76,4 +76,14 @@ do $$ begin
  exception when others then if sqlerrm='TEST: cross-company claim allowed' then raise; end if; end;
 end $$;
 reset role;
-select 'PASS: claim, duplicate claim denial, send ownership, sector supervision, transfer, resolution, reopen, reports restricted to leadership, isolation' as verification;
+insert into auth.users(id,email) values ('10000000-0000-0000-0000-000000000008','workflow-super-admin@example.invalid');
+insert into public.profiles(id,email,full_name,role,company_id) values ('10000000-0000-0000-0000-000000000008','workflow-super-admin@example.invalid','Global admin','gestor','20000000-0000-0000-0000-000000000002')
+on conflict(id) do update set role=excluded.role,company_id=excluded.company_id;
+insert into public.super_admins(email) values ('workflow-super-admin@example.invalid');
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000008","role":"authenticated"}',true);
+do $$ begin if (select count(*) from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001')<>3 then raise exception 'Administrator cannot read another company report'; end if; end $$;
+select set_config('request.jwt.claims','{"sub":"10000000-0000-0000-0000-000000000004","role":"authenticated"}',true);
+do $$ begin if exists(select 1 from public.attendance_sessions where company_id='20000000-0000-0000-0000-000000000001') then raise exception 'Company manager gained global report access'; end if; end $$;
+reset role;
+select 'PASS: claim, duplicate claim denial, send ownership, sector supervision, transfer, resolution, reopen, reports restricted to leadership, administrator global reports, isolation' as verification;

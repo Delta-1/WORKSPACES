@@ -22,6 +22,8 @@ O gestor acompanha a empresa. O líder acompanha os atendimentos e relatórios d
 
 ## Relatórios
 
+O Administrador Geral pode escolher uma empresa na aba Relatórios para consultar os atendimentos dela e imprimir/salvar PDF identificado com o nome da empresa. Essa permissão é de leitura para suporte; os demais usuários continuam restritos à própria empresa e aos setores autorizados.
+
 Em **Relatórios → Atendimentos de Mensagens**, filtre período, funcionário, contato/protocolo e resultado. Clique no cartão de um funcionário para filtrar sua participação.
 
 - **Espera**: entrada na fila até assumir.

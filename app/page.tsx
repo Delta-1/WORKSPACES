@@ -651,7 +651,7 @@ export default function Home() {
       case "estudio": case "academico": case "apresentacoes": return <StudioTab profile={profile} />;
       case "mensagens": return <MessagesTab profile={profile} openTarget={msgTarget} onTargetHandled={() => setMsgTarget(null)} />;
       case "contatos": return <ContactsTab profile={profile} onOpenMessages={(phone, name) => { setMsgTarget({ phone, name }); setTab("mensagens"); }} />;
-      case "relatorios": return <ReportsTab profile={profile} />;
+      case "relatorios": return <ReportsTab profile={profile} superAdmin={superAdmin} />;
       case "atendimentos": return <AtendimentosTab profile={profile} />;
       case "chat": return <ChatTab />;
       case "arquivos": return <FilesGraphTab profile={profile} />;
