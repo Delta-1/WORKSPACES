@@ -1,3 +1,4 @@
+import { createAutomationWorker } from "./automation-worker.js";
 import { contactNamePatch } from "./contact-names.js";
 import express from "express";
 import QRCode from "qrcode";
@@ -1060,7 +1061,7 @@ async function mp3ToOpusOgg(mp3Buffer) {
         "-ar", "48000",
         "-ac", "1",
         outFile,
-      ]);
+      ], {timeout:30000,killSignal:"SIGKILL"});
       let err = "";
       ff.stderr.on("data", (d) => (err += d.toString()));
       ff.on("error", reject);
@@ -3378,7 +3379,7 @@ async function startSession(numberId) {
             number?.sector_id ?? null,
             cid
           );
-          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid);
+          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id);
 
           // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
           // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos
@@ -3434,6 +3435,13 @@ async function startSession(numberId) {
             } catch (e) {
               console.error("copilot auth failed:", e?.message || e);
             }
+          }
+
+          // Explicit message flows take precedence over AI. Never replay old history,
+          // group traffic, configuration logins or the private copilot line.
+          if (!ehGrupo && !number?.is_copilot && !contact?.copilot_access && msg.key.id && isRecentWhatsappMessage(msg, 120000) && messageAutomationWorker) {
+            const handled = await messageAutomationWorker.incoming({numberId,companyId:cid,conversation,messageKey:msg.key.id,text:text || "",name:contact.saved_name || contact.name || phone});
+            if (handled) { markSeen(); void messageAutomationWorker.sweep(); continue; }
           }
 
           // Contato liberado (pelo gestor no app OU por login na linha do copiloto)
@@ -3951,6 +3959,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     supabaseConfigured: Boolean(supabase),
+    messageAutomations: Boolean(messageAutomationWorker),
     hasUrl: Boolean(process.env.SUPABASE_URL),
     hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     hasSecret: Boolean(process.env.WHATSAPP_SERVICE_SECRET),
@@ -4610,10 +4619,48 @@ async function billingSweep() {
   }
 }
 
+// Durable message flows are independent from browser sessions and AI providers.
+const messageAutomationWorker = supabase ? createAutomationWorker({
+  db: supabase,
+  storageOrigin: new URL(process.env.SUPABASE_URL).origin,
+  connected: numberId => getSession(numberId)?.state.status === "connected",
+  send: async ({numberId,ruleId,pauseOnHuman,conversation,text,media}) => {
+    const session=getSession(numberId);
+    if(!session?.sock || session.state.status!=="connected")throw Error("Número desconectado.");
+    const jid=conversation.contacts?.jid || (conversation.contacts?.phone ? `${conversation.contacts.phone}@s.whatsapp.net` : null);
+    if(!jid)throw Error("Contato sem destinatário válido.");
+    let content=null;
+    if(media) {
+      const url=new URL(media.url);
+      const origin=new URL(process.env.SUPABASE_URL).origin;
+      if(url.origin!==origin || !url.pathname.startsWith(`/storage/v1/object/public/wa-media/automations/${conversation.company_id}/`))throw Error("Áudio fora da empresa.");
+      const response=await fetch(url,{redirect:"error",signal:AbortSignal.timeout(30000)});
+      if(!response.ok)throw Error("Não foi possível carregar o áudio.");
+      const reader=response.body.getReader(),chunks=[];let size=0;
+      for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>10*1024*1024){await reader.cancel();throw Error("Áudio maior que 10 MB.");}chunks.push(Buffer.from(value));}
+      const ogg=await mp3ToOpusOgg(Buffer.concat(chunks));
+      if(!ogg)throw Error("Não foi possível converter o áudio em nota de voz.");
+      content={audio:ogg,mimetype:"audio/ogg; codecs=opus",ptt:true};
+    }
+    const [{data:latest,error:cError},{data:rule,error:rError}]=await Promise.all([
+      supabase.from("conversations").select("company_id,number_id,status,assignee_id,bot_paused").eq("id",conversation.id).maybeSingle(),
+      supabase.from("message_automations").select("enabled").eq("id",ruleId).maybeSingle()
+    ]);
+    if(cError||rError)throw Error(cError?.message||rError?.message);
+    if(!latest||!rule?.enabled||latest.company_id!==conversation.company_id||latest.number_id!==numberId||["fechado","cancelado"].includes(latest.status)||(pauseOnHuman&&(latest.assignee_id||latest.bot_paused)))throw Object.assign(Error("Fluxo pausado ou atendimento assumido/encerrado antes do envio."),{code:"AUTOMATION_CANCELED"});
+    let timeout;
+    let sent;
+    try {sent=await Promise.race([sendBotMessage(session.sock,jid,conversation.id,conversation.company_id,{text,media,content}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error("O WhatsApp demorou a confirmar. Confira a conversa antes de agendar novamente.")),60000);})]);} finally {clearTimeout(timeout);}
+
+    if(!sent?.key?.id)throw Error("O WhatsApp não confirmou o envio. Confira a conversa antes de tentar novamente.");
+  }
+}) : null;
+
 app.listen(PORT, () => {
   console.log(`WhatsApp service listening on :${PORT}`);
   void resumeSessions();
   void backfillBrainFolders(); // garante pasta de memória p/ todo agente
+  if(messageAutomationWorker){setInterval(()=>void messageAutomationWorker.sweep(),5000);setTimeout(()=>void messageAutomationWorker.sweep(),10000);}
   setInterval(watchdog, 60000);
   setInterval(attendanceSweep, 90000); // encerra inativos + gera relatórios
   setInterval(billingSweep, 180000); // Cobrador: envia cobranças/lembretes e regenera ciclos

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import dynamic from "next/dynamic";
 import ContactsPicker from "@/components/messages/ContactsPicker";
 import AttendanceActions from "@/components/messages/AttendanceActions";
 import StickersPicker, { saveReceivedSticker } from "@/components/messages/StickersPicker";
@@ -17,6 +18,8 @@ import { NOTIF_SOUNDS, playNotifSound, type NotifSoundId } from "@/lib/notify-so
 import BillingItemsEditor from "@/components/BillingItemsEditor";
 import BillingExtraFields from "@/components/BillingExtraFields";
 import { renderExtrato, itemsTotal, type BillingItem } from "@/lib/billing";
+
+const MessageAutomations = dynamic(() => import("@/components/messages/MessageAutomations"));
 
 type Group = { id: string; name: string; position: number };
 type ContactReport = {
@@ -96,6 +99,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [showProfile, setShowProfile] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showContacts, setShowContacts] = useState(false);
+  const [showAutomations, setShowAutomations] = useState(false);
   const [showStickers, setShowStickers] = useState(false);
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [chatMenu, setChatMenu] = useState(false);
@@ -935,13 +939,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
   // Agrupamento para o Kanban.
   const kanbanTodo = visibleConvs.filter((c) => c.status === "espera" || (!c.status && (unread[c.id] || 0) > 0));
-  const kanbanDone = visibleConvs.filter(c => c.status === "fechado" || c.status === "cancelado");
   const kanbanDoing = visibleConvs.filter((c) => c.status === "atendendo");
-  const canViewFinished = profile?.role === "gestor" || profile?.role === "gerente";
   const kanbanColumns: [string, ConvRow[], string][] = [
     ["A fazer", kanbanTodo, "bg-amber-500"],
     ["Em andamento", kanbanDoing, "bg-emerald-500"],
-    ...(canViewFinished ? [["Finalizados", kanbanDone, "bg-sky-500"] as [string, ConvRow[], string]] : []),
   ];
   const activeMobileQueue = kanbanColumns.some(([title]) => title === mobileQueue) ? mobileQueue : "A fazer";
 
@@ -976,6 +977,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           <h2 className="font-semibold text-sm tracking-wide">Central de atendimento</h2>
           <p className="text-[11px] text-slate-400 mt-0.5">{currentGroupName} · {connectedCount} canal(is) conectado(s)</p>
         </div>
+        {profile && server !== "equipe" && <button onClick={() => setShowAutomations(true)} className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10"><Workflow size={16} /> Automações</button>}
         <button onClick={() => setShowContacts(true)} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20" title="Pesquisar contatos e iniciar conversa"><UserPlus size={16} /> Contatos</button>
         {layout === "kanban" && server !== "equipe" && <label className="relative w-full md:w-52">
           <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -1221,6 +1223,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               </button>
               {selConv && (
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {profile && <button onClick={() => setShowAutomations(true)} aria-label="Automações" title="Automações do WhatsApp" className="md:hidden p-2 rounded-lg bg-white/5 text-emerald-300"><Workflow size={17} /></button>}
                   {selConv.contacts?.id && (
                     <button
                       onClick={() => setChargeConv(selConv)}
@@ -1422,6 +1425,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         </div>
       )}
 
+      {showAutomations && profile && <MessageAutomations profile={profile} numbers={numbers} conversations={conversations.filter(c => c.status === "espera" || c.status === "atendendo").map(c => ({id:c.id,numberId:c.number_id,label:contactLabel(c.contacts)}))} initialNumber={activeNumberId ?? selConv?.number_id ?? null} onClose={() => setShowAutomations(false)} />}
       {showContacts && profile?.company_id && <ContactsPicker companyId={profile.company_id} numbers={numbers} initialNumber={activeNumberId} onSelect={openExistingContact} onNew={() => { setShowContacts(false); setShowNewChat(true); }} onClose={() => setShowContacts(false)} />}
       {showStickers && profile && <StickersPicker profile={profile} onSend={sendMedia} onClose={() => setShowStickers(false)} />}
       {showNewChat && (
