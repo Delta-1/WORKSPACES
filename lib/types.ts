@@ -204,6 +204,9 @@ export type AiConfigRow = {
 };
 
 export type Contact = {
+  saved_name?: string | null;
+  push_name?: string | null;
+  name_source?: string | null;
   id: string;
   phone: string;
   jid: string | null;
@@ -221,6 +224,10 @@ export type Contact = {
 export type ConversationStatus = "espera" | "atendendo" | "fechado" | "cancelado";
 
 export type Conversation = {
+  accepted_at?: string | null;
+  queue_entered_at?: string | null;
+  resolution?: string | null;
+  resolution_note?: string | null;
   id: string;
   company_id: string | null;
   protocol: number;
@@ -237,7 +244,7 @@ export type Conversation = {
   closed_at: string | null;
 };
 
-export type WhatsappMediaType = "image" | "audio" | "video" | "document";
+export type WhatsappMediaType = "image" | "audio" | "video" | "document" | "sticker";
 
 export type WhatsappMessageRow = {
   id: string;

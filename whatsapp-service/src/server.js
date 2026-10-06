@@ -1,3 +1,4 @@
+import { contactNamePatch } from "./contact-names.js";
 import express from "express";
 import QRCode from "qrcode";
 import fs from "fs";
@@ -458,7 +459,7 @@ async function upsertContact(phone, name = null, companyId = null, jid = null) {
   }
   if (existing) {
     const patch = {};
-    if (name && !existing.name) patch.name = name;
+    Object.assign(patch, contactNamePatch(existing, null, name));
     if (jid && !existing.jid) patch.jid = jid; // guarda o JID real p/ envio confiável
     if (Object.keys(patch).length) {
       await supabase.from("contacts").update(patch).eq("id", existing.id);
@@ -468,7 +469,7 @@ async function upsertContact(phone, name = null, companyId = null, jid = null) {
   }
   const { data } = await supabase
     .from("contacts")
-    .insert({ phone, name, company_id: companyId, jid })
+    .insert({ phone, name, push_name: name, name_source: name ? "profile" : null, company_id: companyId, jid })
     .select("*")
     .single();
   // Auto-etiqueta o contato recém-criado.
@@ -484,35 +485,27 @@ async function upsertContact(phone, name = null, companyId = null, jid = null) {
 
 // Sincroniza a agenda de contatos do WhatsApp para a tabela `contacts`,
 // para o usuário ver seus contatos assim que conectar (como no WhatsApp Web).
-async function syncContacts(list, companyId) {
-  if (!supabase || !companyId || !Array.isArray(list) || list.length === 0) return;
-  const withName = [];
-  const phoneOnly = [];
-  const seen = new Set();
+async function syncContacts(list, companyId, sock = null) {
+  if (!supabase || !companyId || !Array.isArray(list)) return;
   for (const c of list) {
-    const id = c?.id || c?.jid;
-    if (!id || !id.endsWith("@s.whatsapp.net")) continue;
-    const phone = id.split("@")[0];
-    if (!phone || seen.has(phone)) continue;
-    seen.add(phone);
-    const name = c.name || c.notify || c.verifiedName || null;
-    if (name) withName.push({ phone, name, jid: id, company_id: companyId });
-    else phoneOnly.push({ phone, jid: id, company_id: companyId });
-  }
-  try {
-    for (let i = 0; i < withName.length; i += 200) {
-      await supabase.from("contacts").upsert(withName.slice(i, i + 200), { onConflict: "company_id,phone" });
+    let jid = c?.phoneNumber || c?.id || c?.jid;
+    if (!jid || (!jid.endsWith("@s.whatsapp.net") && !jid.endsWith("@lid"))) continue;
+    if (jid.endsWith("@lid")) {
+      try { jid = await sock?.signalRepository?.lidMapping?.getPNForLID(jid) || jid; } catch { /* Keep the canonical LID when PN is unavailable. */ }
     }
-    for (let i = 0; i < phoneOnly.length; i += 200) {
-      await supabase
-        .from("contacts")
-        .upsert(phoneOnly.slice(i, i + 200), { onConflict: "company_id,phone", ignoreDuplicates: true });
+    const phone = jid.split("@")[0];
+    // Look up both aliases: contact updates may arrive by LID while messages use PN.
+    let { data: existing } = await supabase.from("contacts").select("*").eq("company_id", companyId).eq("phone", phone).maybeSingle();
+    if (!existing && (c.lid || c.id !== jid)) {
+      const { data } = await supabase.from("contacts").select("*").eq("company_id", companyId).eq("jid", c.lid || c.id).maybeSingle();
+      existing = data;
     }
-    if (withName.length || phoneOnly.length) {
-      console.log(`Synced ${withName.length + phoneOnly.length} WhatsApp contacts`);
-    }
-  } catch (err) {
-    console.error("Contact sync failed:", err);
+    const patch = contactNamePatch(existing, c.name, c.notify || c.verifiedName);
+    const row = { ...patch, jid: c.lid || jid };
+    const { error } = existing
+      ? await supabase.from("contacts").update(row).eq("id", existing.id)
+      : await supabase.from("contacts").upsert({ ...row, company_id: companyId, phone }, { onConflict: "company_id,phone" });
+    if (error) console.error("Contact sync failed:", error.message);
   }
 }
 
@@ -621,6 +614,8 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
     .from("conversations")
     .select("*")
     .eq("contact_id", contactId)
+    .eq("company_id", companyId)
+    .eq("number_id", numberId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -3230,16 +3225,16 @@ async function startSession(numberId) {
     // antigas em novos atendimentos.
     sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null);
+      await syncContacts(contacts, number?.company_id ?? null, sock);
       await syncRecentOutgoingHistory(sock, numberId, messages);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null);
+      await syncContacts(contacts, number?.company_id ?? null, sock);
     });
     sock.ev.on("contacts.update", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null);
+      await syncContacts(contacts, number?.company_id ?? null, sock);
     });
 
     sock.ev.on("connection.update", async (update) => {
@@ -3342,7 +3337,7 @@ async function startSession(numberId) {
             if (mediaKind === "audio") audioBuffer = buffer; // guarda p/ transcrever
             if (mediaKind === "image") imageBuffer = buffer; // guarda p/ visão do bot
             const url = await uploadMedia(buffer, node?.mimetype || null, "in");
-            if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
+            if (url) media = { type: ehFigurinha ? "sticker" : mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
           } catch (err) {
             console.error("Failed to download incoming media:", err);
           }
@@ -3788,7 +3783,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
           { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
         );
         const url = await uploadMedia(buffer, node?.mimetype || null, "out");
-        if (url) media = { type: mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
+        if (url) media = { type: ehFigurinha ? "sticker" : mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
       } catch (err) {
         console.error("Failed to download outgoing echo media:", err);
       }
@@ -3832,10 +3827,11 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
   }
 }
 
-async function sendMessage(numberId, to, text, senderId, media, messageId = null) {
+async function sendMessage(numberId, to, text, senderId, media, messageId = null, authorizedConversationId = null) {
   // Se o número informado não estiver conectado, usa qualquer número conectado.
   let s = numberId ? getSession(numberId) : null;
   if (!s || !s.sock || s.state.status !== "connected") {
+    if (numberId) throw new Error("Este número não está conectado. Reconecte antes de enviar.");
     const fid = firstConnectedNumberId();
     if (!fid) throw new Error("Nenhum número de WhatsApp conectado.");
     numberId = fid;
@@ -3871,36 +3867,21 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
   const { number } = await getNumberConfig(numberId);
   const cid = number?.company_id ?? null;
   const contact = await upsertContact(phone, null, cid, jid);
-  let conversationId = null;
-  if (contact) {
-    // Só REABRE uma conversa fechada quando quem enviou foi um HUMANO (senderId).
-    // Mensagens do sistema/robô (ex.: encerramento por inatividade, senderId nulo)
-    // NÃO reabrem — senão o sweep fechava, mandava, reabria e mandava de novo num
-    // loop infinito.
-    const { data: convo } = await supabase
-      .from("conversations")
-      .select("id")
-      .eq("contact_id", contact.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  let conversationId = authorizedConversationId;
+  if (authorizedConversationId) {
+    const { data: current } = await supabase.from("conversations").select("*").eq("id", authorizedConversationId).eq("company_id", cid).eq("number_id", numberId).maybeSingle();
+    if (!current || current.assignee_id !== senderId || current.status !== "atendendo") throw new Error("Atendimento transferido ou finalizado. Atualize a conversa.");
+  } else if (contact) {
+    const { data: convo } = await supabase.from("conversations").select("id,assignee_id,status")
+      .eq("contact_id", contact.id).eq("company_id", cid).eq("number_id", numberId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (senderId && convo?.assignee_id && convo.assignee_id !== senderId) throw new Error("Outro atendente já assumiu esta conversa.");
     conversationId = convo?.id ?? null;
     if (!conversationId) {
-      const { data: created } = await supabase
-        .from("conversations")
-        .insert({ contact_id: contact.id, status: "atendendo", number_id: numberId, sector_id: number?.sector_id ?? null, company_id: cid })
-        .select("id")
-        .single();
+      const { data: created } = await supabase.from("conversations").insert({contact_id:contact.id,status:"espera",number_id:numberId,sector_id:number?.sector_id??null,company_id:cid}).select("id").single();
       conversationId = created?.id ?? null;
     }
   }
-  // Se a web já mandou o messageId, a linha JÁ está salva (log-first do lado do
-  // site); aqui só carimba o wa_id depois de enviar. Senão, grava agora.
   let loggedId = messageId;
-  if (conversationId && !messageId) {
-    loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid);
-  }
-
   let sent = null;
   try {
     if (media?.url) {
@@ -3933,6 +3914,7 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     // pelo messageId (envio pelo site), atualiza também os dados de mídia.
     if (sent?.key?.id) {
       webSentWaIds.add(sent.key.id);
+      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id);
       setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
       if (loggedId) {
         const patch = { wa_id: sent.key.id };
@@ -3942,13 +3924,6 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     }
   }
 
-  // Humano assumiu → "Sendo atendido" (reabre se estava fechada; bot fica quieto).
-  if (senderId && conversationId) {
-    await supabase
-      .from("conversations")
-      .update({ status: "atendendo", assignee_id: senderId, closed_at: null, bot_paused: true })
-      .eq("id", conversationId);
-  }
   return sent;
 }
 
@@ -4046,12 +4021,12 @@ app.post("/groups/sync", async (req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { numberId, to, text, senderId, media, messageId } = req.body ?? {};
+  const { numberId, to, text, senderId, media, messageId, conversationId } = req.body ?? {};
   if (!to || (!text && !media?.url)) {
     return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
   }
   try {
-    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null);
+    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null, conversationId ? String(conversationId) : null);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
@@ -4292,6 +4267,7 @@ async function attendanceSweep() {
     // cliente recebe "como não tivemos retorno" várias vezes (o loop que ele viu).
     const farewellDone = new Set();
     for (const conv of stale || []) {
+      if (conv.assignee_id) continue; // Human must explicitly finish with a resolution.
       // GRUPO nunca é "atendimento": não se encerra por inatividade e, acima de
       // tudo, ninguém quer o bot anunciando despedida no grupo da empresa.
       const { data: ct } = await supabase.from("contacts").select("is_group").eq("id", conv.contact_id).maybeSingle();

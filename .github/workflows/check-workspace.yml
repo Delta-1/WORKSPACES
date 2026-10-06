@@ -1,0 +1,29 @@
+name: Check Workspace
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Attendance and contact tests
+        run: node --experimental-strip-types --test tests/attendance-metrics.test.mjs whatsapp-service/test/*.test.js
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Check messaging components
+        run: npx eslint components/messages components/tabs/ReportsTab.tsx components/tabs/MessagesTab.tsx app/api/whatsapp/send/route.ts lib/attendance.ts lib/message-auth.ts
+      - name: Service and desktop syntax
+        run: |
+          node --check whatsapp-service/src/server.js
+          node --check desktop-app/src/main.cjs
+      - name: Production build
+        run: npm run build
