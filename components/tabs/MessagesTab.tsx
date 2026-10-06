@@ -937,6 +937,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const kanbanTodo = visibleConvs.filter((c) => c.status === "espera" || (!c.status && (unread[c.id] || 0) > 0));
   const kanbanDone = visibleConvs.filter(c => c.status === "fechado" || c.status === "cancelado");
   const kanbanDoing = visibleConvs.filter((c) => c.status === "atendendo");
+  const canViewFinished = profile?.role === "gestor" || profile?.role === "gerente";
+  const kanbanColumns: [string, ConvRow[], string][] = [
+    ["A fazer", kanbanTodo, "bg-amber-500"],
+    ["Em andamento", kanbanDoing, "bg-emerald-500"],
+    ...(canViewFinished ? [["Finalizados", kanbanDone, "bg-sky-500"] as [string, ConvRow[], string]] : []),
+  ];
+  const activeMobileQueue = kanbanColumns.some(([title]) => title === mobileQueue) ? mobileQueue : "A fazer";
 
   const currentGroupName = activeNumberId
     ? numbers.find((n) => n.id === activeNumberId)?.label ?? "Número"
@@ -1156,11 +1163,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       {layout === "kanban" && server !== "equipe" && (
         <div className={`min-w-0 min-h-0 md:max-w-[55%] flex-1 md:flex-none flex flex-col border-r border-white/10 bg-[#0e1727] ${hasSel ? "hidden md:flex" : "flex"}`}>
           <div className="md:hidden flex gap-1 p-2 border-b border-white/10" role="tablist" aria-label="Etapas do atendimento">
-            {([["A fazer", kanbanTodo], ["Em andamento", kanbanDoing], ["Finalizados", kanbanDone]] as [string, ConvRow[]][]).map(([title, list]) => <button key={title} role="tab" aria-selected={mobileQueue === title} onClick={() => setMobileQueue(title)} className={`flex-1 rounded-lg px-1 py-3 text-[11px] font-semibold ${mobileQueue === title ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>{title} <span className="opacity-70">{list.length}</span></button>)}
+            {kanbanColumns.map(([title, list]) => <button key={title} role="tab" aria-selected={activeMobileQueue === title} onClick={() => setMobileQueue(title)} className={`flex-1 rounded-lg px-1 py-3 text-[11px] font-semibold ${activeMobileQueue === title ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>{title} <span className="opacity-70">{list.length}</span></button>)}
           </div>
           <div className="flex-1 min-h-0 flex overflow-x-auto">
-          {([["A fazer", kanbanTodo, "bg-amber-500"], ["Em andamento", kanbanDoing, "bg-emerald-500"], ["Finalizados", kanbanDone, "bg-sky-500"]] as [string, ConvRow[], string][]).map(([title, list, dot]) => (
-            <div key={title} className={`w-full md:w-52 lg:w-60 min-h-0 shrink-0 flex-col border-r border-white/10 last:border-r-0 ${mobileQueue === title ? "flex" : "hidden md:flex"}`}>
+          {kanbanColumns.map(([title, list, dot]) => (
+            <div key={title} className={`w-full md:w-52 lg:w-60 min-h-0 shrink-0 flex-col border-r border-white/10 last:border-r-0 ${activeMobileQueue === title ? "flex" : "hidden md:flex"}`}>
               <div className="hidden md:flex px-4 py-4 border-b border-white/10 items-center gap-2 shrink-0">
                 <span className={`w-2 h-2 rounded-full ${dot}`} />
                 <span className="text-xs font-semibold">{title}</span>
