@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import ContactsPicker from "@/components/messages/ContactsPicker";
 import AttendanceActions from "@/components/messages/AttendanceActions";
 import StickersPicker, { saveReceivedSticker } from "@/components/messages/StickersPicker";
@@ -90,6 +90,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [numbers, setNumbers] = useState<WhatsappNumber[]>([]);
   const [query, setQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
+  const [mobileQueue, setMobileQueue] = useState("A fazer");
   const [showMore, setShowMore] = useState(false); // celular: menu "+" (emoji/anexo/app)
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -920,7 +921,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Cartão de conversa reutilizável (lista clássica e colunas do Kanban).
   function convCard(c: ConvRow, compact = false) {
     return (
-      <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-2 py-1.5 px-2 text-left rounded-lg cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
+      <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-2 py-3 px-3 text-left rounded-xl border border-white/5 bg-[#121e30] cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
         <ConvAvatar c={c.contacts} />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
@@ -962,11 +963,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   return (
-    // No CELULAR, com uma conversa aberta, o chat vira TELA CHEIA por cima do dock
-    // de apps (que ficava na frente da barra de escrever). No desktop, nada muda.
-    <div className={`h-full flex overflow-hidden rounded-2xl liquid-glass ${hasSel ? "max-md:fixed max-md:inset-0 max-md:z-[80] max-md:rounded-none max-md:h-[100dvh] max-md:!bg-[#0a0e16] max-md:backdrop-blur-none" : ""}`}>
+    <div className="h-full min-h-0 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] shadow-xl max-md:rounded-none">
+      <div className={`shrink-0 border-b border-white/10 bg-[#101a2b] px-4 py-3 flex flex-wrap items-center gap-3 ${hasSel ? "hidden md:flex" : "flex"}`}>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-semibold text-sm tracking-wide">Central de atendimento</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">{currentGroupName} · {connectedCount} canal(is) conectado(s)</p>
+        </div>
+        <button onClick={() => setShowContacts(true)} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20" title="Pesquisar contatos e iniciar conversa"><UserPlus size={16} /> Contatos</button>
+        {layout === "kanban" && server !== "equipe" && <label className="relative w-full md:w-52">
+          <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+          <input aria-label="Pesquisar atendimentos" value={query} onChange={e => setQuery(e.target.value)} placeholder="Nome ou telefone" className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs outline-none focus:border-emerald-500/60" />
+        </label>}
+      </div>
+      <div className="flex-1 min-h-0 flex max-md:flex-col overflow-hidden">
       {/* Rail de servidores (grupos ficam separados aqui) */}
-      <div className={`w-16 shrink-0 bg-black/30 flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
+      <div className={`w-full md:w-16 shrink-0 bg-[#0e1727] flex-row md:flex-col items-center px-2 md:px-0 py-2 md:py-3 gap-2 border-b md:border-b-0 md:border-r border-white/10 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
           <MessageSquare size={20} />
         </ServerIcon>
@@ -993,11 +1004,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         {!isEmployee && <ServerIcon active={showConnect} onClick={() => setShowConnect(true)} title="Adicionar / conectar número de WhatsApp">
           <Plug size={16} />
         </ServerIcon>}
-        <div className="w-8 h-px bg-white/10 my-1" />
+        <div className="hidden md:block w-8 h-px bg-white/10 my-1" />
         <ServerIcon active={server === "equipe"} onClick={() => setServer("equipe")} title="Equipe (interno)">
           <Users size={20} />
         </ServerIcon>
-        <div className="w-8 h-px bg-white/10 my-1" />
+        <div className="hidden md:block w-8 h-px bg-white/10 my-1" />
         {groups.map((g) => (
           <ServerIcon key={g.id} active={server === g.id} onClick={() => setServer(g.id)} title={g.name}>
             <span className="text-sm font-bold">{g.name.charAt(0).toUpperCase()}</span>
@@ -1006,7 +1017,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         <ServerIcon active={false} onClick={newGroup} title="Novo grupo">
           <Plus size={18} />
         </ServerIcon>
-        <div className="mt-auto pt-2 border-t border-white/10 w-full flex flex-col items-center gap-1">
+        <div className="ml-auto md:ml-0 md:mt-auto md:pt-2 md:border-t border-white/10 md:w-full flex flex-row md:flex-col items-center gap-1">
           <button onClick={() => setShowBilling(true)} title="Cobranças pendentes" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-300 hover:bg-white/10 cursor-pointer">
             <DollarSign size={18} />
           </button>
@@ -1020,7 +1031,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       </div>
 
       {/* Coluna de canais/contatos (clássico e CRM) */}
-      <div className={`w-full md:w-64 shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${(layout === "kanban" && server !== "equipe") ? "hidden" : hasSel ? "hidden md:flex" : "flex"}`}>
+      <div className={`w-full md:w-72 lg:w-80 min-h-0 flex-1 md:flex-none shrink-0 flex-col overflow-hidden border-r border-white/10 bg-black/10 ${(layout === "kanban" && server !== "equipe") ? "hidden" : hasSel ? "hidden md:flex" : "flex"}`}>
         <div className="p-3 border-b border-white/10 space-y-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold truncate">{server === "equipe" ? "Equipe" : currentGroupName}</h3>
@@ -1107,7 +1118,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           {server !== "equipe" &&
             visibleConvs.map((c) => (
               <div key={c.id} className={`group flex items-center gap-2 px-2 mx-1 rounded-lg hover:bg-white/5 ${selConvId === c.id ? "bg-emerald-950/30" : ""}`}>
-                <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-1.5 text-left cursor-pointer">
+                <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-3 text-left cursor-pointer">
                   <ConvAvatar c={c.contacts} />
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
@@ -1141,33 +1152,39 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         </div>
       </div>
 
-      {/* Layout KANBAN: colunas de atendimento (A fazer / Em andamento) */}
+      {/* No celular, cada etapa ocupa a tela; no desktop, o quadro mantém as colunas. */}
       {layout === "kanban" && server !== "equipe" && (
-        <div className={`min-w-0 md:max-w-[55%] flex-1 md:flex-none flex gap-0 overflow-x-auto border-r border-white/10 bg-black/10 ${hasSel ? "hidden md:flex" : "flex"}`}>
+        <div className={`min-w-0 min-h-0 md:max-w-[55%] flex-1 md:flex-none flex flex-col border-r border-white/10 bg-[#0e1727] ${hasSel ? "hidden md:flex" : "flex"}`}>
+          <div className="md:hidden flex gap-1 p-2 border-b border-white/10" role="tablist" aria-label="Etapas do atendimento">
+            {([["A fazer", kanbanTodo], ["Em andamento", kanbanDoing], ["Finalizados", kanbanDone]] as [string, ConvRow[]][]).map(([title, list]) => <button key={title} role="tab" aria-selected={mobileQueue === title} onClick={() => setMobileQueue(title)} className={`flex-1 rounded-lg px-1 py-3 text-[11px] font-semibold ${mobileQueue === title ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>{title} <span className="opacity-70">{list.length}</span></button>)}
+          </div>
+          <div className="flex-1 min-h-0 flex overflow-x-auto">
           {([["A fazer", kanbanTodo, "bg-amber-500"], ["Em andamento", kanbanDoing, "bg-emerald-500"], ["Finalizados", kanbanDone, "bg-sky-500"]] as [string, ConvRow[], string][]).map(([title, list, dot]) => (
-            <div key={title} className="w-[62vw] sm:w-56 shrink-0 flex flex-col border-r border-white/10 last:border-r-0">
-              <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2 shrink-0">
+            <div key={title} className={`w-full md:w-52 lg:w-60 min-h-0 shrink-0 flex-col border-r border-white/10 last:border-r-0 ${mobileQueue === title ? "flex" : "hidden md:flex"}`}>
+              <div className="hidden md:flex px-4 py-4 border-b border-white/10 items-center gap-2 shrink-0">
                 <span className={`w-2 h-2 rounded-full ${dot}`} />
-                <span className="text-xs font-bold">{title}</span>
-                <span className="text-[10px] text-gray-500">({list.length})</span>
+                <span className="text-xs font-semibold">{title}</span>
+                <span className="ml-auto rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-slate-400">{list.length}</span>
               </div>
-              <div className="flex-1 overflow-y-auto custom-scroll p-1.5 space-y-1.5">
-                {list.length === 0 ? <p className="text-[11px] text-gray-600 text-center py-6">Vazio</p> : list.map((c) => convCard(c, true))}
+              <div className="flex-1 overflow-y-auto custom-scroll p-3 space-y-2">
+                {list.length === 0 ? <p className="text-xs text-slate-500 text-center py-8">Nenhum atendimento nesta etapa.</p> : list.map((c) => convCard(c, true))}
               </div>
             </div>
           ))}
+          </div>
         </div>
       )}
 
       {/* Chat (clássico e kanban). No CRM, o espaço vazio vira o construtor de fluxo. */}
-      <div className={`flex-1 flex-col overflow-hidden bg-[#0b0f16]/40 ${hasSel ? "flex" : "hidden md:flex"}`}>
+      <div className={`flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-[#0b1220] ${hasSel ? "flex" : "hidden md:flex"}`}>
         {!selConv && !selColleague ? (
           layout === "crm" ? (
             <CrmFlowArea companyId={profile?.company_id ?? null} activeNumberId={activeNumberId} numbers={numbers} />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
               <MessageSquare size={40} className="opacity-30" />
-              <p className="text-sm">Selecione uma conversa.</p>
+              <p className="text-base font-semibold text-slate-300">Pronto para atender</p>
+              <p className="text-xs text-slate-500">Selecione um atendimento ou pesquise um contato para começar.</p>
             </div>
           )
         ) : (
@@ -1287,19 +1304,25 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 <Users size={13} /> {lockMsg}
               </div>
             )}
-            {selConv && profile && <button disabled={!!lockMsg || sending} onClick={() => setShowStickers(true)} className="px-3 py-1 text-xs text-emerald-300 text-left">☺ Figurinhas</button>}
             <div className="p-2 md:p-3 border-t border-white/10 flex items-center gap-1.5 md:gap-2 shrink-0 relative pb-[max(0.5rem,env(safe-area-inset-bottom))]">
               {showEmoji && (
-                <div className="absolute bottom-full left-2 mb-2 w-72 max-w-[calc(100vw-1.5rem)] max-h-52 overflow-y-auto custom-scroll bg-[#111826] border border-white/10 rounded-xl p-2 grid grid-cols-8 gap-0.5 shadow-2xl z-20">
+                <div className="absolute bottom-full left-2 mb-2 w-72 max-w-[calc(100vw-1.5rem)] bg-[#111826] border border-white/10 rounded-xl p-2 shadow-2xl z-20">
+                  <div className="flex gap-1 border-b border-white/10 pb-2 mb-2">
+                    <span className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-emerald-500/15 py-2 text-xs font-semibold text-emerald-300"><Smile size={17} /> Emojis</span>
+                    {selConv && profile && <button aria-label="Abrir figurinhas" disabled={!!lockMsg || sending} onClick={() => { setShowEmoji(false); setShowStickers(true); }} className="flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"><Sticker size={17} /> Figurinhas</button>}
+                  </div>
+                  <div className="max-h-48 overflow-y-auto custom-scroll grid grid-cols-8 gap-0.5">
                   {EMOJIS.map((e) => (
                     <button
                       key={e}
+                      aria-label={`Inserir ${e}`}
                       onClick={() => { setInput((v) => v + e); setShowEmoji(false); }}
                       className="text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 cursor-pointer"
                     >
                       {e}
                     </button>
                   ))}
+                  </div>
                 </div>
               )}
 
@@ -1330,7 +1353,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               </div>
 
               {/* DESKTOP: botões inline */}
-              <button onClick={() => setShowEmoji((v) => !v)} className={`hidden md:inline-flex p-2.5 rounded-lg cursor-pointer ${showEmoji ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}>
+              <button aria-label="Emojis e figurinhas" aria-expanded={showEmoji} onClick={() => { setShowEmoji((v) => !v); setShowMore(false); }} className={`inline-flex p-2.5 rounded-lg cursor-pointer ${showEmoji ? "bg-white/10 text-emerald-400" : "hover:bg-white/10 text-gray-300"}`}>
                 <Smile size={18} />
               </button>
               {selConv && (
@@ -1366,6 +1389,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             </div>
           </>
         )}
+      </div>
+
       </div>
 
       {/* Configurações / conectar WhatsApp (mesmo gerenciador de números) */}
@@ -2031,10 +2056,12 @@ function ContactProfileModal({
 
 function ServerIcon({ active, onClick, title, children, badge = 0 }: { active: boolean; onClick: () => void; title: string; children: React.ReactNode; badge?: number }) {
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         onClick={onClick}
         title={title}
+        aria-label={title}
+        aria-pressed={active}
         className={`w-11 h-11 rounded-2xl flex items-center justify-center cursor-pointer transition-all ${
           active ? "bg-emerald-600 text-white rounded-xl" : "bg-white/5 text-gray-400 hover:bg-emerald-600/30 hover:text-white hover:rounded-xl"
         }`}

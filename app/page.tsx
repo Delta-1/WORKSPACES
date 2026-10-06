@@ -629,7 +629,7 @@ export default function Home() {
   const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, `solo_${id}`, "width=1100,height=760"); } catch {} };
 
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
-  const mainPad =
+  const mainPad = tab === "mensagens" ? "" :
     dockPosition === "top" ? "pt-24 sm:pt-28" :
     dockPosition === "left" ? "pl-20 sm:pl-24" :
     dockPosition === "right" ? "pr-20 sm:pr-24" :
@@ -778,11 +778,11 @@ export default function Home() {
   return (
     <div className="workspace-shell h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
       <header className="workspace-header h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {company.logoDataUrl ? (
             <img
               src={company.logoDataUrl}
-              style={{ width: company.logoSize, height: company.logoSize }}
+              style={{ width: tab === "mensagens" ? 32 : company.logoSize, height: tab === "mensagens" ? 32 : company.logoSize }}
               className="rounded-lg object-cover shrink-0"
               alt="Logo"
             />
@@ -791,18 +791,19 @@ export default function Home() {
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src="/icon.png"
-              style={{ width: company.logoSize, height: company.logoSize }}
+              style={{ width: tab === "mensagens" ? 32 : company.logoSize, height: tab === "mensagens" ? 32 : company.logoSize }}
               className="rounded-lg object-cover shrink-0"
               alt="Workspace"
             />
           )}
-          <div>
-            <h2 className="font-bold leading-tight">{company.name}</h2>
-            <p className="text-xs text-gray-500">{company.description || "Workspace Multi-Empresa"}</p>
+          <div className="min-w-0">
+            <h2 className="font-bold leading-tight truncate">{company.name}</h2>
+            <p className={`text-xs text-gray-500 ${tab === "mensagens" ? "hidden sm:block" : ""}`}>{company.description || "Workspace Multi-Empresa"}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-        <EnvironmentSwitcher />
+        {tab === "mensagens" && <button onClick={() => setDrawerOpen(true)} title="Abrir aplicativos do Workspace" className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2 text-xs hover:bg-white/10"><LayoutGrid size={18} /><span className="hidden sm:inline">Aplicativos</span></button>}
+        <EnvironmentSwitcher compact={tab === "mensagens"} />
         <ProfileMenu
           name={displayName}
           role={ROLE_LABEL[role]}
@@ -828,7 +829,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className={`workspace-main flex-1 overflow-hidden p-3 sm:p-6 ${mainPad}`}>
+      <main className={`workspace-main flex-1 min-h-0 overflow-hidden ${tab === "mensagens" ? "p-0 md:p-3" : "p-3 sm:p-6"} ${mainPad}`}>
         {/* key={tab} faz a tela re-animar a cada troca de app. A barreira
             (também com key) contém um erro do app para não derrubar o site,
             e trocar de aba limpa o erro anterior. */}
@@ -860,7 +861,7 @@ export default function Home() {
       {profile && <AutoDriveSync />}
       {tutorial && <TutorialOverlay appId={tutorial} onClose={() => marcarTutorial(tutorial)} />}
 
-      <Dock
+      {tab !== "mensagens" && <Dock
         apps={dockApps}
         wheelApps={visibleApps}
         active={tab}
@@ -876,7 +877,7 @@ export default function Home() {
         shortcuts={pinnedShortcuts}
         onShortcut={openShortcut}
         onAddShortcut={() => setShortcutCreatorOpen(true)}
-      />
+      />}
       <AppDrawer
         apps={visibleApps}
         open={drawerOpen}
