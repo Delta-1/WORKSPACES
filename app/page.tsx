@@ -17,7 +17,7 @@ import AppDrawer from "@/components/AppDrawer";
 import ProfileMenu from "@/components/ProfileMenu";
 import TVModeOverlay from "@/components/TVModeOverlay";
 import AgentModeOverlay from "@/components/AgentModeOverlay";
-import MobileAppLauncher from "@/components/MobileAppLauncher";
+import AppLauncher from "@/components/AppLauncher";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
@@ -157,6 +157,7 @@ export default function Home() {
   });
   const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string; numberId?: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showOverview, setShowOverview] = useState(false);
   const [shortcutCreatorOpen, setShortcutCreatorOpen] = useState(false);
   const [shortcuts, setShortcuts] = useState<WorkspaceShortcut[]>([]);
   const [copilotPushToTalk, setCopilotPushToTalk] = useState(false);
@@ -630,8 +631,9 @@ export default function Home() {
   const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, `solo_${id}`, "width=1100,height=760"); } catch {} };
 
   function abrirAplicativos() {
-    if (window.matchMedia("(max-width: 767px)").matches) { setTab("inicio"); setDrawerOpen(false); }
-    else setDrawerOpen(true);
+    setShowOverview(false);
+    setTab("inicio");
+    setDrawerOpen(false);
   }
 
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
@@ -647,7 +649,7 @@ export default function Home() {
   // fonte só evita as duas versões divergirem.
   const renderApp = (appId: string): React.ReactNode => {
     switch (appId) {
-      case "inicio": return <><div className="md:hidden h-full"><MobileAppLauncher apps={visibleApps} onSelect={setTab} /></div><div className="hidden md:block h-full"><HomeTab companyName={company.name} profile={profile} language={appLanguage} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} /></div></>;
+      case "inicio": return showOverview ? <div className="h-full flex flex-col gap-4"><button onClick={() => setShowOverview(false)} className="self-start min-h-11 rounded-xl border border-white/10 px-4 text-sm hover:bg-white/5">Voltar aos aplicativos</button><div className="flex-1 min-h-0"><HomeTab companyName={company.name} profile={profile} language={appLanguage} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} /></div></div> : <AppLauncher apps={visibleApps} onSelect={setTab} onOpenOverview={() => setShowOverview(true)} />;
       case "mundo": return <WorldTab language={appLanguage} />;
       case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
       case "kanban": return <KanbanTab profile={profile} />;
