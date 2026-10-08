@@ -20,7 +20,7 @@ jobs:
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Check messaging components
-        run: npx eslint components/messages components/tabs/ReportsTab.tsx components/tabs/MessagesTab.tsx app/api/whatsapp/send/route.ts app/api/whatsapp/media lib/whatsapp-media.ts lib/attendance.ts lib/message-auth.ts
+        run: npx eslint components/NewConversationNotifier.tsx components/MobileAppLauncher.tsx components/tabs/HomeTab.tsx components/messages components/tabs/ReportsTab.tsx components/tabs/MessagesTab.tsx app/api/whatsapp/send/route.ts app/api/whatsapp/media lib/whatsapp-media.ts lib/attendance.ts lib/message-auth.ts
       - name: Service and desktop syntax
         run: |
           node --check whatsapp-service/src/server.js

@@ -17,6 +17,7 @@ import AppDrawer from "@/components/AppDrawer";
 import ProfileMenu from "@/components/ProfileMenu";
 import TVModeOverlay from "@/components/TVModeOverlay";
 import AgentModeOverlay from "@/components/AgentModeOverlay";
+import MobileAppLauncher from "@/components/MobileAppLauncher";
 import HomeTab from "@/components/tabs/HomeTab";
 import ChatTab from "@/components/tabs/ChatTab";
 import FilesGraphTab from "@/components/tabs/FilesGraphTab";
@@ -62,7 +63,7 @@ import type { Company, Profile, Role } from "@/lib/types";
 import { detectBrowserLanguage, normalizeAppLanguage, rememberLanguage, type AppLanguage } from "@/lib/language";
 
 type AppDef = { id: string; label: string; icon: typeof Bot; accent: string; roles: Role[] };
-export type DockPosition = "bottom" | "top" | "left" | "right";
+export type DockPosition = "hidden" | "bottom" | "top" | "left" | "right";
 export type OsTheme = "workspace" | "mac" | "windows" | "linux";
 export type AnimStyle = "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
 
@@ -138,7 +139,7 @@ export default function Home() {
   // após entrar; os de app abrem na primeira vez que a pessoa abre aquele app.
   const [tutorial, setTutorial] = useState<string | null>(null);
   // A barra de apps pode ir para qualquer lado — preferência de cada pessoa.
-  const [dockPosition, setDockPosition] = useState<DockPosition>("bottom");
+  const [dockPosition, setDockPosition] = useState<DockPosition>("hidden");
   const [osTheme, setOsTheme] = useState<OsTheme>("workspace");
   const [animStyle, setAnimStyle] = useState<AnimStyle>("workspace");
   const [remoteDesktopAvailable, setRemoteDesktopAvailable] = useState(true);
@@ -154,7 +155,7 @@ export default function Home() {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("solo");
   });
-  const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string } | null>(null);
+  const [msgTarget, setMsgTarget] = useState<{ phone: string; name: string; numberId?: string } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [shortcutCreatorOpen, setShortcutCreatorOpen] = useState(false);
   const [shortcuts, setShortcuts] = useState<WorkspaceShortcut[]>([]);
@@ -538,8 +539,8 @@ export default function Home() {
       /* ignore */
     }
     try {
-      const p = localStorage.getItem("dock:pos") as DockPosition | null;
-      if (p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
+      const p = localStorage.getItem("dock:position:v2") as DockPosition | null;
+      if (p === "hidden" || p === "bottom" || p === "top" || p === "left" || p === "right") setDockPosition(p);
       const os = localStorage.getItem("os:theme") as OsTheme | null;
       if (os === "workspace" || os === "mac" || os === "windows" || os === "linux") setOsTheme(os);
       const a = localStorage.getItem("anim:style") as AnimStyle | null;
@@ -607,12 +608,12 @@ export default function Home() {
     const label = APPS.find((a) => a.id === id)?.label ?? id;
     setAppMenu({ id, label, x, y, fixado: (validQuick.length ? validQuick : dockApps.map((a) => a.id)).includes(id) });
   };
-  const mudarDock = (p: DockPosition) => { setDockPosition(p); try { localStorage.setItem("dock:pos", p); } catch {} };
+  const mudarDock = (p: DockPosition) => { setDockPosition(p); try { localStorage.setItem("dock:position:v2", p); } catch {} };
   const mudarOsTheme = (next: OsTheme) => {
     setOsTheme(next);
     try { localStorage.setItem("os:theme", next); } catch {}
     // Cada tema já nasce com a disposição que lembra o sistema escolhido.
-    mudarDock(next === "linux" ? "left" : "bottom");
+    if (dockPosition !== "hidden") mudarDock(next === "linux" ? "left" : "bottom");
     mudarAnim(next);
   };
   const abrirJanela = (id: string) => {
@@ -628,8 +629,13 @@ export default function Home() {
   // logada e mostra só aquele app (modo ?solo=).
   const abrirEmMonitor = (id: string) => { try { window.open(`${window.location.pathname}?solo=${id}`, `solo_${id}`, "width=1100,height=760"); } catch {} };
 
+  function abrirAplicativos() {
+    if (window.matchMedia("(max-width: 767px)").matches) { setTab("inicio"); setDrawerOpen(false); }
+    else setDrawerOpen(true);
+  }
+
   // Onde a barra flutua decide de que lado o conteúdo ganha respiro.
-  const mainPad = tab === "mensagens" ? "" :
+  const mainPad = tab === "mensagens" || dockPosition === "hidden" ? "" :
     dockPosition === "top" ? "pt-24 sm:pt-28" :
     dockPosition === "left" ? "pl-20 sm:pl-24" :
     dockPosition === "right" ? "pr-20 sm:pr-24" :
@@ -641,7 +647,7 @@ export default function Home() {
   // fonte só evita as duas versões divergirem.
   const renderApp = (appId: string): React.ReactNode => {
     switch (appId) {
-      case "inicio": return <HomeTab companyName={company.name} profile={profile} language={appLanguage} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} />;
+      case "inicio": return <><div className="md:hidden h-full"><MobileAppLauncher apps={visibleApps} onSelect={setTab} /></div><div className="hidden md:block h-full"><HomeTab companyName={company.name} profile={profile} language={appLanguage} onOpenTV={() => setShowTV(true)} onOpenAgent={openAgentMode} onOpenWorld={() => setTab("mundo")} /></div></>;
       case "mundo": return <WorldTab language={appLanguage} />;
       case "organograma": return <OrgChartTab canEdit={role === "gestor"} profile={profile} />;
       case "kanban": return <KanbanTab profile={profile} />;
@@ -777,7 +783,7 @@ export default function Home() {
 
   return (
     <div className="workspace-shell h-screen [height:100dvh] w-screen flex flex-col overflow-hidden">
-      <header className="workspace-header h-16 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b border-white/5">
+      <header className="workspace-header h-16 px-2 sm:px-6 flex items-center justify-between gap-2 shrink-0 border-b border-white/5">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {company.logoDataUrl ? (
             <img
@@ -798,12 +804,13 @@ export default function Home() {
           )}
           <div className="min-w-0">
             <h2 className="font-bold leading-tight truncate">{company.name}</h2>
-            <p className={`text-xs text-gray-500 ${tab === "mensagens" ? "hidden sm:block" : ""}`}>{company.description || "Workspace Multi-Empresa"}</p>
+            <p className="text-xs text-gray-500 hidden sm:block">{company.description || "Workspace Multi-Empresa"}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-        {tab === "mensagens" && <button onClick={() => setDrawerOpen(true)} title="Abrir aplicativos do Workspace" className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2 text-xs hover:bg-white/10"><LayoutGrid size={18} /><span className="hidden sm:inline">Aplicativos</span></button>}
-        <EnvironmentSwitcher compact={tab === "mensagens"} />
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+        <button onClick={abrirAplicativos} aria-label="Abrir aplicativos do Workspace" title="Abrir aplicativos do Workspace" className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2 text-xs hover:bg-white/10"><LayoutGrid size={18} /><span className="hidden sm:inline">Aplicativos</span></button>
+        <EnvironmentSwitcher compact />
+        {profile && <NewConversationNotifier key={`${profile.company_id}:${profile.id}`} profile={profile} onOpen={(target) => { if (target) setMsgTarget(target); setTab("mensagens"); }} />}
         <ProfileMenu
           name={displayName}
           role={ROLE_LABEL[role]}
@@ -857,11 +864,10 @@ export default function Home() {
         onClose={() => setAppMenu(null)}
       />
 
-      {profile && <NewConversationNotifier onOpen={() => setTab("mensagens")} />}
       {profile && <AutoDriveSync />}
       {tutorial && <TutorialOverlay appId={tutorial} onClose={() => marcarTutorial(tutorial)} />}
 
-      {tab !== "mensagens" && <Dock
+      {tab !== "mensagens" && dockPosition !== "hidden" && <Dock
         apps={dockApps}
         wheelApps={visibleApps}
         active={tab}

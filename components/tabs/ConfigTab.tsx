@@ -114,8 +114,8 @@ export default function ConfigTab({
     themeStyle?: string;
   }) => void;
   onReplayTutorials?: () => void;
-  dockPosition?: "bottom" | "top" | "left" | "right";
-  onDockPosition?: (p: "bottom" | "top" | "left" | "right") => void;
+  dockPosition?: "hidden" | "bottom" | "top" | "left" | "right";
+  onDockPosition?: (p: "hidden" | "bottom" | "top" | "left" | "right") => void;
   osTheme?: "workspace" | "mac" | "windows" | "linux";
   onOsTheme?: (theme: "workspace" | "mac" | "windows" | "linux") => void;
   animStyle?: "workspace" | "mac" | "windows" | "linux" | "fun" | "none";
@@ -355,12 +355,13 @@ export default function ConfigTab({
               {onDockPosition && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Barra de aplicativos</label>
-                  <p className="text-[11px] text-gray-500 mb-2">Onde a barra de apps fica na tela. Clique com o botão direito num app para abri-lo em janela ou fixá-lo.</p>
-                  <div className="grid grid-cols-4 gap-2">
-                    {([["bottom", "Embaixo"], ["top", "Em cima"], ["left", "Esquerda"], ["right", "Direita"]] as const).map(([pos, label]) => (
+                  <p className="text-[11px] text-gray-500 mb-2">Por padrão, use o botão Aplicativos no cabeçalho e aproveite toda a tela. Você pode reativar a barra e escolher a posição neste aparelho.</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    {([["hidden", "Sem barra (padrão)"], ["bottom", "Embaixo"], ["top", "Em cima"], ["left", "Esquerda"], ["right", "Direita"]] as const).map(([pos, label]) => (
                       <button
                         key={pos}
                         onClick={() => onDockPosition(pos)}
+                        aria-pressed={dockPosition === pos}
                         className={`rounded-xl py-2 text-[11px] font-semibold cursor-pointer border transition-colors ${
                           dockPosition === pos ? "border-emerald-400 ring-1 ring-emerald-400/40 text-emerald-300" : "border-white/10 hover:border-white/25 text-gray-300"
                         }`}
@@ -526,11 +527,11 @@ export default function ConfigTab({
             <div className="liquid-glass rounded-2xl p-5 space-y-2 max-w-lg">
               <label className="flex items-center justify-between gap-2 cursor-pointer">
                 <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                  <Bell size={14} /> Som de "Aguardando atendimento"
+                  <Bell size={14} /> Som das notificações
                 </span>
                 <input type="checkbox" checked={!notifMuted} onChange={(e) => toggleNotif(!e.target.checked)} className="accent-emerald-600 w-4 h-4" />
               </label>
-              <p className="text-[11px] text-gray-500">Toca um som e mostra uma notificação sempre que um contato entra na fila <b>Aguardando atendimento</b> (cliente novo ou mensagem sem resposta). Desmarque para silenciar.</p>
+              <p className="text-[11px] text-gray-500">Toca um som quando chegam novas notificações. Os avisos ficam no sino no canto superior direito, com a fila de atendimento e as mensagens recentes. Desmarque para silenciar o som.</p>
 
               {onReplayTutorials && (
                 <div className="pt-3 mt-2 border-t border-white/10">

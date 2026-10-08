@@ -61,7 +61,7 @@ function ConvAvatar({ c }: { c: ConvRow["contacts"] }) {
 const contactLabel = contactDisplayName;
 // Etiqueta de status do atendimento (aparece no chat e reflete no WhatsApp).
 function StatusTag({ status, small }: { status?: string | null; small?: boolean }) {
-  const base = `${small ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} rounded-full font-semibold whitespace-nowrap`;
+  const base = `${small ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} rounded-full font-semibold whitespace-nowrap max-w-full overflow-hidden text-ellipsis inline-block align-middle`;
   if (status === "espera") return <span className={`${base} bg-amber-500/20 text-amber-300 border border-amber-500/40`}>Aguardando atendimento</span>;
   if (status === "atendendo") return <span className={`${base} bg-emerald-500/20 text-emerald-300 border border-emerald-500/40`}>Sendo atendido</span>;
   return null;
@@ -83,7 +83,7 @@ const LAYOUTS: { id: MsgLayout; label: string; desc: string }[] = [
   { id: "crm", label: "CRM (fluxo automático)", desc: "Conversas + um construtor de fluxo (estilo n8n) para automatizar o atendimento." },
 ];
 
-export default function MessagesTab({ profile, openTarget, onTargetHandled }: { profile: Profile | null; openTarget?: { phone: string; name: string } | null; onTargetHandled?: () => void }) {
+export default function MessagesTab({ profile, openTarget, onTargetHandled }: { profile: Profile | null; openTarget?: { phone: string; name: string; numberId?: string } | null; onTargetHandled?: () => void }) {
   const [server, setServer] = useState<string>("whatsapp");
   const activeNumberId = server.startsWith("wa:") ? server.slice(3) : null; // "whatsapp" | "equipe" | <groupId>
   const [conversations, setConversations] = useState<ConvRow[]>([]);
@@ -93,6 +93,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [query, setQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const [mobileQueue, setMobileQueue] = useState("A fazer");
+  const [mobileOptions, setMobileOptions] = useState(false);
   const [showMore, setShowMore] = useState(false); // celular: menu "+" (emoji/anexo/app)
   const [showConnect, setShowConnect] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -625,10 +626,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // conversa daquele telefone (cria o contato/conversa se ainda não existir).
   const handledTargetRef = useRef<string | null>(null);
   useEffect(() => {
-    const key = openTarget ? `${openTarget.phone}|${openTarget.name}` : null;
+    const key = openTarget ? `${openTarget.phone}|${openTarget.name}|${openTarget.numberId || ""}` : null;
     if (key && handledTargetRef.current !== key) {
       handledTargetRef.current = key;
-      startChat(openTarget!.phone, openTarget!.name || "");
+      startChat(openTarget!.phone, openTarget!.name || "", openTarget!.numberId);
       onTargetHandled?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -913,13 +914,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // Cartão de conversa reutilizável (lista clássica e colunas do Kanban).
   function convCard(c: ConvRow, compact = false) {
     return (
-      <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-2 py-3 px-3 text-left rounded-xl border border-white/5 bg-[#121e30] cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
+      <button key={c.id} onClick={() => openConv(c.id)} className={`w-full flex items-center gap-3 min-h-[72px] py-3 px-3 text-left rounded-xl border border-white/5 bg-[#121e30] cursor-pointer ${selConvId === c.id ? "bg-emerald-950/40 ring-1 ring-emerald-500/40" : "hover:bg-white/5"}`}>
         <ConvAvatar c={c.contacts} />
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
+          <p className="text-base md:text-[13px] font-medium truncate leading-tight">{contactLabel(c.contacts)}</p>
           {!compact && (c.status === "espera" || c.status === "atendendo" ? <div className="mt-0.5"><StatusTag status={c.status} small /></div> : <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>)}
           {c.assignee_id && <p className="text-[10px] text-emerald-300 truncate">{c.assignee_id === profile?.id ? "Você" : colleagues.find(p => p.id === c.assignee_id)?.full_name || "Outro atendente"}</p>}
-          {compact && <p className="text-[10px] text-gray-500 truncate">{c.last_message || "—"}</p>}
+          {compact && <p className="text-xs text-slate-400 truncate mt-1">{c.last_message || "—"}</p>}
         </div>
         {(unread[c.id] || 0) > 0 && <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">{unread[c.id] > 99 ? "99+" : unread[c.id]}</span>}
       </button>
@@ -961,20 +962,24 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] shadow-xl max-md:rounded-none">
       <div className={`shrink-0 border-b border-white/10 bg-[#101a2b] px-4 py-3 flex flex-wrap items-center gap-3 ${hasSel ? "hidden md:flex" : "flex"}`}>
-        <div className="flex-1 min-w-0">
-          <h2 className="font-semibold text-sm tracking-wide">Central de atendimento</h2>
+        <div className="w-full md:w-auto md:flex-1 min-w-0">
+          <h2 className="font-semibold text-base md:text-sm tracking-wide">Mensagens</h2>
           <p className="text-[11px] text-slate-400 mt-0.5">{currentGroupName} · {connectedCount} canal(is) conectado(s)</p>
         </div>
-        {profile && server !== "equipe" && <button onClick={() => setShowAutomations(true)} className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10"><Workflow size={16} /> Automações</button>}
-        <button onClick={() => setShowContacts(true)} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20" title="Pesquisar contatos e iniciar conversa"><UserPlus size={16} /> Contatos</button>
+        {profile && server !== "equipe" && <button onClick={() => setShowAutomations(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm md:text-xs font-semibold text-slate-200 hover:bg-white/10"><Workflow size={16} /><span>Automações</span></button>}
+        <button onClick={() => setShowContacts(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20" title="Pesquisar contatos e iniciar conversa"><UserPlus size={16} /> Contatos</button>
         {layout === "kanban" && server !== "equipe" && <label className="relative w-full md:w-52">
           <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-          <input aria-label="Pesquisar atendimentos" value={query} onChange={e => setQuery(e.target.value)} placeholder="Nome ou telefone" className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs outline-none focus:border-emerald-500/60" />
+          <input aria-label="Pesquisar atendimentos" value={query} onChange={e => setQuery(e.target.value)} placeholder="Nome ou telefone" className="w-full rounded-lg border border-white/10 bg-black/20 min-h-11 py-2 pl-9 pr-3 text-base md:text-xs outline-none focus:border-emerald-500/60" />
         </label>}
       </div>
       <div className="flex-1 min-h-0 flex max-md:flex-col overflow-hidden">
+      {!hasSel && <div className="md:hidden shrink-0 px-3 py-2 border-b border-white/10 space-y-2">
+        <div className="flex gap-2"><button aria-pressed={server !== "equipe"} onClick={() => setServer("whatsapp")} className={`flex-1 min-h-11 rounded-xl text-sm font-medium ${server !== "equipe" ? "bg-emerald-500/15 text-emerald-300" : "bg-white/5 text-slate-400"}`}>WhatsApp</button><button aria-pressed={server === "equipe"} onClick={() => setServer("equipe")} className={`flex-1 min-h-11 rounded-xl text-sm font-medium ${server === "equipe" ? "bg-emerald-500/15 text-emerald-300" : "bg-white/5 text-slate-400"}`}>Equipe</button><div className="relative"><button aria-label="Opções do Mensagens" aria-expanded={mobileOptions} onClick={() => setMobileOptions(v => !v)} className="min-h-11 min-w-11 rounded-xl bg-white/5 grid place-items-center"><MoreVertical size={20}/></button>{mobileOptions && <><div className="fixed inset-0 z-30" onClick={() => setMobileOptions(false)}/><div className="absolute right-0 top-full mt-2 z-40 w-60 rounded-xl bg-[#111826] border border-white/10 shadow-xl p-2">{!isEmployee && <button onClick={() => { setMobileOptions(false); setShowConnect(true); }} className="w-full text-left p-3 text-sm rounded-lg hover:bg-white/10">Conectar WhatsApp</button>}<button onClick={() => { setMobileOptions(false); setShowSoundPicker(true); }} className="w-full text-left p-3 text-sm rounded-lg hover:bg-white/10">Som das mensagens</button><button onClick={() => { setMobileOptions(false); setShowBilling(true); }} className="w-full text-left p-3 text-sm rounded-lg hover:bg-white/10">Cobranças pendentes</button>{!isEmployee && <button onClick={() => { setMobileOptions(false); setShowLayoutPicker(true); }} className="w-full text-left p-3 text-sm rounded-lg hover:bg-white/10">Layout do Mensagens</button>}<button onClick={() => { setMobileOptions(false); void newGroup(); }} className="w-full text-left p-3 text-sm rounded-lg hover:bg-white/10">Novo grupo</button></div></>}</div></div>
+        {server !== "equipe" && (numbers.length > 1 || groups.length > 0) && <select aria-label="Canal de atendimento" value={server} onChange={e => setServer(e.target.value)} className="w-full min-h-11 bg-[#111826] border border-white/10 rounded-xl px-3 text-sm"><option value="whatsapp">Todos os canais</option>{numbers.map(n => <option key={n.id} value={`wa:${n.id}`}>{n.label}</option>)}{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select>}
+      </div>}
       {/* Rail de servidores (grupos ficam separados aqui) */}
-      <div className={`w-full md:w-16 shrink-0 bg-[#0e1727] flex-row md:flex-col items-center px-2 md:px-0 py-2 md:py-3 gap-2 border-b md:border-b-0 md:border-r border-white/10 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto custom-scroll ${hasSel ? "hidden md:flex" : "flex"}`}>
+      <div className="hidden md:flex md:w-16 shrink-0 bg-[#0e1727] flex-col items-center py-3 gap-2 border-r border-white/10 overflow-y-auto custom-scroll">
         <ServerIcon active={server === "whatsapp"} onClick={() => setServer("whatsapp")} title="WhatsApp — todas as conversas" badge={totalUnread}>
           <MessageSquare size={20} />
         </ServerIcon>
@@ -1081,7 +1086,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           </div>
           <div className="flex items-center gap-2 bg-black/20 rounded-lg px-2.5 py-1.5">
             <Search size={13} className="text-gray-400" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar..." className="bg-transparent outline-none text-xs w-full" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Pesquisar conversas" placeholder="Nome ou telefone…" className="bg-transparent outline-none text-base md:text-xs min-h-10 w-full" />
           </div>
         </div>
 
@@ -1091,7 +1096,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               <button
                 key={c.id}
                 onClick={() => openColleague(c.id)}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-white/5 cursor-pointer ${selColleagueId === c.id ? "bg-emerald-950/30" : ""}`}
+                className={`w-full flex items-center gap-3 px-3 min-h-14 py-3 md:py-1.5 text-left hover:bg-white/5 cursor-pointer ${selColleagueId === c.id ? "bg-emerald-950/30" : ""}`}
               >
                 <Hash size={14} className="text-gray-500 shrink-0" />
                 <span className="text-sm truncate">{c.full_name ?? c.email}</span>
@@ -1118,7 +1123,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 <button onClick={() => openConv(c.id)} className="flex items-center gap-2 flex-1 min-w-0 py-3 text-left cursor-pointer">
                   <ConvAvatar c={c.contacts} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[13px] truncate leading-tight">{contactLabel(c.contacts)}</p>
+                    <p className="text-base md:text-[13px] font-medium truncate leading-tight">{contactLabel(c.contacts)}</p>
                     {c.status === "espera" || c.status === "atendendo" ? (
                       <div className="mt-0.5"><StatusTag status={c.status} small /></div>
                     ) : (
@@ -1153,7 +1158,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       {layout === "kanban" && server !== "equipe" && (
         <div className={`min-w-0 min-h-0 md:max-w-[55%] flex-1 md:flex-none flex flex-col border-r border-white/10 bg-[#0e1727] ${hasSel ? "hidden md:flex" : "flex"}`}>
           <div className="md:hidden flex gap-1 p-2 border-b border-white/10" role="tablist" aria-label="Etapas do atendimento">
-            {kanbanColumns.map(([title, list]) => <button key={title} role="tab" aria-selected={activeMobileQueue === title} onClick={() => setMobileQueue(title)} className={`flex-1 rounded-lg px-1 py-3 text-[11px] font-semibold ${activeMobileQueue === title ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>{title} <span className="opacity-70">{list.length}</span></button>)}
+            {kanbanColumns.map(([title, list]) => <button key={title} role="tab" aria-selected={activeMobileQueue === title} onClick={() => setMobileQueue(title)} className={`flex-1 rounded-lg px-2 py-3 text-sm font-semibold ${activeMobileQueue === title ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-white/5"}`}>{title === "A fazer" ? "Aguardando" : "Em atendimento"} <span className="opacity-70">{list.length}</span></button>)}
           </div>
           <div className="flex-1 min-h-0 flex overflow-x-auto">
           {kanbanColumns.map(([title, list, dot]) => (
@@ -1188,7 +1193,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           <>
             <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2.5 shrink-0">
               {/* Voltar (só no celular): mostra de novo as barras de grupos/contatos */}
-              <button onClick={backToList} title="Voltar para as conversas" className="md:hidden p-1 -ml-1 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer shrink-0">
+              <button onClick={backToList} aria-label="Voltar para as conversas" title="Voltar para as conversas" className="md:hidden min-w-11 min-h-11 grid place-items-center -ml-2 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer shrink-0">
                 <ArrowLeft size={18} />
               </button>
               <button
@@ -1205,7 +1210,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 <div className="min-w-0">
                   <p className="text-sm font-bold truncate">{selConv ? contactLabel(selConv.contacts) : selColleague?.full_name ?? selColleague?.email}</p>
                   {selConv && (selConv.status === "espera" || selConv.status === "atendendo") && (
-                    <div className="mt-0.5"><StatusTag status={selConv.status} small /></div>
+                    <div className="hidden md:block mt-0.5"><StatusTag status={selConv.status} small /></div>
                   )}
                 </div>
               </button>
@@ -1216,15 +1221,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                     <button
                       onClick={() => setChargeConv(selConv)}
                       title="Cobrar este contato"
-                      className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer bg-white/5 text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors"
+                      className="hidden md:flex items-center justify-center min-h-11 min-w-11 md:min-h-0 md:min-w-0 gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer bg-white/5 text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors"
                     >
-                      <DollarSign size={12} /> Cobrar
+                      <DollarSign size={16} /><span className="hidden md:inline">Cobrar</span>
                     </button>
                   )}
                   {!isEmployee && <button
                     onClick={toggleBot}
                     title={botOn ? "Bot ligado — responde os clientes sozinho. Clique para desligar." : "Bot desligado. Clique para o robô responder automaticamente."}
-                    className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer transition-colors ${
+                    className={`hidden md:flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg cursor-pointer transition-colors ${
                       botOn ? "bg-emerald-600 text-white" : "bg-white/5 text-gray-400 hover:bg-white/10"
                     }`}
                   >
@@ -1247,8 +1252,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                   <div className="relative">
                     <button
                       onClick={() => setChatMenu((v) => !v)}
-                      title="Opções da conversa"
-                      className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
+                      aria-label="Opções da conversa" title="Opções da conversa"
+                      className="min-h-11 min-w-11 grid place-items-center p-1.5 rounded-lg hover:bg-white/10 text-gray-400 cursor-pointer"
                     >
                       <MoreVertical size={15} />
                     </button>
@@ -1256,7 +1261,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setChatMenu(false)} />
                         <div className="absolute right-0 top-9 z-50 w-48 bg-[#0b0f16] border border-white/10 rounded-xl shadow-2xl overflow-hidden py-1">
-                          {/* No celular estas duas entram aqui (ficam escondidas no cabeçalho) */}
+                          {/* Opções secundárias ficam no menu para liberar espaço no celular. */}
+                          {selConv.contacts?.id && <button onClick={() => { setChatMenu(false); setChargeConv(selConv); }} className="md:hidden w-full text-left px-3 py-3 text-sm hover:bg-white/10">Cobrar este contato</button>}
                           {!isEmployee && <button onClick={() => { setChatMenu(false); setShowBotSetup(true); }} className="md:hidden w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2">
                             <Bot size={13} className="text-sky-400" /> Configurar bot
                           </button>}
@@ -1275,6 +1281,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                           <button onClick={clearConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-amber-300">
                             <Trash2 size={13} /> Limpar mensagens
                           </button>
+                          {!isEmployee && <button onClick={() => { setChatMenu(false); void toggleBot(); }} className="md:hidden w-full text-left px-3 py-3 text-sm hover:bg-white/10">{botOn ? "Desligar bot" : "Ligar bot"}</button>}
                           <button onClick={deleteConversation} className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2 text-red-400">
                             <Trash2 size={13} /> Apagar conversa
                           </button>
@@ -1371,7 +1378,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 onKeyDown={(e) => e.key === "Enter" && send()}
                 placeholder={lockMsg ? "Conversa assumida por outro atendente…" : recording ? "Gravando áudio..." : "Mensagem..."}
                 disabled={recording || !!lockMsg}
-                className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-sm outline-none disabled:opacity-60"
+                className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-base md:text-sm outline-none disabled:opacity-60"
               />
 
               {selConv && <VoiceRecorder key={selConv.id} disabled={sending || !!lockMsg || !!attachment} hidden={!!input.trim()} onSend={sendFile} onRecordingChange={setRecording} />}

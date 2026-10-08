@@ -65,7 +65,7 @@ export default function HomeTab({
         <div>
           <h3 className="text-2xl font-bold">Bem-vindo(a) à {companyName}</h3>
           <p className="text-sm text-gray-400 mt-1">
-            Use o dock inferior ou a gaveta de aplicativos para navegar entre os módulos.
+            Use o botão Aplicativos no canto superior direito para navegar entre os módulos.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
