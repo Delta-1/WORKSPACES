@@ -16,11 +16,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Attendance and contact tests
-        run: node --experimental-strip-types --test tests/attendance-metrics.test.mjs whatsapp-service/test/*.test.js
+        run: node --experimental-strip-types --test tests/*.test.mjs whatsapp-service/test/*.test.js
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Check messaging components
-        run: npx eslint components/messages components/tabs/ReportsTab.tsx components/tabs/MessagesTab.tsx app/api/whatsapp/send/route.ts lib/attendance.ts lib/message-auth.ts
+        run: npx eslint components/messages components/tabs/ReportsTab.tsx components/tabs/MessagesTab.tsx app/api/whatsapp/send/route.ts app/api/whatsapp/media lib/whatsapp-media.ts lib/attendance.ts lib/message-auth.ts
       - name: Service and desktop syntax
         run: |
           node --check whatsapp-service/src/server.js

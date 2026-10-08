@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Mic, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Square, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
+import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import dynamic from "next/dynamic";
+import VoiceRecorder from "@/components/messages/VoiceRecorder";
+import AttachmentPreview from "@/components/messages/AttachmentPreview";
+import Bubble from "@/components/messages/MessageBubble";
 import ContactsPicker from "@/components/messages/ContactsPicker";
 import AttendanceActions from "@/components/messages/AttendanceActions";
 import StickersPicker, { saveReceivedSticker } from "@/components/messages/StickersPicker";
@@ -64,10 +67,6 @@ function StatusTag({ status, small }: { status?: string | null; small?: boolean 
   return null;
 }
 
-function fmtTime(iso: string | null) {
-  if (!iso) return "";
-  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
 function mediaTypeFromMime(mime: string): WhatsappMediaType {
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("audio/")) return "audio";
@@ -218,13 +217,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<WhatsappMessageRow | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const selConvRef = useRef<string | null>(null);
   const selColRef = useRef<string | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
 
   const scrollBottom = () =>
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }));
@@ -660,6 +659,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
   const lockMsg = blockedByLock(selConv);
+  useEffect(() => { queueMicrotask(() => { setRecording(false); setAttachment(null); }); }, [selConvId]);
   const selColleague = selColleagueId ? colleagues.find((c) => c.id === selColleagueId) ?? null : null;
   const connectedCount = numbers.filter((n) => n.status === "connected").length;
 
@@ -727,10 +727,10 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   async function sendMedia(media: { type: WhatsappMediaType; url: string; name: string; mime: string }, caption?: string) {
-    if (!selConv?.contacts) return;
+    if (!selConv?.contacts) throw new Error("Selecione uma conversa.");
     const block = blockedByLock(selConv);
-    if (block) { alert(block); return; }
-    if (!await claimConversation(selConv)) return;
+    if (block) throw new Error(block);
+    if (!await claimConversation(selConv)) throw new Error("Não foi possível assumir este atendimento.");
     // Bolha otimista da mídia enviada — aparece na hora.
     const temp: WhatsappMessageRow = {
       id: `temp-${crypto.randomUUID()}`,
@@ -744,17 +744,17 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       sender_id: profile?.id ?? null,
       at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, temp]);
-    scrollBottom();
+    if (selConvRef.current === selConv.id) { setMessages((prev) => [...prev, temp]); scrollBottom(); }
     const messageId = null;
-    const headers = await authHeaders();
-    const response = await fetch("/api/whatsapp/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, senderId: profile?.id, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId }),
-    });
+    try {
+      const headers = await authHeaders();
+      const response = await fetch("/api/whatsapp/send", {
+        method: "POST", headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId }),
+      });
       const payload = await response.json();
-    if (!response.ok || !payload.success) { setMessages(prev => prev.filter(m => m.id !== temp.id)); throw new Error(payload.message || payload.error || "Falha no envio da mídia."); }
+      if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || "Falha no envio da mídia.");
+    } catch (error) { setMessages(prev => prev.filter(m => m.id !== temp.id)); throw error; }
   }
 
   async function send() {
@@ -847,51 +847,39 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     })();
   }
 
-  async function onPickFile(file: File) {
-    if (!selConv?.contacts) return;
+  function onPickFile(file: File) {
+    if (!selConv?.contacts || sending || recording) return;
+    if (!file.size) { alert("Este arquivo está vazio."); return; }
+    if (file.size > 50 * 1024 * 1024) { alert("Escolha um arquivo de até 50 MB."); return; }
     const block = blockedByLock(selConv);
     if (block) { alert(block); return; }
+    setAttachment(file);
+  }
+  async function sendFile(file: File, caption = "") {
+    if (sending) throw new Error("Aguarde o envio atual.");
+    if (!selConv?.contacts) throw new Error("Selecione uma conversa.");
+    const block = blockedByLock(selConv);
+    if (block) throw new Error(block);
+    const conversationId = selConv.id;
     setSending(true);
     try {
       const mime = file.type || "application/octet-stream";
       const uploaded = await uploadMedia(file, file.name, mime);
-      if (!uploaded) throw new Error("Não consegui carregar o arquivo.");
-      await sendMedia({ type: mediaTypeFromMime(mime), ...uploaded }, input.trim());
-      setInput("");
-    } catch (e) { alert(e instanceof Error ? e.message : "Falha ao enviar arquivo."); } finally {
-      setSending(false);
-    }
+      if (!uploaded) throw new Error("Não consegui carregar o arquivo. Tente novamente.");
+      await sendMedia({ type: mediaTypeFromMime(mime), ...uploaded }, caption);
+      if (caption && selConvRef.current === conversationId) setInput("");
+    } finally { setSending(false); }
   }
-
-  async function toggleRecord() {
-    if (recording) {
-      recorderRef.current?.stop();
-      return;
-    }
-    if (!selConv?.contacts) return;
-    const block = blockedByLock(selConv);
-    if (block) { alert(block); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      chunksRef.current = [];
-      rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
-      rec.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setRecording(false);
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        try {
-          const uploaded = await uploadMedia(blob, "audio.webm", "audio/webm");
-          if (!uploaded) throw new Error("Não consegui carregar o áudio.");
-          await sendMedia({ type: "audio", ...uploaded });
-        } catch (e) { alert(e instanceof Error ? e.message : "Falha ao enviar áudio."); }
-      };
-      recorderRef.current = rec;
-      rec.start();
-      setRecording(true);
-    } catch {
-      alert("Não consegui acessar o microfone.");
-    }
+  async function forwardToContact(contact: Contact, numberId: string) {
+    if (!forwardMessage) throw new Error("Selecione uma mensagem para encaminhar.");
+    const response = await fetch("/api/whatsapp/send", {
+      method: "POST", headers: { "Content-Type": "application/json", ...await authHeaders() },
+      body: JSON.stringify({ to: contact.jid || contact.phone, numberId, forwardMessageId: forwardMessage.id }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.error || payload.message || "Falha ao encaminhar.");
+    await loadConversations();
+    alert("Mensagem encaminhada para " + contactLabel(contact) + ".");
   }
 
   // Contagem de não-lidas por número (para a bolinha no rail) e total.
@@ -1302,7 +1290,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
+                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
@@ -1386,15 +1374,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-sm outline-none disabled:opacity-60"
               />
 
-              {/* Microfone quando não há texto; Enviar quando há texto */}
-              {selConv && !input.trim() ? (
-                <button onClick={toggleRecord} disabled={sending || !!lockMsg} className={`p-2.5 rounded-full cursor-pointer disabled:opacity-50 shrink-0 ${recording ? "bg-red-600 text-white animate-pulse" : "bg-white/10 hover:bg-white/20 text-gray-200"}`}>
-                  {recording ? <Square size={18} /> : <Mic size={18} />}
-                </button>
-              ) : (
-                <button onClick={send} disabled={sending || !input.trim() || !!lockMsg} className="p-2.5 rounded-full md:rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0">
-                  <Send size={18} />
-                </button>
+              {selConv && <VoiceRecorder key={selConv.id} disabled={sending || !!lockMsg || !!attachment} hidden={!!input.trim()} onSend={sendFile} onRecordingChange={setRecording} />}
+              {(!selConv || !!input.trim()) && (
+                <button aria-label="Enviar mensagem" onClick={send} disabled={sending || recording || !input.trim() || !!lockMsg} className="p-2.5 rounded-full md:rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer disabled:opacity-50 shrink-0"><Send size={18} /></button>
               )}
             </div>
           </>
@@ -1427,6 +1409,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
       {showAutomations && profile && <MessageAutomations profile={profile} numbers={numbers} conversations={conversations.filter(c => c.status === "espera" || c.status === "atendendo").map(c => ({id:c.id,numberId:c.number_id,label:contactLabel(c.contacts)}))} initialNumber={activeNumberId ?? selConv?.number_id ?? null} onClose={() => setShowAutomations(false)} />}
       {showContacts && profile?.company_id && <ContactsPicker companyId={profile.company_id} numbers={numbers} initialNumber={activeNumberId} onSelect={openExistingContact} onNew={() => { setShowContacts(false); setShowNewChat(true); }} onClose={() => setShowContacts(false)} />}
+      {attachment && selConv && <AttachmentPreview key={selConv.id} file={attachment} caption={input} onSend={sendFile} onClose={() => setAttachment(null)} disabled={sending || !!lockMsg} />}
+      {forwardMessage && profile?.company_id && <ContactsPicker title="Encaminhar mensagem" companyId={profile.company_id} numbers={numbers} initialNumber={selConv?.number_id ?? activeNumberId} onSelect={forwardToContact} onClose={() => setForwardMessage(null)} />}
       {showStickers && profile && <StickersPicker profile={profile} onSend={sendMedia} onClose={() => setShowStickers(false)} />}
       {showNewChat && (
         <NewChatModal
@@ -2084,28 +2068,6 @@ function ServerIcon({ active, onClick, title, children, badge = 0 }: { active: b
           {badge > 99 ? "99+" : badge}
         </span>
       )}
-    </div>
-  );
-}
-
-function Bubble({ mine, at, text, mediaUrl, mediaType, onSaveSticker }: { mine: boolean; at: string; text: string | null; mediaUrl?: string | null; mediaType?: WhatsappMediaType | null; onSaveSticker?: () => Promise<void> }) {
-  return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm ${mine ? "bg-emerald-600 text-white" : "bg-[#1c232e]"}`}>
-        {mediaUrl && (mediaType === "image" || mediaType === "sticker") && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={mediaUrl} alt="" className="rounded-lg max-w-full mb-1 max-h-60 object-contain" />
-        )}
-        {mediaUrl && mediaType === "audio" && <audio src={mediaUrl} controls className="max-w-[220px] mb-1" />}
-        {mediaUrl && (mediaType === "document" || mediaType === "video") && (
-          <a href={mediaUrl} target="_blank" rel="noreferrer" className="underline text-xs block mb-1">
-            {mediaType === "video" ? "🎥 Vídeo" : "📄 Arquivo"}
-          </a>
-        )}
-        {onSaveSticker && <button onClick={() => void onSaveSticker()} className="block text-[10px] underline py-1">Salvar figurinha</button>}
-        {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
-        <p className={`text-[10px] mt-0.5 ${mine ? "text-emerald-100/70" : "text-gray-500"}`}>{fmtTime(at)}</p>
-      </div>
     </div>
   );
 }

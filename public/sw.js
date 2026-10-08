@@ -2,7 +2,7 @@
 // offline. IMPORTANTE: nunca devolver a página HTML no lugar de um script/estilo
 // (isso quebrava o app com "This page couldn't load" quando uma requisição de
 // chunk falhava por instabilidade de rede).
-const CACHE = "workspace-v2";
+const CACHE = "workspace-v3";
 
 self.addEventListener("install", () => self.skipWaiting());
 
@@ -19,7 +19,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   // Só GET de mesma origem (não interfere em APIs/uploads/terceiros).
-  if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  if (req.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/") || req.headers.has("authorization")) return;
   const isNavigation = req.mode === "navigate";
 
   event.respondWith(
