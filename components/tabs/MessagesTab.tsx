@@ -746,6 +746,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       at: new Date().toISOString(),
     };
     if (selConvRef.current === selConv.id) { setMessages((prev) => [...prev, temp]); scrollBottom(); }
+    const conversationId = selConv.id;
     const messageId = null;
     try {
       const headers = await authHeaders();
@@ -755,6 +756,14 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || "Falha no envio da mídia.");
+      // The server can normalize audio and add a media label. Replace this exact
+      // local preview with the actual saved message even if Realtime is delayed.
+      const rows = await fetchThread(conversationId).catch(() => null);
+      if (selConvRef.current === conversationId) setMessages(prev => {
+        const merged = new Map(prev.filter(m => m.id !== temp.id).map(m => [m.id, m]));
+        for (const row of rows ?? []) merged.set(row.id, row);
+        return [...merged.values()].sort((a, b) => a.at.localeCompare(b.at));
+      });
     } catch (error) { setMessages(prev => prev.filter(m => m.id !== temp.id)); throw error; }
   }
 

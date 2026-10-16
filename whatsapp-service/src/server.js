@@ -8,6 +8,9 @@ import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import ffmpegPath from "ffmpeg-static";
+import { prepareVoiceAudio, checkVoiceAudio, VOICE_MIME, VOICE_PIPELINE_VERSION } from "./voice-audio.js";
+const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, ready: null };
+void checkVoiceAudio(ffmpegPath).then(ready => { voiceAudioHealth.ready = ready; }, () => { voiceAudioHealth.ready = false; });
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -1046,35 +1049,11 @@ async function synthesizeSpeech(text, key, voiceId) {
 // Converte o MP3 do ElevenLabs em OGG/Opus (formato que o WhatsApp toca como
 // nota de voz). Sem isto, o WhatsApp diz "problema com o arquivo de áudio".
 async function mp3ToOpusOgg(mp3Buffer) {
-  if (!ffmpegPath) return null;
-  const tmp = os.tmpdir();
-  const inFile = path.join(tmp, `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
-  const outFile = inFile.replace(/\.mp3$/, ".ogg");
-  try {
-    fs.writeFileSync(inFile, mp3Buffer);
-    await new Promise((resolve, reject) => {
-      const ff = spawn(ffmpegPath, [
-        "-y",
-        "-i", inFile,
-        "-c:a", "libopus",
-        "-b:a", "32k",
-        "-ar", "48000",
-        "-ac", "1",
-        outFile,
-      ], {timeout:30000,killSignal:"SIGKILL"});
-      let err = "";
-      ff.stderr.on("data", (d) => (err += d.toString()));
-      ff.on("error", reject);
-      ff.on("close", (code) => (code === 0 ? resolve() : reject(new Error("ffmpeg " + code + ": " + err.slice(-200)))));
-    });
-    return fs.readFileSync(outFile);
-  } catch (err) {
-    lastElevenError = "ffmpeg: " + (err?.message || String(err));
-    console.error("mp3ToOpusOgg failed:", err);
+  try { return (await prepareVoiceAudio(mp3Buffer, ffmpegPath)).audio; }
+  catch (error) {
+    lastElevenError = "Falha ao preparar nota de voz.";
+    console.error("mp3ToOpusOgg failed:", error?.message || error);
     return null;
-  } finally {
-    try { fs.unlinkSync(inFile); } catch { /* */ }
-    try { fs.unlinkSync(outFile); } catch { /* */ }
   }
 }
 
@@ -3903,10 +3882,11 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       else if (media.type === "audio") {
         // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
         // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).
-        const ogg = await mp3ToOpusOgg(buf).catch(() => null); // ffmpeg detecta o formato de entrada
-        content = ogg
-          ? { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true }
-          : { audio: buf, mimetype: mimetype || "audio/ogg; codecs=opus", ptt: true };
+        content = await prepareVoiceAudio(buf, ffmpegPath);
+        // Keep the exact bytes sent, not the browser-only original, in history.
+        const audioUrl = await uploadMedia(content.audio, VOICE_MIME, "out");
+        if (!audioUrl) throw new Error("Não foi possível salvar o áudio preparado. A gravação não foi enviada.");
+        media = { ...media, url: audioUrl, mime: VOICE_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".ogg" };
       }
       else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
       else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
@@ -3914,6 +3894,7 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     } else {
       sent = await s.sock.sendMessage(jid, { text });
     }
+    if (!sent?.key?.id) throw new Error("O WhatsApp não confirmou o envio. Confira a conversa antes de tentar novamente.");
   } catch (e) {
     console.error("sendMessage: envio no WhatsApp falhou:", e?.message || e);
     throw e;
@@ -3958,6 +3939,8 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
+    revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+    voiceAudio: voiceAudioHealth,
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
     hasUrl: Boolean(process.env.SUPABASE_URL),
@@ -4035,8 +4018,8 @@ app.post("/send", async (req, res) => {
     return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
   }
   try {
-    await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null, conversationId ? String(conversationId) : null);
-    res.json({ success: true });
+    const sent = await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null, conversationId ? String(conversationId) : null);
+    res.json({ success: true, waId: sent.key.id });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
   }
@@ -4638,9 +4621,10 @@ const messageAutomationWorker = supabase ? createAutomationWorker({
       if(!response.ok)throw Error("Não foi possível carregar o áudio.");
       const reader=response.body.getReader(),chunks=[];let size=0;
       for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>10*1024*1024){await reader.cancel();throw Error("Áudio maior que 10 MB.");}chunks.push(Buffer.from(value));}
-      const ogg=await mp3ToOpusOgg(Buffer.concat(chunks));
-      if(!ogg)throw Error("Não foi possível converter o áudio em nota de voz.");
-      content={audio:ogg,mimetype:"audio/ogg; codecs=opus",ptt:true};
+      content=await prepareVoiceAudio(Buffer.concat(chunks),ffmpegPath);
+      const audioUrl=await uploadMedia(content.audio,VOICE_MIME,"out");
+      if(!audioUrl)throw Error("Não foi possível salvar o áudio preparado.");
+      media={...media,url:audioUrl,mime:VOICE_MIME};
     }
     const [{data:latest,error:cError},{data:rule,error:rError}]=await Promise.all([
       supabase.from("conversations").select("company_id,number_id,status,assignee_id,bot_paused").eq("id",conversation.id).maybeSingle(),

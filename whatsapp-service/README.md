@@ -31,3 +31,9 @@ npm start
 ```
 
 A sessão do WhatsApp fica salva em `.wa-session/` (não versionada), então não precisa escanear o QR de novo a cada reinício.
+
+## Notas de voz
+
+Todo áudio enviado pelo atendimento ou pelas automações é convertido para OGG/Opus mono antes do envio. O payload inclui duração e waveform calculadas pelo servidor. Falhas na conversão impedem o envio, sem usar o arquivo original como uma nota de voz incompatível. O histórico guarda o arquivo convertido.
+
+`GET /health` inclui `voiceAudio.pipelineVersion` e `voiceAudio.ready`: o teste de conversão é executado localmente na inicialização, sem enviar mensagens. `ready: false` indica que o conversor precisa ser corrigido no deploy. Um `waId` confirma a submissão ao WhatsApp, não a leitura nem a reprodução no aparelho destinatário. Áudios antigos já entregues com falha devem ser reenviados depois da atualização.
