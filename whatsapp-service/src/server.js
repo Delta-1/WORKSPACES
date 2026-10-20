@@ -8,13 +8,16 @@ import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import ffmpegPath from "ffmpeg-static";
-import { prepareVoiceAudio, checkVoiceAudio, VOICE_MIME, VOICE_PIPELINE_VERSION } from "./voice-audio.js";
-const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, ready: null };
+import { prepareVoiceAudio, prepareCompatibleAudio, audioProbeWav, checkVoiceAudio, COMPAT_AUDIO_MIME, VOICE_PIPELINE_VERSION } from "./voice-audio.js";
+import { createAudioRetryStore, installAudioDelivery, verifiedAudioUpload } from "./audio-delivery.js";
+const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, format: "mp3", ready: null, verifiedUploads: 0, rejectedUploads: 0, uploadProbeReady: null };
+let audioUploadProbeRunning = false;
 void checkVoiceAudio(ffmpegPath).then(ready => { voiceAudioHealth.ready = ready; }, () => { voiceAudioHealth.ready = false; });
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  prepareWAMessageMedia,
   fetchLatestBaileysVersion,
   initAuthCreds,
   BufferJSON,
@@ -848,8 +851,16 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
 // `content` é o payload do Baileys (ex.: { text }, { audio, ptt }, { document }).
 // `media` é o registro de mídia para o histórico (type/url/name/mime), se houver.
 async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media = null, content = null } = {}) {
-  // 1) REGISTRA JÁ — aparece em tempo real no Mensagens.
-  const rowId = await logMessage(conversationId, "out", text, null, media, cid);
+  if (content?.audio) {
+    if (content.mimetype !== COMPAT_AUDIO_MIME || content.ptt !== false) content = await prepareCompatibleAudio(content.audio, ffmpegPath);
+    if (media?.mime !== COMPAT_AUDIO_MIME) {
+      const audioUrl = await uploadMedia(content.audio, COMPAT_AUDIO_MIME, "out");
+      if (!audioUrl) throw Error("Não foi possível salvar o áudio compatível.");
+      media = { type: "audio", url: audioUrl, mime: COMPAT_AUDIO_MIME, name: "audio.mp3" };
+    }
+  }
+  // Audio is logged only after verified upload and submission, never as false success.
+  let rowId = content?.audio ? null : await logMessage(conversationId, "out", text, null, media, cid);
   // 2) ENVIA pelo WhatsApp.
   let sent = null;
   try {
@@ -859,6 +870,7 @@ async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media
   }
   // 3) Carimba o wa_id na linha já gravada (dedup contra o eco fromMe).
   if (sent?.key?.id) {
+    if (!rowId) rowId = await logMessage(conversationId, "out", text, null, media, cid, sent.key.id);
     webSentWaIds.add(sent.key.id);
     setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
     if (rowId) {
@@ -3161,6 +3173,20 @@ async function getWaVersion() {
   return _waVersion; // undefined = Baileys usa a versão embutida
 }
 
+// A small encrypted upload/download round trip, with no relay, history or recipient.
+async function probeAudioUpload(sock) {
+  if (audioUploadProbeRunning || voiceAudioHealth.uploadProbeReady !== null) return;
+  audioUploadProbeRunning = true;
+  try {
+    const content = await prepareCompatibleAudio(audioProbeWav(), ffmpegPath);
+    await prepareWAMessageMedia(content, { logger: noopLogger, upload: verifiedAudioUpload(sock, { health: voiceAudioHealth }) });
+    voiceAudioHealth.uploadProbeReady = true;
+  } catch (error) {
+    voiceAudioHealth.uploadProbeReady = false;
+    console.error("WhatsApp audio CDN probe failed:", error?.message || error);
+  } finally { audioUploadProbeRunning = false; }
+}
+
 async function startSession(numberId) {
   const s = getSession(numberId);
   if (s.starting || s.state.status === "connected") return s.state;
@@ -3181,8 +3207,13 @@ async function startSession(numberId) {
     // Usa a versão MAIS RECENTE do protocolo do WhatsApp Web (evita QR que não
     // gera e quedas de conexão por versão desatualizada). Cacheia por 1h.
     const version = await getWaVersion();
+    const audioRetryStore = createAudioRetryStore({ db: supabase, numberId,
+      encode: message => Buffer.from(proto.Message.encode(message).finish()).toString("base64"),
+      decode: value => proto.Message.decode(Buffer.from(value,"base64")),
+    });
     const sock = makeWASocket({
       version,
+      getMessage: key => audioRetryStore.get(key),
       auth: authState,
       printQRInTerminal: false,
       // Estabilidade + velocidade: não fica "online" (mantém as notificações no
@@ -3195,6 +3226,7 @@ async function startSession(numberId) {
       browser: ["Workspace", "Chrome", "121.0"],
       syncFullHistory: false,
     });
+    installAudioDelivery(sock, audioRetryStore, { health: voiceAudioHealth });
     s.sock = sock;
 
     sock.ev.on("creds.update", saveCreds);
@@ -3225,6 +3257,7 @@ async function startSession(numberId) {
         await setNumberStatus(numberId, "qr_pending");
       }
       if (connection === "open") {
+        void probeAudioUpload(sock);
         s.state.status = "connected";
         s.state.qrDataUrl = null;
         s.state.phoneNumber = sock?.user?.id?.split(":")[0] ?? null;
@@ -3880,13 +3913,12 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       if (media.type === "sticker") content = { sticker: buf };
       else if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
       else if (media.type === "audio") {
-        // Converte para OGG/Opus e envia como NOTA DE VOZ (ptt) — igual a uma pessoa
-        // gravando áudio no WhatsApp (não como arquivo/áudio compartilhado).
-        content = await prepareVoiceAudio(buf, ffmpegPath);
+        // A normal MP3 audio message avoids device-specific failures of PTT notes.
+        content = await prepareCompatibleAudio(buf, ffmpegPath);
         // Keep the exact bytes sent, not the browser-only original, in history.
-        const audioUrl = await uploadMedia(content.audio, VOICE_MIME, "out");
+        const audioUrl = await uploadMedia(content.audio, COMPAT_AUDIO_MIME, "out");
         if (!audioUrl) throw new Error("Não foi possível salvar o áudio preparado. A gravação não foi enviada.");
-        media = { ...media, url: audioUrl, mime: VOICE_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".ogg" };
+        media = { ...media, url: audioUrl, mime: COMPAT_AUDIO_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".mp3" };
       }
       else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
       else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
@@ -4621,10 +4653,10 @@ const messageAutomationWorker = supabase ? createAutomationWorker({
       if(!response.ok)throw Error("Não foi possível carregar o áudio.");
       const reader=response.body.getReader(),chunks=[];let size=0;
       for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>10*1024*1024){await reader.cancel();throw Error("Áudio maior que 10 MB.");}chunks.push(Buffer.from(value));}
-      content=await prepareVoiceAudio(Buffer.concat(chunks),ffmpegPath);
-      const audioUrl=await uploadMedia(content.audio,VOICE_MIME,"out");
+      content=await prepareCompatibleAudio(Buffer.concat(chunks),ffmpegPath);
+      const audioUrl=await uploadMedia(content.audio,COMPAT_AUDIO_MIME,"out");
       if(!audioUrl)throw Error("Não foi possível salvar o áudio preparado.");
-      media={...media,url:audioUrl,mime:VOICE_MIME};
+      media={...media,url:audioUrl,mime:COMPAT_AUDIO_MIME,name:"audio.mp3"};
     }
     const [{data:latest,error:cError},{data:rule,error:rError}]=await Promise.all([
       supabase.from("conversations").select("company_id,number_id,status,assignee_id,bot_paused").eq("id",conversation.id).maybeSingle(),

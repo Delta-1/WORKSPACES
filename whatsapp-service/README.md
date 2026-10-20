@@ -32,8 +32,12 @@ npm start
 
 A sessão do WhatsApp fica salva em `.wa-session/` (não versionada), então não precisa escanear o QR de novo a cada reinício.
 
-## Notas de voz
+## Envio de áudio
 
-Todo áudio enviado pelo atendimento ou pelas automações é convertido para OGG/Opus mono antes do envio. O payload inclui duração e waveform calculadas pelo servidor. Falhas na conversão impedem o envio, sem usar o arquivo original como uma nota de voz incompatível. O histórico guarda o arquivo convertido.
+Os novos envios usam áudio MP3 comum (`audio/mpeg`, `ptt: false`) para evitar os problemas de reprodução de notas de voz em alguns aparelhos. Gravação e revisão continuam disponíveis. O histórico guarda o MP3 enviado. A biblioteca recebe o arquivo de áudio, não um documento.
 
-`GET /health` inclui `voiceAudio.pipelineVersion` e `voiceAudio.ready`: o teste de conversão é executado localmente na inicialização, sem enviar mensagens. `ready: false` indica que o conversor precisa ser corrigido no deploy. Um `waId` confirma a submissão ao WhatsApp, não a leitura nem a reprodução no aparelho destinatário. Áudios antigos já entregues com falha devem ser reenviados depois da atualização.
+Antes de encaminhar a mensagem, o serviço baixa o objeto criptografado do CDN do WhatsApp e confere tamanho e SHA-256. Se estiver indisponível ou diferente, renova a conexão e repete apenas o upload uma vez. A mensagem não é retransmitida automaticamente após a submissão.
+
+O conteúdo criptográfico das mensagens enviadas é recuperável por sete dias na tabela privada `wa_auth`, separado por número, para atender solicitações de retry do protocolo mesmo após reiniciar. Registros expirados são removidos no próximo envio. Nenhuma dessas chaves é exposta ao navegador.
+
+`GET /health` mostra `voiceAudio.pipelineVersion`, `format`, `ready`, `verifiedUploads`, `rejectedUploads` e `uploadProbeReady`. A inicialização testa a conversão local. Ao conectar, um áudio sintético de 0,2 s é criptografado, enviado ao CDN e baixado para conferir os bytes, sem gerar mensagem, destinatário ou histórico; os contadores se referem ao CDN e não à reprodução no destinatário. Um `waId` confirma a submissão, não a entrega nem a reprodução. Arquivos antigos com falha precisam ser reenviados.

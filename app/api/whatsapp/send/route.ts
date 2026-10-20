@@ -3,6 +3,8 @@ import { supabaseForRequest } from "@/lib/supabase-server";
 import { callWhatsappService, whatsappServiceConfigured } from "@/lib/whatsapp-proxy";
 import { whatsappMediaUrl } from "@/lib/whatsapp-media";
 import type { WhatsappMediaType } from "@/lib/types";
+// Audio preparation, storage and verified WhatsApp upload can exceed the default function limit.
+export const maxDuration = 180;
 type Media = { type: WhatsappMediaType; url: string; name?: string | null; mime?: string | null };
 export async function POST(request: Request) {
  try {
