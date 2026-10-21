@@ -357,6 +357,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         }
         loadConversations();
       })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "whatsapp_messages", filter: `company_id=eq.${profile.company_id}` }, payload => {
+        const message = payload.new as WhatsappMessageRow;
+        setMessages(previous => previous.map(row => row.id === message.id ? message : row));
+        void loadConversations();
+      })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages" }, (payload) => {
         const m = payload.new as InternalMessage;
         const other = selColRef.current;
@@ -404,16 +409,41 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // mensagem — sua ou do bot — mesmo se o realtime falhar/atrasar.
   function mergeServerMessages(rows: WhatsappMessageRow[]) {
     setMessages((prev) => {
+      const known = new Map(prev.map(message => [message.id, message]));
+      // A request started before an edit/revoke may finish after realtime.
+      // Keep confirmed newer edits and irreversible deletion tombstones.
+      const freshRows = rows.map(row => {
+        const current = known.get(row.id);
+        if (current?.deleted_at && !row.deleted_at) return current;
+        if (current?.edited_at && Date.parse(current.edited_at) > (row.edited_at ? Date.parse(row.edited_at) : 0)) return current;
+        return row;
+      });
       const temps = prev.filter(
-        (t) => t.id.startsWith("temp-") && !rows.some((d) => d.direction === t.direction && (d.text || "") === (t.text || ""))
+        (t) => t.id.startsWith("temp-") && !freshRows.some((d) => d.direction === t.direction && (d.text || "") === (t.text || ""))
       );
-      const combined = [...rows, ...temps];
+      const combined = [...freshRows, ...temps];
       combined.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
       // Só re-renderiza/rola se algo mudou de fato.
-      const changed = combined.length !== prev.length || combined.some((m, i) => prev[i]?.id !== m.id);
-      if (changed) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
+      const changed = combined.length !== prev.length || combined.some((m, i) => prev[i]?.id !== m.id || prev[i]?.text !== m.text || prev[i]?.edited_at !== m.edited_at || prev[i]?.deleted_at !== m.deleted_at || prev[i]?.media_url !== m.media_url || prev[i]?.media_type !== m.media_type);
+      if (combined.length !== prev.length) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
       return changed ? combined : prev;
     });
+  }
+
+  async function mutateMessage(message: WhatsappMessageRow, action: "edit" | "delete", text?: string) {
+    const response = await fetch(`/api/whatsapp/messages/${encodeURIComponent(message.id)}`, {
+      method: action === "edit" ? "PATCH" : "DELETE",
+      headers: { "Content-Type": "application/json", ...await messageAuthHeaders() },
+      ...(action === "edit" ? { body: JSON.stringify({ text }) } : {}),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw Error(result.error || "A alteração não foi confirmada no WhatsApp.");
+    if (result.message?.id === message.id) setMessages(previous => previous.map(row => row.id === message.id ? result.message : row));
+    else {
+      const selected = selConvRef.current;
+      if (selected) { const rows = await fetchThread(selected); if (selConvRef.current === selected) setMessages(rows); }
+    }
+    await loadConversations();
   }
 
   // Rede de segurança: enquanto uma conversa está aberta, revalida as mensagens
@@ -421,12 +451,18 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   // apareçam rápido mesmo que o evento realtime não chegue.
   useEffect(() => {
     if (!supabase || !selConvId) return;
-    const client = supabase;
+    let pending = false;
+    let cancelled = false;
     const poll = setInterval(async () => {
-      const { data } = await client.from("whatsapp_messages").select("*").eq("conversation_id", selConvId).order("at");
-      if (data) mergeServerMessages(data);
+      if (pending || document.hidden) return;
+      pending = true;
+      try {
+        const rows = await fetchThread(selConvId);
+        if (!cancelled && selConvRef.current === selConvId) mergeServerMessages(rows);
+      } catch { /* Keep the current thread during a temporary network failure. */ }
+      finally { pending = false; }
     }, 2000);
-    return () => clearInterval(poll);
+    return () => { cancelled = true; clearInterval(poll); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selConvId]);
   // Salva a conversa aberta como arquivo de texto (backup/registro).
@@ -1333,7 +1369,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
+                  <Bubble key={m.id} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}

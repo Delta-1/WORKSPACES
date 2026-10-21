@@ -1,4 +1,6 @@
 import { createAutomationWorker } from "./automation-worker.js";
+import { mutateWhatsappMessage, syncWhatsappMutation, MESSAGE_MUTATIONS_VERSION } from "./message-mutations.js";
+import { savedMessageKey } from "./message-policy.js";
 import { contactNamePatch } from "./contact-names.js";
 import express from "express";
 import QRCode from "qrcode";
@@ -769,7 +771,7 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
@@ -779,6 +781,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     company_id: companyId,
   };
   if (messageAt) row.at = messageAt;
+  if (waKey) row.wa_key = savedMessageKey(waKey);
   if (media) {
     row.media_type = media.type;
     row.media_url = media.url;
@@ -794,7 +797,11 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     // índice e o upsert falhava antes mesmo de tentar gravar.
     const { data: existingWa, error: lookupError } = await supabase
       .from("whatsapp_messages").select("id").eq("wa_id", waId).limit(1).maybeSingle();
-    if (existingWa?.id) return existingWa.id;
+    if (existingWa?.id) {
+      const patch = { ...(waKey ? { wa_key: savedMessageKey(waKey) } : {}), ...(senderId && direction === "out" ? { sender_id: senderId } : {}) };
+      if (Object.keys(patch).length) await supabase.from("whatsapp_messages").update(patch).eq("id", existingWa.id);
+      return existingWa.id;
+    }
     let writeError = lookupError;
     if (!lookupError) {
       const { data: inserted, error: insertError } = await supabase.from("whatsapp_messages").insert(row).select("id").maybeSingle();
@@ -876,7 +883,7 @@ async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media
     if (rowId) {
       await supabase
         .from("whatsapp_messages")
-        .update({ wa_id: sent.key.id })
+        .update({ wa_id: sent.key.id, wa_key: savedMessageKey(sent.key) })
         .eq("id", rowId)
         .then(() => {}, () => {});
     }
@@ -3230,6 +3237,14 @@ async function startSession(numberId) {
     s.sock = sock;
 
     sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("messages.update", async updates => {
+      if (!supabase) return;
+      for (const { key, update } of updates) {
+        try {
+          await syncWhatsappMutation({ db: supabase, numberId, key, update, revokedStubType: proto.WebMessageInfo.StubType.REVOKE });
+        } catch (error) { console.error("WhatsApp message change sync failed:", error?.message || error); }
+      }
+    });
 
     // Sincroniza a agenda e recupera apenas mensagens PRÓPRIAS recentes. Isso
     // cobre o que foi enviado pelo telefone enquanto este serviço reconectava,
@@ -3290,6 +3305,8 @@ async function startSession(numberId) {
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       for (const msg of messages) {
+        const protocol = msg.message?.protocolMessage;
+        if (protocol && [proto.Message.ProtocolMessage.Type.REVOKE, proto.Message.ProtocolMessage.Type.MESSAGE_EDIT].includes(protocol.type)) continue;
         const jid = msg.key.remoteJid;
         // Status e newsletter nunca interessam.
         if (!jid || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
@@ -3391,7 +3408,7 @@ async function startSession(numberId) {
             number?.sector_id ?? null,
             cid
           );
-          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id);
+          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
 
           // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
           // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos
@@ -3841,7 +3858,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     }
     if (!conversationId) return;
     // waId = key.id → dedup contra o envio feito pelo próprio site.
-    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null);
+    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
   } catch (err) {
     console.error("logOutgoingEcho failed:", err);
   }
@@ -3935,10 +3952,10 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     // pelo messageId (envio pelo site), atualiza também os dados de mídia.
     if (sent?.key?.id) {
       webSentWaIds.add(sent.key.id);
-      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id);
+      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key);
       setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
       if (loggedId) {
-        const patch = { wa_id: sent.key.id };
+        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key) };
         if (media && messageId) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
         await supabase.from("whatsapp_messages").update(patch).eq("id", loggedId).then(() => {}, () => {});
       }
@@ -3975,6 +3992,7 @@ app.get("/health", (_req, res) => {
     voiceAudio: voiceAudioHealth,
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
+    messageMutations: { version: MESSAGE_MUTATIONS_VERSION, ready: Boolean(supabase) },
     hasUrl: Boolean(process.env.SUPABASE_URL),
     hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     hasSecret: Boolean(process.env.WHATSAPP_SERVICE_SECRET),
@@ -4054,6 +4072,18 @@ app.post("/send", async (req, res) => {
     res.json({ success: true, waId: sent.key.id });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post("/messages/mutate", async (req, res) => {
+  const { numberId, companyId, actorId, messageId, action, text } = req.body ?? {};
+  if (![numberId, companyId, actorId, messageId].every(v => typeof v === "string" && v.length > 0)) return res.status(400).json({ error: "Informe a mensagem, empresa, usuário e número." });
+  const session = sessions.get(numberId);
+  if (!supabase || session?.state.status !== "connected" || !session.sock) return res.status(409).json({ error: "Este número de WhatsApp está desconectado. Reconecte antes de alterar a mensagem." });
+  try {
+    res.json(await mutateWhatsappMessage({ db: supabase, sock: session.sock, numberId, companyId, actorId, messageId, action, text }));
+  } catch (error) {
+    res.status(409).json({ success: false, error: error instanceof Error ? error.message : "Não foi possível alterar a mensagem no WhatsApp." });
   }
 });
 

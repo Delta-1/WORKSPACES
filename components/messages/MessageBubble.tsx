@@ -4,7 +4,8 @@ import { Download, Forward, FileText, X } from "lucide-react";
 import { messageAuthHeaders } from "@/lib/message-auth";
 import { safeMediaName } from "@/lib/whatsapp-media";
 import type { WhatsappMediaType } from "@/lib/types";
-export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker}:{mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>}){
+import MessageActions from "./MessageActions";
+export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete}:{mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
  const [viewer,setViewer]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  const name=safeMediaName(mediaName,mediaType,mediaMime);
  const time=new Date(at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
@@ -15,6 +16,7 @@ export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName
    const blob=await res.blob();const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
   }catch(e){setError(e instanceof Error?e.message:"Erro ao baixar. Tente novamente.");}finally{setBusy(false);}
  }
+ if(deletedAt)return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className="max-w-[90%] rounded-2xl border border-white/10 px-3 py-2 text-sm italic text-slate-400">Mensagem apagada<span className="ml-3 text-[10px] not-italic">{time}</span></div></div>;
  return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className={`min-w-0 max-w-[90%] md:max-w-[72%] rounded-2xl px-3 py-2 text-sm ${mine?"bg-emerald-700 text-white":"bg-[#1c232e]"}`}>
   {mediaUrl&&(mediaType==="image"||mediaType==="sticker")&&<button aria-label={`Abrir ${mediaType==="sticker"?"figurinha":"foto"}`} onClick={()=>setViewer(true)} className="block max-w-full">
    {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -27,8 +29,10 @@ export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName
   {error&&<p role="alert" className="text-xs text-amber-200 my-1">{error}</p>}
   {onSaveSticker&&<button onClick={()=>void onSaveSticker()} className="block text-[11px] underline py-1">Salvar figurinha</button>}
   <div className="flex items-center justify-end gap-2 mt-1 flex-wrap">
+   {editedAt&&<span className="text-[10px] opacity-70">editada</span>}
    {mediaUrl&&messageId&&<button aria-label={`Baixar ${name}`} disabled={busy} onClick={()=>void download()} className="flex items-center gap-1 text-[11px] p-1 hover:bg-white/10 rounded disabled:opacity-50"><Download size={14}/>{busy?"Baixando…":"Baixar"}</button>}
    {onForward&&<button aria-label="Encaminhar mensagem" onClick={onForward} className="flex items-center gap-1 text-[11px] p-1 hover:bg-white/10 rounded"><Forward size={14}/>Encaminhar</button>}
+   {(onEdit||onDelete)&&<MessageActions at={at} text={text} onEdit={onEdit} onDelete={onDelete}/>}
    <span className={`text-[10px] ${mine?"text-emerald-100/70":"text-gray-400"}`}>{time}</span>
   </div>
   {viewer&&mediaUrl&&<MediaViewer src={mediaUrl} type={mediaType} name={name} onClose={()=>setViewer(false)}/>}

@@ -257,6 +257,9 @@ export type WhatsappMessageRow = {
   media_mime: string | null;
   sender_id: string | null;
   at: string;
+  wa_id?: string | null;
+  edited_at?: string | null;
+  deleted_at?: string | null;
 };
 
 export type Chatbot = {

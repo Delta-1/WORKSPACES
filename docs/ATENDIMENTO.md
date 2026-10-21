@@ -21,3 +21,13 @@ A entrada dedicada usa as mesmas sessões, empresas, permissões, canais e valid
 - As imagens do guia usam dados fictícios. Nenhuma mensagem foi enviada a clientes nos testes. A entrega de texto/áudio em um destinatário WhatsApp real não faz parte desta validação; exige número de teste autorizado. Instalação nativa em aparelhos físicos e fluxo externo Google/confirmacão de e-mail também não foram executados nesta validação.
 
 As correções de áudio do serviço WhatsApp foram preservadas. Este release altera interface, acesso e instalação; não altera o serviço WhatsApp nem o schema do banco.
+
+## Editar e apagar para todos
+
+As mensagens de WhatsApp enviadas pelo funcionário têm um menu de três pontos. Edição de texto: até 15 minutos; solicitação de exclusão: até dois dias. A exclusão mantém um aviso e remove texto e referências de mídia do histórico. O autor, empresa e número são conferidos novamente no serviço persistente. Chaves antigas de chats individuais podem ser recuperadas do ID WhatsApp e JID salvo; mensagens sem identificação original não simulam alteração local.
+
+O serviço usa os comandos nativos `edit` e `delete` do Baileys e só atualiza o histórico depois da submissão confirmada. Os eventos `messages.update` refletem edições e revogações de outros dispositivos. Realtime e polling atualizam conteúdo com o mesmo ID e preservam alterações novas contra respostas antigas. Não há retransmissão automática de comandos ao WhatsApp.
+
+Verificação desta atualização: 46 testes automáticos aprovados, incluindo serialização nativa MESSAGE_EDIT/REVOKE, rejeição sem alteração local, autoria, empresa, número, limites, chaves de grupos e sincronização de exclusão. Menus e diálogos testados em 320x568, 390x844, 844x390 e 1366x768 com respostas simuladas, incluindo cancelar, salvar, erro e apagar. A validação no banco usa transação com rollback; nenhum cliente recebeu mensagens nesses testes. Recebimento final em um aparelho WhatsApp real exige um destinatário de teste autorizado.
+
+`GET /api/whatsapp/features` permite conferir a versão do recurso no serviço persistente sem expor endereço ou credenciais desse serviço.
