@@ -15,6 +15,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import android.graphics.Bitmap
+import android.os.SystemClock
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class WorkspaceSmokeTest {
@@ -45,6 +48,16 @@ class WorkspaceSmokeTest {
             onView(withText("Workspaces ${BuildConfig.VERSION_NAME}")).check(matches(isDisplayed()))
             onView(withText("OK")).perform(androidx.test.espresso.action.ViewActions.click())
             scenario.recreate()
+            // A launched Activity alone is insufficient: wait for a usable login
+            // page, or the explicit update instruction on old emulator WebViews.
+            val provider = android.webkit.WebView.getCurrentWebViewPackage()
+            val major = provider?.versionName?.substringBefore('.')?.toIntOrNull() ?: 0
+            println("WebView provider: ${provider?.packageName} ${provider?.versionName}")
+            if (major in 1..110) {
+                onView(withText("Atualizar WebView")).check(matches(isDisplayed()))
+            } else {
+                awaitLogin(scenario)
+            }
             onView(withId(R.id.workspace_reload)).check(matches(isDisplayed()))
             val instrumentation = InstrumentationRegistry.getInstrumentation()
             instrumentation.uiAutomation.takeScreenshot()?.let { image ->
@@ -53,5 +66,28 @@ class WorkspaceSmokeTest {
                 image.recycle()
             }
         }
+    }
+    private fun awaitLogin(scenario: ActivityScenario<MainActivity>) {
+        val deadline = SystemClock.elapsedRealtime() + 60000
+        var lastState = ""
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val latch = CountDownLatch(1)
+            var ready = false
+            scenario.onActivity { activity ->
+                activity.findViewById<WebView>(R.id.workspace_web).evaluateJavascript(
+                    "JSON.stringify({ready:!!(document.querySelector('input[type=email]')&&document.querySelector('input[type=password]')),url:location.href,state:document.readyState,text:document.body?document.body.innerText.slice(0,300):''})"
+                ) { raw ->
+                    lastState = raw
+                    // evaluateJavascript returns a JSON-encoded JSON string.
+                    val decoded = org.json.JSONTokener(raw).nextValue() as? String
+                    ready = decoded?.let { org.json.JSONObject(it).optBoolean("ready") } ?: false
+                    latch.countDown()
+                }
+            }
+            latch.await(3, TimeUnit.SECONDS)
+            if (ready) { println("Workspaces login rendered after Activity recreation"); return }
+            SystemClock.sleep(500)
+        }
+        fail("Tela de login não carregou em 60 segundos. Estado: $lastState")
     }
 }

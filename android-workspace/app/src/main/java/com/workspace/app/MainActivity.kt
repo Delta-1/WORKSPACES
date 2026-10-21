@@ -25,6 +25,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : ComponentActivity() {
+    private lateinit var appBar: LinearLayout
+    private var webViewOutdated = false
     private lateinit var web: WebView
     private lateinit var progress: ProgressBar
     private lateinit var errorPanel: LinearLayout
@@ -60,6 +62,8 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.rgb(6, 10, 18))
         )
         startUrl = getString(R.string.workspace_url)
+        val providerMajor = WebView.getCurrentWebViewPackage()?.versionName?.substringBefore('.')?.toIntOrNull()
+        webViewOutdated = providerMajor != null && providerMajor < 111
         val uri = Uri.parse(startUrl)
         origin = "https://${uri.authority}"
         downloads = WorkspaceDownloads(this, origin)
@@ -76,9 +80,11 @@ class MainActivity : ComponentActivity() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
             view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
+            if (::appBar.isInitialized) appBar.visibility = if (keyboard.bottom > bars.bottom) View.GONE else View.VISIBLE
             insets
         }
         val toolbar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        appBar = toolbar
         toolbar.addView(TextView(this).apply {
             text = "Workspaces"; textSize = 16f; setTextColor(Color.WHITE)
             setPadding(dp(16), 0, 0, 0)
@@ -116,7 +122,12 @@ class MainActivity : ComponentActivity() {
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
-        if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) web.loadUrl(startUrl)
+        if (webViewOutdated) {
+            progress.visibility = View.GONE
+            errorPanel.visibility = View.VISIBLE
+            (errorPanel.getChildAt(0) as TextView).text = "Atualize o Android System WebView para abrir o Workspaces. Depois, feche e abra o aplicativo novamente."
+            (errorPanel.getChildAt(1) as Button).text = "Atualizar WebView"
+        } else if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) web.loadUrl(startUrl)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (web.canGoBack()) web.goBack() else finish() }
         })
@@ -124,6 +135,11 @@ class MainActivity : ComponentActivity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun retry() {
+        if (webViewOutdated) {
+            val provider = WebView.getCurrentWebViewPackage()?.packageName ?: "com.google.android.webview"
+            external(Uri.parse("https://play.google.com/store/apps/details?id=$provider"))
+            return
+        }
         errorPanel.visibility = View.GONE
         web.loadUrl(lastUrl.takeIf { trusted(Uri.parse(it)) } ?: startUrl)
     }

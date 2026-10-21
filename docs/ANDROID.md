@@ -2,7 +2,7 @@
 
 O projeto `android-workspace` gera um aplicativo Android instalável, com ícone próprio e nome **Workspaces**. Ele abre o atendimento em `https://workspaces-eta.vercel.app/atendimento` usando a interface responsiva do sistema dentro de uma WebView Android. É um app híbrido: precisa de internet e do site e serviços publicados. Não cria outro banco nem inclui credenciais de administrador no APK.
 
-Compatibilidade mínima: Android 8.0 (API 26). Destino: Android 16 (API 36). Tablets, modo paisagem, teclado, recortes e barras de navegação são considerados pelo contêiner nativo. O projeto mantém o identificador de release `com.workspace.app`; se esse pacote já tiver uma publicação, use a chave de upload e a sequência de versões daquela publicação.
+Compatibilidade mínima: Android 8.0 (API 26), com Android System WebView/Chrome atualizado (Chromium 111 ou superior). Provedores antigos mostram uma orientação de atualização em vez de uma tela vazia. Destino: Android 16 (API 36). Tablets, modo paisagem, teclado, recortes e barras de navegação são considerados pelo contêiner nativo. O projeto mantém o identificador de release `com.workspace.app`; se esse pacote já tiver uma publicação, use a chave de upload e a sequência de versões daquela publicação.
 
 ## 1. Baixar e instalar o APK pelo GitHub Actions
 
@@ -94,6 +94,6 @@ Java 17, Gradle 8.11.1, Android SDK 36 e build-tools 35.0.0. Na pasta `android-w
 gradle --no-daemon :app:lintRelease :app:assembleDebug :app:bundleRelease
 ```
 
-O workflow também instala o APK real em emuladores API 26 e 36 e verifica abertura, controles nativos, recriação de Activity, isolamento de origem, configuração da WebView e ausência de permissão antecipada de microfone. As capturas e resultados ficam em **Workspaces-Android-smoke-API-26/36**. Esses testes de abertura não comprovam atendimento completo, entrega WhatsApp ou funcionamento em todos os aparelhos físicos.
+O workflow também instala o APK real em emuladores API 26 e 36 e verifica abertura, controles nativos, recriação de Activity, isolamento de origem, configuração da WebView e ausência de permissão antecipada de microfone. Em WebViews atuais, espera também o formulário real de login após recriar a Activity; em versões antigas, exige a orientação de atualização. As capturas e resultados ficam em **Workspaces-Android-smoke-API-26/36**. Esses testes de abertura não comprovam atendimento completo, entrega WhatsApp ou funcionamento em todos os aparelhos físicos.
 
 Referências oficiais: [assinatura Android](https://developer.android.com/studio/publish/app-signing), [envio do App Bundle](https://developer.android.com/studio/publish/upload-bundle), [API exigida pelo Google Play](https://developer.android.com/google/play/requirements/target-sdk).
