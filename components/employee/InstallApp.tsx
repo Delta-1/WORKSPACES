@@ -14,7 +14,7 @@ export default function InstallApp({ compact = false }: { compact?: boolean }) {
   const [installed, setInstalled] = useState(false);
   useEffect(() => {
     const mode = window.matchMedia("(display-mode: standalone)");
-    const sync = () => setInstalled(mode.matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
+    const sync = () => setInstalled(mode.matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone) || /\bWorkspacesAndroid\//.test(navigator.userAgent));
     const capture = (event: Event) => { event.preventDefault(); setPrompt(event as InstallPrompt); };
     const done = () => { setInstalled(true); setPrompt(null); setHelp(false); };
     sync();
