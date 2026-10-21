@@ -11,5 +11,21 @@ export default function PWARegister() {
     if (document.readyState === "complete") onLoad();
     else window.addEventListener("load", onLoad, { once: true });
   }, []);
+  useEffect(() => {
+    // iOS and Android can keep 100dvh behind the keyboard. Follow the visible
+    // viewport while preserving pinch zoom for accessibility.
+    const viewport = window.visualViewport;
+    const sync = () => {
+      if (viewport && viewport.scale !== 1) return;
+      document.documentElement.style.setProperty("--app-height", `${viewport?.height ?? window.innerHeight}px`);
+    };
+    sync();
+    viewport?.addEventListener("resize", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      viewport?.removeEventListener("resize", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
   return null;
 }

@@ -154,8 +154,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [tutorialStep, setTutorialStep] = useState(0); // 0 = sem tutorial
   const [asCompanyDefault, setAsCompanyDefault] = useState(false); // gestor: definir padrão da equipe
   const isEmployee = profile?.role === "funcionario";
-  const layout: MsgLayout = isEmployee ? "kanban" : preferredLayout;
-  function setLayout(l: MsgLayout) { if (isEmployee) return; setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
+  const layout: MsgLayout = isEmployee ? "classic" : preferredLayout;
+  function setLayout(l: MsgLayout) { setLayoutState(l); try { localStorage.setItem("msg:layout", l); } catch { /* ignore */ } }
   const isGestor = profile?.role === "gestor";
 
   // Atendimento exclusivo é obrigatório e validado pelo banco.
@@ -259,6 +259,32 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setColleagues((p.data as Profile[]) ?? []);
     setNumbers((n.data as WhatsappNumber[]) ?? []);
   }, [profile]);
+
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    const update = () => {
+      setOffline(!navigator.onLine);
+      if (navigator.onLine && !document.hidden) {
+        void loadConversations(); void loadSide();
+        const id = selConvRef.current;
+        if (id) void fetchThread(id).then(rows => {
+          if (selConvRef.current === id) setMessages(rows);
+        }).catch(() => {});
+      }
+    };
+    const markOffline = () => setOffline(true);
+    if (!navigator.onLine) queueMicrotask(markOffline);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", markOffline);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", markOffline);
+      document.removeEventListener("visibilitychange", update);
+    };
+    // fetchThread reads the selected conversation via its argument.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadConversations, loadSide]);
 
   useEffect(() => {
     void Promise.resolve().then(() => { void loadConversations(); void loadSide(); });
@@ -969,7 +995,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] shadow-xl max-md:rounded-none">
+    <div className="messages-app h-full min-h-0 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b1220] shadow-xl max-md:rounded-none">
+      {offline && <p role="status" className="shrink-0 bg-amber-950 px-3 py-2 text-sm text-amber-200">Sem internet. Reconecte para atualizar e enviar mensagens.</p>}
       <div className={`shrink-0 border-b border-white/10 bg-[#101a2b] px-4 py-3 flex flex-wrap items-center gap-3 ${hasSel ? "hidden md:flex" : "flex"}`}>
         <div className="w-full md:w-auto md:flex-1 min-w-0">
           <h2 className="font-semibold text-base md:text-sm tracking-wide">Mensagens</h2>
@@ -1381,13 +1408,23 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
                 </>
               )}
 
-              <input
+              <textarea
+                aria-label="Mensagem"
+                rows={1}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && send()}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.currentTarget.style.height = "auto";
+                  e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 112)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia("(pointer: fine)").matches) {
+                    e.preventDefault(); void send();
+                  }
+                }}
                 placeholder={lockMsg ? "Conversa assumida por outro atendente…" : recording ? "Gravando áudio..." : "Mensagem..."}
                 disabled={recording || !!lockMsg}
-                className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-full md:rounded-lg px-4 py-2.5 text-base md:text-sm outline-none disabled:opacity-60"
+                className="flex-1 min-w-0 min-h-11 max-h-28 resize-none bg-black/20 border border-white/10 rounded-2xl md:rounded-lg px-4 py-2.5 text-base md:text-sm outline-none disabled:opacity-60"
               />
 
               {selConv && <VoiceRecorder key={selConv.id} disabled={sending || !!lockMsg || !!attachment} hidden={!!input.trim()} onSend={sendFile} onRecordingChange={setRecording} />}

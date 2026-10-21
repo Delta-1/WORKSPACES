@@ -14,13 +14,15 @@ export default function OnboardingScreen({
   onLanguageChange,
   onDone,
   onLogout,
+  employeeOnly = false,
 }: {
   language: AppLanguage;
   onLanguageChange: (language: AppLanguage) => void;
   onDone: () => void;
   onLogout: () => void;
+  employeeOnly?: boolean;
 }) {
-  const [mode, setMode] = useState<"owner" | "home" | "employee">("owner");
+  const [mode, setMode] = useState<"owner" | "home" | "employee">(employeeOnly ? "employee" : "owner");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,10 +42,9 @@ export default function OnboardingScreen({
   const [code, setCode] = useState("");
 
   useEffect(() => {
-    const pending = localStorage.getItem("pendingCompanyCode");
+    const pending = new URLSearchParams(window.location.search).get("empresa") || localStorage.getItem("pendingCompanyCode");
     if (pending) {
-      setMode("employee");
-      setCode(pending);
+      queueMicrotask(() => { setMode("employee"); setCode(pending); });
     }
   }, []);
 
@@ -104,24 +105,26 @@ export default function OnboardingScreen({
     if (!supabase || !code.trim()) return;
     setLoading(true);
     setError(null);
-    const { error } = await supabase.rpc("join_company", { p_code: code.trim().toUpperCase() });
-    setLoading(false);
-    if (error) setError("Código empresarial inválido. Confira com o administrador da empresa.");
-    else { localStorage.removeItem("pendingCompanyCode"); onDone(); }
+    try {
+      const { error } = await supabase.rpc("join_company", { p_code: code.trim().toUpperCase() });
+      if (error) setError("Não foi possível entrar na empresa. Confira o código com o administrador e tente novamente.");
+      else { localStorage.removeItem("pendingCompanyCode"); onDone(); }
+    } catch { setError("Falha de conexão. Verifique sua internet e tente novamente."); }
+    finally { setLoading(false); }
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#060a12] p-4 overflow-y-auto">
+    <div className="auth-screen fixed inset-0 flex items-start sm:items-center justify-center bg-[#060a12] p-4 overflow-y-auto">
       <div className="liquid-glass rounded-2xl p-8 w-full max-w-lg shadow-2xl my-8">
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-emerald-950 border border-emerald-500 rounded-2xl text-emerald-400 mb-3">
             <Layers size={26} />
           </div>
           <h1 className="text-xl font-bold">Vamos configurar seu acesso</h1>
-          <p className="text-gray-400 text-sm mt-1">Conta empresarial, pessoal, ou entre com um código.</p>
+          <p className="text-gray-400 text-sm mt-1">{employeeOnly ? "Confirme o código recebido do gestor para entrar na sua empresa." : "Conta empresarial, pessoal, ou entre com um código."}</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-1 bg-black/20 rounded-lg p-1 mb-5">
+        {!employeeOnly && <div className="grid grid-cols-3 gap-1 bg-black/20 rounded-lg p-1 mb-5">
           <button onClick={() => setMode("owner")} className={`flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-md cursor-pointer ${mode === "owner" ? "bg-emerald-600 text-white" : "text-gray-400"}`}>
             <Building2 size={14} /> Empresa
           </button>
@@ -131,7 +134,7 @@ export default function OnboardingScreen({
           <button onClick={() => setMode("employee")} className={`flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-md cursor-pointer ${mode === "employee" ? "bg-emerald-600 text-white" : "text-gray-400"}`}>
             <KeyRound size={14} /> Código
           </button>
-        </div>
+        </div>}
 
         {error && (
           <p className="text-xs text-red-400 text-center mb-3 bg-red-950/30 border border-red-800/50 rounded-lg py-2 px-3">{error}</p>

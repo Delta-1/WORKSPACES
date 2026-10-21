@@ -20,7 +20,7 @@ export default function AttendanceActions({ conversation:c, profile, colleagues,
   if(e){setError(e.message);return;}
   setMode(null);setNote("");setResult("");setTarget("");await onChanged();
  }
- return <div className="px-3 py-2 border-b border-white/10 flex flex-wrap items-center gap-2 text-xs">
+ return <div className="px-3 py-2 border-b border-white/10 flex flex-wrap items-center gap-2 text-xs max-h-[30%] overflow-y-auto shrink-0">
   {c.status==="atendendo"&&c.assignee_id?<><span>Responsável: {name}</span><AttendanceTimer start={c.accepted_at??null}/></>:<span>{c.status==="fechado"?"Atendimento finalizado":"Na fila de atendimento"}</span>}
   {(!c.assignee_id||c.status==="fechado"||c.status==="cancelado")&&<button disabled={busy} onClick={()=>void act("claim")} className="rounded-lg px-3 py-2 bg-emerald-600">{c.status==="fechado"?"Reabrir atendimento":"Assumir atendimento"}</button>}
   {c.status==="atendendo"&&c.assignee_id&&(owner||supervisor)&&<><button onClick={()=>{setMode("transfer");setError("");}} className="rounded-lg px-3 py-2 bg-white/10">Transferir</button><button onClick={()=>{setMode("finish");setError("");}} className="rounded-lg px-3 py-2 bg-emerald-600">Finalizar</button></>}

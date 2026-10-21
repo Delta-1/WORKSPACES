@@ -1,4 +1,5 @@
 "use client";
+import EmployeeAccess from "@/components/employee/EmployeeAccess";
 
 import { useEffect, useState } from "react";
 import { Bell, Bot, Building2, Check, Download, FolderTree, GraduationCap, Image as ImageIcon, Laptop, MonitorDown, Package, Palette, PanelsTopLeft, Server, Sliders, Sparkles, Terminal } from "lucide-react";
@@ -246,6 +247,7 @@ export default function ConfigTab({
                     </button>
                   </div>
                   <p className="text-[11px] text-gray-500 mt-1">Compartilhe este código com seus colaboradores para eles acessarem a empresa no login.</p>
+                  <EmployeeAccess companyCode={companyCode} />
                 </div>
               )}
               <div>

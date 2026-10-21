@@ -4,13 +4,16 @@ import { useEffect, useState } from "react";
 import { Languages, Layers } from "lucide-react";
 import { supabase, supabaseConfigured } from "@/lib/supabase-client";
 import { APP_LANGUAGES, detectBrowserLanguage, rememberLanguage, type AppLanguage } from "@/lib/language";
+import InstallApp from "@/components/employee/InstallApp";
 
 export default function LoginScreen({
   onLogin,
   externalError,
+  employeeApp = false,
 }: {
   onLogin: (name: string) => void;
   externalError?: string | null;
+  employeeApp?: boolean;
 }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -24,6 +27,11 @@ export default function LoginScreen({
 
   useEffect(() => {
     queueMicrotask(() => setLanguage(detectBrowserLanguage()));
+    const code = new URLSearchParams(window.location.search).get("empresa");
+    if (code) {
+      queueMicrotask(() => setCompanyCode(code.trim().toUpperCase()));
+      localStorage.setItem("pendingCompanyCode", code.trim().toUpperCase());
+    }
   }, []);
 
   function stashCode() {
@@ -45,7 +53,7 @@ export default function LoginScreen({
     stashRegistrationLanguage();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: `${window.location.origin}${employeeApp ? "/atendimento" : "/"}` },
     });
     if (error) {
       setError(error.message);
@@ -66,7 +74,7 @@ export default function LoginScreen({
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { language } },
+          options: { data: { language }, emailRedirectTo: `${window.location.origin}${employeeApp ? "/atendimento" : "/"}` },
         });
         if (error) {
           setError(error.message);
@@ -79,20 +87,23 @@ export default function LoginScreen({
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) setError(error.message);
       }
+    } catch {
+      setError("Falha de conexão. Confira sua internet e tente novamente.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#060a12] p-4">
-      <div className="liquid-glass rounded-2xl p-8 w-full max-w-md shadow-2xl">
+    <div className="auth-screen fixed inset-0 flex items-start sm:items-center justify-center bg-[#060a12] p-4 overflow-y-auto">
+      <div className="liquid-glass rounded-2xl p-5 sm:p-8 w-full max-w-md shadow-2xl my-auto">
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-emerald-950 border border-emerald-500 rounded-2xl text-emerald-400 mb-3">
             <Layers size={26} />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Workspace</h1>
-          <p className="text-gray-400 text-sm mt-1">Central multiempresa de produtividade</p>
+          <h1 className="text-2xl font-bold tracking-tight">{employeeApp ? "Workspaces Atendimento" : "Workspace"}</h1>
+          <p className="text-gray-400 text-sm mt-1">{employeeApp ? "Entre com sua conta para atender os clientes da sua empresa." : "Central multiempresa de produtividade"}</p>
+          {employeeApp && <div className="mt-3 flex justify-center"><InstallApp /></div>}
         </div>
 
         {supabaseConfigured ? (
@@ -130,6 +141,9 @@ export default function LoginScreen({
             <div className="space-y-3">
               <input
                 type="email"
+                aria-label="E-mail"
+                autoComplete="username"
+                autoCapitalize="none"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="E-mail"
@@ -137,6 +151,8 @@ export default function LoginScreen({
               />
               <input
                 type="password"
+                aria-label="Senha"
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleEmailAuth()}
@@ -146,12 +162,14 @@ export default function LoginScreen({
               <div>
                 <input
                   value={companyCode}
+                  aria-label="Código empresarial"
+                  autoCapitalize="characters"
                   onChange={(e) => setCompanyCode(e.target.value.toUpperCase())}
-                  placeholder="Código empresarial (funcionários)"
+                  placeholder="Código da empresa"
                   className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none font-mono tracking-wider"
                 />
                 <p className="text-[11px] text-gray-500 mt-1">
-                  Funcionário? Cole o código da sua empresa. Dono? Deixe em branco — você cria a empresa no próximo passo.
+                  {employeeApp ? "Primeiro acesso: peça o código ao gestor. Você confirmará a empresa depois de entrar. Nos próximos acessos, basta seu e-mail e senha." : "Funcionário? Cole o código da sua empresa. Dono? Deixe em branco — você cria a empresa no próximo passo."}
                 </p>
               </div>
               {mode === "signup" && (
@@ -213,6 +231,7 @@ export default function LoginScreen({
             </button>
           </div>
         )}
+        {employeeApp && <a href="/ajuda/atendimento" className="flex min-h-11 items-center justify-center text-sm text-emerald-300 underline mt-3">Como instalar e fazer login</a>}
       </div>
     </div>
   );
