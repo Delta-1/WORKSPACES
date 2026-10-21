@@ -1,0 +1,206 @@
+name: Workspaces Android (APK + Play Store)
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace_url:
+        description: "URL HTTPS do app (vazio usa Workspaces Atendimento)"
+        type: string
+        required: false
+      version_name:
+        description: "Versão exibida ao usuário"
+        type: string
+        default: "1.1.0"
+      version_code:
+        description: "Código numérico maior que o último da Play Store (vazio: automático)"
+        type: string
+        required: false
+      sign_release:
+        description: "Assinar APK/AAB para distribuição (exige os quatro secrets ANDROID_*)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["android-workspace/**", ".github/workflows/android-workspaces.yml"]
+  pull_request:
+    paths: ["android-workspace/**", ".github/workflows/android-workspaces.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-workspaces-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      WORKSPACE_APP_URL: ${{ inputs.workspace_url || vars.WORKSPACE_APP_URL || 'https://workspaces-eta.vercel.app/atendimento' }}
+      WORKSPACE_VERSION_NAME: ${{ inputs.version_name || '1.1.0' }}
+    defaults:
+      run:
+        working-directory: android-workspace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+          # Release passwords are environment values, never a cached Gradle configuration.
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Configure version
+        env:
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+          ACTION_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import os
+          raw = os.environ.get('INPUT_VERSION_CODE') or str(100000 + int(os.environ['ACTION_RUN_NUMBER']))
+          if not raw.isascii() or not raw.isdigit() or not 0 < int(raw) <= 2100000000:
+              raise SystemExit('version_code precisa ser um inteiro de 1 a 2100000000')
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('WORKSPACE_BUILD_NUMBER=' + str(int(raw)) + '\n')
+          PY
+      - name: Restore upload signing key
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import os, base64
+          names = ['ANDROID_KEYSTORE_BASE64','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD']
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Configure os secrets do repositório: ' + ', '.join(missing))
+          path = os.path.join(os.environ['RUNNER_TEMP'], 'workspaces-upload.jks')
+          with open(path, 'wb') as f:
+              f.write(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+          os.chmod(path, 0o600)
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('WORKSPACE_KEYSTORE_PATH=' + path + '\n')
+          PY
+      - name: Build and lint APK + AAB
+        env:
+          WORKSPACE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          WORKSPACE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          WORKSPACE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle --no-daemon --no-configuration-cache :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease
+      - name: Collect packages and verify signatures
+        env:
+          SIGN_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_release }}
+        run: |
+          mkdir -p dist/test
+          cp app/build/outputs/apk/debug/app-debug.apk dist/test/Workspaces-teste.apk
+          cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk dist/test/Workspaces-test-runner.apk
+          if [ "$SIGN_RELEASE" = "true" ]; then
+            mkdir -p dist/release
+            cp app/build/outputs/apk/release/app-release.apk dist/release/Workspaces.apk
+            cp app/build/outputs/bundle/release/app-release.aab dist/release/Workspaces-playstore.aab
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/release/Workspaces.apk
+            jarsigner -verify dist/release/Workspaces-playstore.aab
+            echo '### APK e AAB de release assinados' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Use Workspaces-playstore.aab no teste interno da Play Console. Nenhum envio à loja foi realizado.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            mkdir -p dist/unsigned
+            cp app/build/outputs/bundle/release/app-release.aab dist/unsigned/Workspaces-sem-assinatura.aab
+            echo '### APK de teste pronto; AAB ainda sem assinatura' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Instale Workspaces-teste.apk. Para a Play Store configure os quatro secrets ANDROID_* e execute novamente marcando sign_release. O AAB desta execução NÃO deve ser enviado à loja.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          find dist -type f ! -name SHA256SUMS.txt -exec sha256sum {} \; > dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Workspaces-Android-APK-teste
+          path: android-workspace/dist/test/Workspaces-teste.apk
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Workspaces-Android-test-runner
+          path: android-workspace/dist/test/Workspaces-test-runner.apk
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        with:
+          name: Workspaces-PlayStore-assinado
+          path: android-workspace/dist/release/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        with:
+          name: Workspaces-AAB-sem-assinatura
+          path: android-workspace/dist/unsigned/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Workspaces-Android-validacao
+          path: |
+            android-workspace/app/build/reports/lint-results-release.html
+            android-workspace/dist/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/workspaces-upload.jks"
+
+  android-smoke:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 36]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Workspaces-Android-APK-teste
+          path: apks
+      - uses: actions/download-artifact@v4
+        with:
+          name: Workspaces-Android-test-runner
+          path: apks
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and open the actual APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install apks/Workspaces-teste.apk
+            adb install apks/Workspaces-test-runner.apk
+            adb shell am instrument -w -r com.workspace.app.debug.test/androidx.test.runner.AndroidJUnitRunner | tee android-smoke.txt
+            grep -q 'OK (1 test)' android-smoke.txt
+            adb pull /sdcard/Android/data/com.workspace.app.debug/files/android-smoke.png android-smoke.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Workspaces-Android-smoke-API-${{ matrix.api }}
+          path: |
+            android-smoke.txt
+            android-smoke.png
+          if-no-files-found: warn

@@ -54,3 +54,10 @@ whatsapp-service/.next/
 /android-workspace/local.properties
 /android-workspace/**/build/
 /supabase/.temp/
+
+# Android upload signing keys stay outside version control
+*.jks
+*.keystore
+/android-workspace/keystore.properties
+
+/android-workspace/dist/

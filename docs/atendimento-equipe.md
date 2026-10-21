@@ -48,9 +48,9 @@ Os novos aplicativos são o **Workspace completo**, separados dos agentes de ace
 - `android-workspace`: APK Android para teste e instalação corporativa.
 - Actions: **Build Workspace Apps (EXE + APK)**. Os arquivos ficam nos artifacts **Workspace-Windows** e **Workspace-Android** da execução.
 
-A build aceita `workspace_url` ou a variável do repositório `WORKSPACE_APP_URL`. Sem isso, cada aplicativo pede o endereço HTTPS no primeiro acesso e o guarda. Use e-mail e senha no aplicativo incorporado; o botão **Navegador** permite usar o login Google e as funções do navegador quando necessário. A sessão do navegador externo é separada da sessão incorporada.
+Para Android, prefira o workflow dedicado **Workspaces Android (APK + Play Store)**: APK de teste, AAB, assinatura opcional por secrets e teste de abertura em emuladores. O app abre direto no atendimento e usa e-mail/senha; a sessão do navegador externo é separada. [Manual Android e publicação](ANDROID.md).
 
-O site deve continuar hospedado: os aplicativos usam a mesma aplicação e banco, e recebem as melhorias do site. O APK gerado por padrão é de teste (`debug`). Para distribuição contínua com atualizações sobre a instalação anterior, adote assinatura de release com chave estável. O EXE deste workflow não tem assinatura de código comercial.
+O workflow combinado ainda gera o EXE e um APK de teste. A URL pode ser configurada no build; no Android o padrão é `https://workspaces-eta.vercel.app/atendimento`. O site e os serviços precisam continuar hospedados. O EXE não tem assinatura de código comercial.
 
 ## Implantação
 

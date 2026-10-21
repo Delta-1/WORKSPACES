@@ -118,3 +118,7 @@ Em **Configurações → Google Drive**, o Gestor pode ativar a sincronização 
 - Sincronização de arquivos (não só pastas) com o Google Drive.
 - Envio de mídia (foto/áudio/arquivo) pelo WhatsApp — hoje o envio pela plataforma é de texto.
 - O fallback in-process (`lib/whatsapp.ts`, usado sem `WHATSAPP_SERVICE_URL`) é single-número e não persiste no schema novo — use o `whatsapp-service` para o fluxo completo.
+
+## App Android instalável e Play Store
+
+O workflow [Workspaces Android (APK + Play Store)](https://github.com/Delta-1/WORKSPACES/actions/workflows/android-workspaces.yml) gera APK para instalação e AAB para publicação. [Manual de instalação, login e assinatura](docs/ANDROID.md).

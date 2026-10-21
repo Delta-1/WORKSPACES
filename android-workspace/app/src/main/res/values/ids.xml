@@ -1,0 +1,7 @@
+<resources>
+    <item name="workspace_root" type="id" />
+    <item name="workspace_web" type="id" />
+    <item name="workspace_reload" type="id" />
+    <item name="workspace_menu" type="id" />
+    <item name="workspace_error" type="id" />
+</resources>

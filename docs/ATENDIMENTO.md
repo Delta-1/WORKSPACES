@@ -2,7 +2,8 @@
 
 - Aplicativo da equipe: `/atendimento`.
 - Manual ilustrado online: `/ajuda/atendimento`.
-- É uma PWA instalável, com identidade própria e início direto em Mensagens. O sistema completo continua em `/`.
+- Versão web: PWA instalável, com identidade própria e início direto em Mensagens. O sistema completo continua em `/`.
+- Versão Android: APK instalável e AAB de release pelo workflow **Workspaces Android (APK + Play Store)**. Consulte [instalação, login e assinatura](ANDROID.md).
 
 ## Acesso do funcionário
 
