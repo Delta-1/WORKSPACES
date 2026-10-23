@@ -15,10 +15,12 @@ export default function MessageActions({ at, text, onEdit, onDelete }: {
   const [busy, setBusy] = useState(false);
   const [limits, setLimits] = useState({ edit: false, delete: false });
   const dialog = useRef<HTMLDialogElement>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (!mode) return;
     const element = dialog.current;
     if (element && !element.open) element.showModal();
+    if (mode === "edit") requestAnimationFrame(() => { editor.current?.focus(); editor.current?.setSelectionRange(editor.current.value.length, editor.current.value.length); });
     return () => element?.close();
   }, [mode]);
   function open() {
@@ -27,7 +29,7 @@ export default function MessageActions({ at, text, onEdit, onDelete }: {
     setDraft(text ?? ""); setError(""); setMode("options");
   }
   async function submit() {
-    if (busy) return;
+    if (busy || (mode === "edit" && (!draft.trim() || draft === text))) return;
     setBusy(true); setError("");
     try {
       if (mode === "edit") await onEdit?.(draft);
@@ -47,7 +49,7 @@ export default function MessageActions({ at, text, onEdit, onDelete }: {
         {onDelete && <button disabled={!limits.delete} onClick={() => setMode("delete")} className="flex w-full min-h-12 items-center gap-3 rounded-xl bg-red-500/10 px-4 text-left text-red-300 disabled:opacity-40"><Trash2 size={18} /> Apagar para todos</button>}
         <p className="pt-2 text-sm leading-6 text-slate-400">Texto pode ser editado por até 15 minutos. Você pode solicitar apagar para todos por até dois dias após o envio.</p>
       </div> : <>
-        {mode === "edit" ? <label className="block text-sm">Mensagem<textarea autoFocus aria-label="Novo texto da mensagem" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000} rows={5} disabled={busy} className="mt-2 w-full min-w-0 resize-y rounded-xl border border-white/15 bg-black/20 p-3 text-base outline-none focus:border-emerald-500" /></label>
+        {mode === "edit" ? <label className="block text-sm">Mensagem<textarea ref={editor} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void submit(); } }} aria-label="Novo texto da mensagem" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000} rows={5} disabled={busy} className="mt-2 w-full min-w-0 resize-y rounded-xl border border-white/15 bg-black/20 p-3 text-base outline-none focus:border-emerald-500" /></label>
           : <p className="text-sm leading-7 text-slate-300">A solicitação será enviada ao WhatsApp. A mensagem será substituída por um aviso de exclusão no histórico. Arquivos já salvos pelo destinatário podem permanecer no aparelho dele.</p>}
         {error && <p role="alert" className="mt-3 rounded-lg bg-red-950/40 p-3 text-sm text-red-300">{error}</p>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><button disabled={busy} onClick={() => setMode(null)} className="min-h-11 rounded-xl border border-white/15 px-4 disabled:opacity-40">Cancelar</button><button disabled={busy || (mode === "edit" && (!draft.trim() || draft === text))} onClick={() => void submit()} className={`min-h-11 rounded-xl px-4 font-semibold disabled:opacity-40 ${mode === "delete" ? "bg-red-700" : "bg-emerald-600"}`}>{busy ? "Confirmando no WhatsApp…" : mode === "edit" ? "Salvar edição" : "Apagar para todos"}</button></div>

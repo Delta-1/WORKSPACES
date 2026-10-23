@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import dynamic from "next/dynamic";
+import { mergeThreadMessages } from "@/lib/message-thread";
 import VoiceRecorder from "@/components/messages/VoiceRecorder";
 import AttachmentPreview from "@/components/messages/AttachmentPreview";
 import Bubble from "@/components/messages/MessageBubble";
@@ -222,12 +223,31 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [forwardMessage, setForwardMessage] = useState<WhatsappMessageRow | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const relatedConversationIds = useRef(new Set<string>());
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const selConvRef = useRef<string | null>(null);
   const selColRef = useRef<string | null>(null);
 
-  const scrollBottom = () =>
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }));
+  const scrollBottom = () => {
+    stickToBottom.current = true;
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }));
+  };
+  useLayoutEffect(() => {
+    if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [selConvId, messages, internal, threadLoading]);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [selConvId, selColleagueId]);
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !profile?.company_id) {
@@ -268,7 +288,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         void loadConversations(); void loadSide();
         const id = selConvRef.current;
         if (id) void fetchThread(id).then(rows => {
-          if (selConvRef.current === id) setMessages(rows);
+          if (selConvRef.current === id) mergeServerMessages(rows);
         }).catch(() => {});
       }
     };
@@ -322,7 +342,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const refresh = () => {
       loadConversations();
       const id = selConvRef.current;
-      if (id && supabase) void fetchThread(id).then(data => { if (selConvRef.current === id) setMessages(data); }).catch(() => {});
+      if (id && supabase) void fetchThread(id).then(data => { if (selConvRef.current === id) mergeServerMessages(data); }).catch(() => {});
     };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
@@ -337,20 +357,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
       .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages" }, (payload) => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages", filter: `company_id=eq.${profile.company_id}` }, (payload) => {
         const m = payload.new as WhatsappMessageRow;
         // Toca o som de notificação quando chega mensagem NOVA de cliente (in).
         if (m.direction === "in") playNotifSound(notifSoundRef.current, notifSoundUrlRef.current);
-        if (m.conversation_id === selConvRef.current) {
-          setMessages((prev) => {
-            if (prev.some((x) => x.id === m.id)) return prev;
-            // Substitui a bolha otimista (temp-) correspondente, se houver.
-            const withoutTemp = prev.filter(
-              (t) => !(t.id.startsWith("temp-") && t.direction === m.direction && (t.text || "") === (m.text || ""))
-            );
-            return [...withoutTemp, m];
-          });
-          scrollBottom();
+        if (relatedConversationIds.current.has(m.conversation_id)) {
+          setMessages(previous => mergeThreadMessages(previous, [m]));
+          if (stickToBottom.current) scrollBottom();
         } else if (m.direction === "in") {
           // Mensagem nova de cliente numa conversa que não está aberta → não-lida.
           setUnread((prev) => ({ ...prev, [m.conversation_id]: (prev[m.conversation_id] || 0) + 1 }));
@@ -378,14 +391,18 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   async function fetchThread(id: string): Promise<WhatsappMessageRow[]> {
     if (!supabase) return [];
-    const { data: current } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).maybeSingle();
-    if (!current) return [];
+    const { data: current, error: currentError } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).eq("company_id", profile?.company_id).maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) throw new Error("Esta conversa não está disponível. Atualize a lista de conversas.");
     let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
     related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
-    const { data: all } = await related;
+    const { data: all, error: relatedError } = await related;
+    if (relatedError) throw relatedError;
+    const ids = [...new Set([id, ...(all ?? []).map(c => c.id)])];
+    if (selConvRef.current === id) relatedConversationIds.current = new Set(ids);
     const rows: WhatsappMessageRow[] = [];
     for (let offset = 0;; offset += 500) {
-      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", (all ?? [{ id }]).map(c => c.id)).order("at").order("id").range(offset, offset + 499);
+      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at").order("id").range(offset, offset + 499);
       if (error) throw new Error(error.message);
       rows.push(...(data ?? []));
       if ((data ?? []).length < 500) return rows;
@@ -399,34 +416,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     selConvRef.current = id;
     setUnread((prev) => (prev[id] ? { ...prev, [id]: 0 } : prev)); // zera as não-lidas ao abrir
     if (!supabase) return;
-    setMessages([]);
-    try { const data = await fetchThread(id); if (selConvRef.current === id) setMessages(data); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao carregar histórico."); }
-    scrollBottom();
+    relatedConversationIds.current = new Set([id]);
+    stickToBottom.current = true;
+    setMessages([]); setThreadLoading(true); setThreadError("");
+    try { const data = await fetchThread(id); if (selConvRef.current === id) mergeServerMessages(data); }
+    catch (e) { if (selConvRef.current === id) setThreadError(e instanceof Error ? e.message : "Falha ao carregar histórico."); }
+    finally { if (selConvRef.current === id) setThreadLoading(false); }
   }
 
   // Mescla o que veio do servidor com as bolhas otimistas (temp-) ainda não
   // confirmadas. Usado pela rede de segurança (polling) para NUNCA perder uma
   // mensagem — sua ou do bot — mesmo se o realtime falhar/atrasar.
   function mergeServerMessages(rows: WhatsappMessageRow[]) {
-    setMessages((prev) => {
-      const known = new Map(prev.map(message => [message.id, message]));
-      // A request started before an edit/revoke may finish after realtime.
-      // Keep confirmed newer edits and irreversible deletion tombstones.
-      const freshRows = rows.map(row => {
-        const current = known.get(row.id);
-        if (current?.deleted_at && !row.deleted_at) return current;
-        if (current?.edited_at && Date.parse(current.edited_at) > (row.edited_at ? Date.parse(row.edited_at) : 0)) return current;
-        return row;
-      });
-      const temps = prev.filter(
-        (t) => t.id.startsWith("temp-") && !freshRows.some((d) => d.direction === t.direction && (d.text || "") === (t.text || ""))
-      );
-      const combined = [...freshRows, ...temps];
-      combined.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-      // Só re-renderiza/rola se algo mudou de fato.
-      const changed = combined.length !== prev.length || combined.some((m, i) => prev[i]?.id !== m.id || prev[i]?.text !== m.text || prev[i]?.edited_at !== m.edited_at || prev[i]?.deleted_at !== m.deleted_at || prev[i]?.media_url !== m.media_url || prev[i]?.media_type !== m.media_type);
-      if (combined.length !== prev.length) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
-      return changed ? combined : prev;
+    setMessages(previous => {
+      const merged = mergeThreadMessages(previous, rows);
+      return JSON.stringify(previous) === JSON.stringify(merged) ? previous : merged;
     });
   }
 
@@ -441,7 +445,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     if (result.message?.id === message.id) setMessages(previous => previous.map(row => row.id === message.id ? result.message : row));
     else {
       const selected = selConvRef.current;
-      if (selected) { const rows = await fetchThread(selected); if (selConvRef.current === selected) setMessages(rows); }
+      if (selected) { const rows = await fetchThread(selected); if (selConvRef.current === selected) mergeServerMessages(rows); }
     }
     await loadConversations();
   }
@@ -1366,14 +1370,21 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             </div>
 
             {selConv && profile && <AttendanceActions key={selConv.id} conversation={selConv} profile={profile} colleagues={colleagues} onChanged={loadConversations} />}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
+            <div ref={scrollRef} aria-label="Histórico de mensagens" onScroll={event => {
+              const element = event.currentTarget;
+              stickToBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+            }} className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
+              <div ref={contentRef} className="space-y-2">
+              {threadLoading && <p role="status" className="text-center text-sm text-slate-400 py-2">Carregando histórico…</p>}
+              {threadError && <div role="alert" className="text-center text-sm text-amber-200 py-2">{threadError}<button onClick={() => { if (selConvId) void openConv(selConvId); }} className="ml-2 underline">Tentar novamente</button></div>}
               {selConv &&
                 messages.map((m) => (
                   <Bubble key={m.id} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
-              {thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
+              {!threadLoading && !threadError && thread.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Nenhuma mensagem ainda.</p>}
+              </div>
             </div>
 
             {lockMsg && (

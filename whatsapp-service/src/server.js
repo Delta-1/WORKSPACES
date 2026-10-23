@@ -1,6 +1,7 @@
 import { createAutomationWorker } from "./automation-worker.js";
 import { mutateWhatsappMessage, syncWhatsappMutation, MESSAGE_MUTATIONS_VERSION } from "./message-mutations.js";
 import { savedMessageKey } from "./message-policy.js";
+import { replyWantsVoice, requestedReplyMode, geminiSpeech } from "./reply-voice.js";
 import { contactNamePatch } from "./contact-names.js";
 import express from "express";
 import QRCode from "qrcode";
@@ -10,9 +11,9 @@ import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import ffmpegPath from "ffmpeg-static";
-import { prepareVoiceAudio, prepareCompatibleAudio, audioProbeWav, checkVoiceAudio, COMPAT_AUDIO_MIME, VOICE_PIPELINE_VERSION } from "./voice-audio.js";
+import { prepareVoiceAudio, audioProbeWav, checkVoiceAudio, VOICE_MIME, VOICE_PIPELINE_VERSION } from "./voice-audio.js";
 import { createAudioRetryStore, installAudioDelivery, verifiedAudioUpload } from "./audio-delivery.js";
-const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, format: "mp3", ready: null, verifiedUploads: 0, rejectedUploads: 0, uploadProbeReady: null };
+const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, format: "ogg-opus-ptt", ready: null, verifiedUploads: 0, rejectedUploads: 0, uploadProbeReady: null };
 let audioUploadProbeRunning = false;
 void checkVoiceAudio(ffmpegPath).then(ready => { voiceAudioHealth.ready = ready; }, () => { voiceAudioHealth.ready = false; });
 import makeWASocket, {
@@ -25,6 +26,7 @@ import makeWASocket, {
   BufferJSON,
   makeCacheableSignalKeyStore,
   proto,
+  normalizeMessageContent,
 } from "baileys";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
@@ -660,7 +662,7 @@ async function findOrCreateOpenConversation(contactId, numberId, sectorId, compa
 // (entrar e continuar). Cria conversas como "atendendo" — nunca "espera" —
 // para NÃO disparar notificação de "novo cliente". Roda ao conectar.
 function historyPreview(m) {
-  const inner = m.message?.documentWithCaptionMessage?.message ?? m.message ?? {};
+  const inner = normalizeMessageContent(m.message) ?? {};
   return (
     inner.conversation ||
     inner.extendedTextMessage?.text ||
@@ -839,7 +841,8 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
   await supabase
     .from("conversations")
     .update({ last_message: row.text ?? "", last_message_at: now, updated_at: now })
-    .eq("id", conversationId);
+    .eq("id", conversationId)
+    .or(`last_message_at.is.null,last_message_at.lte.${now}`);
   return insertedId;
 }
 
@@ -859,11 +862,11 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
 // `media` é o registro de mídia para o histórico (type/url/name/mime), se houver.
 async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media = null, content = null } = {}) {
   if (content?.audio) {
-    if (content.mimetype !== COMPAT_AUDIO_MIME || content.ptt !== false) content = await prepareCompatibleAudio(content.audio, ffmpegPath);
-    if (media?.mime !== COMPAT_AUDIO_MIME) {
-      const audioUrl = await uploadMedia(content.audio, COMPAT_AUDIO_MIME, "out");
+    if (content.mimetype !== VOICE_MIME || content.ptt !== true) content = await prepareVoiceAudio(content.audio, ffmpegPath);
+    if (media?.mime !== VOICE_MIME) {
+      const audioUrl = await uploadMedia(content.audio, VOICE_MIME, "out");
       if (!audioUrl) throw Error("Não foi possível salvar o áudio compatível.");
-      media = { type: "audio", url: audioUrl, mime: COMPAT_AUDIO_MIME, name: "audio.mp3" };
+      media = { type: "audio", url: audioUrl, mime: VOICE_MIME, name: "audio.ogg" };
     }
   }
   // Audio is logged only after verified upload and submission, never as false success.
@@ -1063,6 +1066,23 @@ async function synthesizeSpeech(text, key, voiceId) {
     console.error("synthesizeSpeech failed:", err);
     return null;
   }
+}
+
+const speechStatus = { provider: null, error: null };
+async function synthesizeAgentSpeech(text, agent, companyId) {
+  const key = [agent?.elevenlabs_key, elevenKey].find(value => value?.startsWith("sk_"));
+  if (key) {
+    const speech = await synthesizeSpeech(text, key, agent?.elevenlabs_voice_id);
+    if (speech) { speechStatus.provider = "elevenlabs"; speechStatus.error = null; return speech; }
+  }
+  try {
+    const geminiKey = agent?.provider === "gemini" && agent?.api_key ? agent.api_key : await resolveAgentKey(companyId, "gemini");
+    const speech = await geminiSpeech(text, geminiKey);
+    if (speech) { speechStatus.provider = "gemini"; speechStatus.error = null; return speech; }
+    speechStatus.error = "Nenhuma credencial válida de voz disponível para esta empresa.";
+  } catch (error) { speechStatus.error = error?.message || "Falha no provedor de voz."; }
+  console.warn("Agent speech unavailable:", speechStatus.error);
+  return null;
 }
 
 // Converte o MP3 do ElevenLabs em OGG/Opus (formato que o WhatsApp toca como
@@ -1449,8 +1469,7 @@ async function deliverCopilotOutputs(sock, jid, conversation, cid, chatbot, { fi
           media = { type: isImg ? "image" : "document", url, name: s.file.name, mime: s.file.mime };
         }
       } else if (s.asAudio) {
-        const key = chatbot?.elevenlabs_key || elevenKey;
-        const mp3 = key ? await synthesizeSpeech(sanitizeForSpeech(s.text), key, chatbot?.elevenlabs_voice_id) : null;
+        const mp3 = await synthesizeAgentSpeech(sanitizeForSpeech(s.text), chatbot, cid);
         const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
         const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
         if (url) media = { type: "audio", url, name: null, mime: "audio/ogg" };
@@ -3185,7 +3204,7 @@ async function probeAudioUpload(sock) {
   if (audioUploadProbeRunning || voiceAudioHealth.uploadProbeReady !== null) return;
   audioUploadProbeRunning = true;
   try {
-    const content = await prepareCompatibleAudio(audioProbeWav(), ffmpegPath);
+    const content = await prepareVoiceAudio(audioProbeWav(), ffmpegPath);
     await prepareWAMessageMedia(content, { logger: noopLogger, upload: verifiedAudioUpload(sock, { health: voiceAudioHealth }) });
     voiceAudioHealth.uploadProbeReady = true;
   } catch (error) {
@@ -3246,14 +3265,12 @@ async function startSession(numberId) {
       }
     });
 
-    // Sincroniza a agenda e recupera apenas mensagens PRÓPRIAS recentes. Isso
-    // cobre o que foi enviado pelo telefone enquanto este serviço reconectava,
-    // sem importar todo o histórico antigo nem transformar mensagens recebidas
-    // antigas em novos atendimentos.
+    // Sincroniza ambos os lados do histórico fornecido pelo WhatsApp.
+    // Mensagens importadas não reabrem atendimentos nem acionam IA/automações.
     sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
       const { number } = await getNumberConfig(numberId);
       await syncContacts(contacts, number?.company_id ?? null, sock);
-      await syncRecentOutgoingHistory(sock, numberId, messages);
+      await syncRecentMessageHistory(sock, numberId, messages);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
@@ -3317,13 +3334,16 @@ async function startSession(numberId) {
         // Mensagem que VOCÊ enviou pelo app oficial do WhatsApp → espelha no site.
         // No multidispositivo ela pode chegar como "append", e não só "notify".
         if (msg.key.fromMe) {
-          if (type === "notify" || (type === "append" && isRecentWhatsappMessage(msg))) {
+          if (type === "notify" || type === "append") {
             await logOutgoingEcho(sock, numberId, msg, jid);
           }
           continue;
         }
         // Eventos append recebidos são histórico, não mensagem nova de cliente.
-        if (type !== "notify") continue;
+        if (type !== "notify") {
+          if (type === "append") await logOutgoingEcho(sock, numberId, msg, jid);
+          continue;
+        }
         // Marca como visualizada (tique azul) só quando o BOT for de fato
         // responder — não assim que a mensagem chega. Evita o "visualizou e
         // sumiu": só aparece o tique azul quando a resposta está a caminho.
@@ -3334,7 +3354,7 @@ async function startSession(numberId) {
           sock.readMessages([msg.key]).catch(() => {});
         };
         // Desembrulha documentos com legenda
-        const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
+        const inner = normalizeMessageContent(msg.message) ?? {};
         // Figurinha é uma imagem webp: entra pelo caminho de imagem (para o bot
         // ENXERGAR pela visão) e ganha uma marca no texto, para ele saber que foi
         // uma figurinha e poder reagir a isso.
@@ -3523,7 +3543,7 @@ async function startSession(numberId) {
             markSeen(); // só agora, que o bot vai mesmo processar e responder
             // Se o cliente mandou ÁUDIO, transcreve (ElevenLabs) para "ouvir".
             const wasAudio = mediaKind === "audio";
-            const botElevenKey = agentForReply?.elevenlabs_key || elevenKey;
+            const botElevenKey = [agentForReply?.elevenlabs_key, elevenKey].find(value => value?.startsWith("sk_"));
             const voiceReplyOn = agentForReply?.voice_reply !== false; // default ligado
             // Em grupo a IA recebe "Fulano: mensagem" — é o que ela precisa para
             // saber a quem está respondendo no meio de várias pessoas.
@@ -3533,8 +3553,8 @@ async function startSession(numberId) {
               // FALLBACK: sem ElevenLabs (ou se falhou), transcreve pela IA do bot
               // (Gemini/OpenAI). Assim o bot ENTENDE o áudio mesmo sem chave de voz.
               if (!customerText) {
-                const aiProv = agentForReply?.provider || "gemini";
-                const aiKey = agentForReply?.api_key || (await resolveAgentKey(cid, aiProv));
+                const aiProv = agentForReply?.provider === "openai" ? "openai" : "gemini";
+                const aiKey = agentForReply?.provider === aiProv && agentForReply?.api_key ? agentForReply.api_key : await resolveAgentKey(cid, aiProv);
                 if (aiKey) customerText = await transcribeWithAI(audioBuffer, node?.mimetype, aiProv, aiKey);
               }
               // Grava a TRANSCRIÇÃO no histórico (antes ficava só "🎵 Áudio" e o bot
@@ -3544,25 +3564,11 @@ async function startSession(numberId) {
                 await supabase.from("conversations").update({ last_message: customerText.slice(0, 120) }).eq("id", conversation.id).then(() => {}, () => {});
               }
             }
-            // Preferência de voz — para TODOS os agentes: a prioridade é responder
-            // em ÁUDIO. Se a pessoa pedir texto ("não posso ouvir áudio", "responde
-            // por texto"), troca para texto até ela pedir áudio de novo. A escolha
-            // fica guardada por conversa (coluna copilot_voice, reaproveitada).
-            // Preferência EXPLÍCITA (se a pessoa pediu texto ou áudio, respeita e guarda).
-            let explicitPref = conversation.copilot_voice; // true | false | null
-            if (customerText) {
-              if (/(responde|manda|escreve|prefiro|pode ser).{0,20}(por )?texto|n[aã]o posso (ouvir|escutar)|sem [aá]udio|por escrito/i.test(customerText)) {
-                explicitPref = false;
-                await supabase.from("conversations").update({ copilot_voice: false }).eq("id", conversation.id);
-              } else if (/(responde|manda|prefiro|pode ser|volta).{0,20}(por )?([aá]udio|voz)|fala comigo|me manda [aá]udio/i.test(customerText)) {
-                explicitPref = true;
-                await supabase.from("conversations").update({ copilot_voice: true }).eq("id", conversation.id);
-              }
-            }
-            // ESPELHA a forma da conversa: escreveu em texto → responde em texto;
-            // mandou áudio → responde em áudio. Preferência explícita (acima) vence.
-            const preferVoice = explicitPref === true || (explicitPref !== false && wasAudio);
-            const wantVoice = preferVoice && voiceReplyOn && !!botElevenKey;
+            // Uma preferência explícita continua válida até a pessoa pedir outra.
+            const requested = requestedReplyMode(customerText);
+            const preference = requested || (conversation.copilot_voice === false ? "text" : null);
+            if (requested) await supabase.from("conversations").update({ copilot_voice: requested === "audio" }).eq("id", conversation.id);
+            const wantVoice = replyWantsVoice({ wasAudio, requested: preference, enabled: voiceReplyOn, messageId: msg.key.id, text: customerText || "" });
             // Cliente pediu explicitamente para encerrar → fecha o atendimento,
             // agradece e (se houver) pede avaliação. Depois o sweep gera o relatório.
             if (!isCopilot && !continuous && customerText && /\b(quero|pode|podemos|vamos|prefiro)\s+(finaliz|encerr)|encerrar (o )?atendimento|pode (finalizar|encerrar)|era s[oó] isso[,. ]*(obrigad|valeu)/i.test(customerText)) {
@@ -3673,20 +3679,22 @@ async function startSession(numberId) {
               // Exceção: se a resposta for uma LISTAGEM, manda por TEXTO (mais fácil de ler).
               // Código Pix NUNCA vai por áudio: a pessoa precisa copiar.
               let sentAsAudio = false;
-              if (wantVoice && !looksLikeList(reply) && !contemCodigoPix(reply)) {
-                const speech = await synthesizeSpeech(sanitizeForSpeech(reply), botElevenKey, agentForReply?.elevenlabs_voice_id);
+              if (wantVoice && (wasAudio || !looksLikeList(reply)) && !contemCodigoPix(reply)) {
+                try {
+                const speech = await synthesizeAgentSpeech(sanitizeForSpeech(reply), agentForReply, cid);
                 // WhatsApp precisa de OGG/Opus para tocar a nota de voz.
                 const ogg = speech ? await mp3ToOpusOgg(speech) : null;
                 if (ogg) {
                   // Sobe o áudio ANTES para já registrar a linha com a mídia (log-first).
-                  const audioUrl = await uploadMedia(ogg, "audio/ogg", "out");
-                  await sendBotMessage(sock, jid, conversation.id, cid, {
+                  const audioUrl = await uploadMedia(ogg, VOICE_MIME, "out");
+                  const audioSent = await sendBotMessage(sock, jid, conversation.id, cid, {
                     text: reply,
-                    media: audioUrl ? { type: "audio", url: audioUrl, name: null, mime: "audio/ogg" } : null,
+                    media: audioUrl ? { type: "audio", url: audioUrl, name: null, mime: VOICE_MIME } : null,
                     content: { audio: ogg, mimetype: "audio/ogg; codecs=opus", ptt: true },
                   });
-                  sentAsAudio = true;
+                  sentAsAudio = !!audioSent?.key?.id;
                 }
+                } catch (error) { console.warn("Voice reply failed; sending text:", error?.message || error); }
               }
               if (!sentAsAudio) {
                 // Modo humanizado: em vez de um textão, vários balões curtos com
@@ -3777,25 +3785,25 @@ async function disconnectSession(numberId) {
 // outra linha — a web já salvou e o /send atualiza o wa_id nessa linha.
 const webSentWaIds = new Set();
 
-async function syncRecentOutgoingHistory(sock, numberId, messages) {
+async function syncRecentMessageHistory(sock, numberId, messages) {
   if (!Array.isArray(messages) || messages.length === 0) return;
   const recent = messages
-    .filter((msg) => msg?.key?.fromMe && isRecentWhatsappMessage(msg))
+    .filter((msg) => msg?.key?.id && msg?.message)
     .sort((a, b) => (whatsappMessageTime(a)?.getTime() || 0) - (whatsappMessageTime(b)?.getTime() || 0))
-    .slice(-250);
+    .slice(-500);
   for (const msg of recent) {
     const jid = msg?.key?.remoteJid;
     if (!jid || jid === "status@broadcast" || jid.endsWith("@newsletter")) continue;
     if (jid.endsWith("@g.us") && !(await getGroupConfig(numberId, jid))?.ai_enabled) continue;
     await logOutgoingEcho(sock, numberId, msg, jid);
   }
-  if (recent.length) console.log(`Sincronizadas ${recent.length} mensagens próprias recentes do WhatsApp`);
+  if (recent.length) console.log(`Sincronizadas ${recent.length} mensagens do histórico do WhatsApp`);
 }
 
 async function logOutgoingEcho(sock, numberId, msg, jid) {
   try {
-    if (msg?.key?.id && webSentWaIds.has(msg.key.id)) return; // já salvo pela web
-    const inner = msg.message?.documentWithCaptionMessage?.message ?? msg.message ?? {};
+    if (msg?.key?.fromMe && msg?.key?.id && webSentWaIds.has(msg.key.id)) return; // já salvo pela web
+    const inner = normalizeMessageContent(msg.message) ?? {};
     const ehFigurinha = !!inner.stickerMessage;
     const mediaKind = (inner.imageMessage || inner.stickerMessage)
       ? "image"
@@ -3819,7 +3827,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
           {},
           { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
         );
-        const url = await uploadMedia(buffer, node?.mimetype || null, "out");
+        const url = await uploadMedia(buffer, node?.mimetype || null, msg.key.fromMe ? "out" : "in");
         if (url) media = { type: ehFigurinha ? "sticker" : mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
       } catch (err) {
         console.error("Failed to download outgoing echo media:", err);
@@ -3834,7 +3842,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     // Num grupo, o "contato" é o próprio grupo — nunca o telefone do participante.
     const contact = jid.endsWith("@g.us")
       ? await upsertGroupContact(jid, (await getGroupConfig(numberId, jid))?.subject || null, cid)
-      : await upsertContact(phone, null, cid, jid);
+      : await upsertContact(phone, msg.key.fromMe ? null : msg.pushName || null, cid, jid);
     if (!contact) return;
     // IMPORTANTE: só REGISTRA a mensagem na conversa existente — NÃO reabre uma
     // conversa fechada. Reabrir aqui causava um loop: o sweep fechava e mandava
@@ -3844,6 +3852,7 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
       .from("conversations")
       .select("id")
       .eq("contact_id", contact.id)
+      .eq("number_id", numberId).eq("company_id", cid)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -3851,14 +3860,14 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     if (!conversationId) {
       const { data: created } = await supabase
         .from("conversations")
-        .insert({ contact_id: contact.id, status: "atendendo", number_id: numberId, sector_id: number?.sector_id ?? null, company_id: cid })
+        .insert({ contact_id: contact.id, status: "fechado", bot_paused: true, closed_at: new Date().toISOString(), number_id: numberId, sector_id: number?.sector_id ?? null, company_id: cid })
         .select("id")
         .single();
       conversationId = created?.id ?? null;
     }
     if (!conversationId) return;
     // waId = key.id → dedup contra o envio feito pelo próprio site.
-    await logMessage(conversationId, "out", text, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
+    await logMessage(conversationId, msg.key.fromMe ? "out" : "in", text || (mediaKind ? "Mídia do histórico indisponível para download" : ""), null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
   } catch (err) {
     console.error("logOutgoingEcho failed:", err);
   }
@@ -3930,12 +3939,12 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       if (media.type === "sticker") content = { sticker: buf };
       else if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
       else if (media.type === "audio") {
-        // A normal MP3 audio message avoids device-specific failures of PTT notes.
-        content = await prepareCompatibleAudio(buf, ffmpegPath);
+        // Native WhatsApp voice note, retaining verified CDN upload and retry recovery.
+        content = await prepareVoiceAudio(buf, ffmpegPath);
         // Keep the exact bytes sent, not the browser-only original, in history.
-        const audioUrl = await uploadMedia(content.audio, COMPAT_AUDIO_MIME, "out");
+        const audioUrl = await uploadMedia(content.audio, VOICE_MIME, "out");
         if (!audioUrl) throw new Error("Não foi possível salvar o áudio preparado. A gravação não foi enviada.");
-        media = { ...media, url: audioUrl, mime: COMPAT_AUDIO_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".mp3" };
+        media = { ...media, url: audioUrl, mime: VOICE_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".ogg" };
       }
       else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
       else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
@@ -3990,6 +3999,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     voiceAudio: voiceAudioHealth,
+    speech: speechStatus,
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
     messageMutations: { version: MESSAGE_MUTATIONS_VERSION, ready: Boolean(supabase) },
@@ -4464,9 +4474,8 @@ async function sendBillingMessage(numberId, to, text, agent, imageUrl = null) {
     await sendMessage(numberId, to, text, null, null).catch((e) => console.error("billing texto:", e?.message || e));
   }
   try {
-    const key = agent?.elevenlabs_key || elevenKey;
-    if (agent && agent.voice_reply !== false && key) {
-      const mp3 = await synthesizeSpeech(sanitizeForSpeech(text), key, agent.elevenlabs_voice_id);
+    if (agent && agent.voice_reply !== false) {
+      const mp3 = await synthesizeAgentSpeech(sanitizeForSpeech(text), agent, agent.company_id);
       const ogg = mp3 ? await mp3ToOpusOgg(mp3) : null;
       const url = ogg ? await uploadMedia(ogg, "audio/ogg", "out") : null;
       if (url) await sendMessage(numberId, to, "", null, { type: "audio", url, name: null, mime: "audio/ogg" }).catch(() => {});
@@ -4683,10 +4692,10 @@ const messageAutomationWorker = supabase ? createAutomationWorker({
       if(!response.ok)throw Error("Não foi possível carregar o áudio.");
       const reader=response.body.getReader(),chunks=[];let size=0;
       for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>10*1024*1024){await reader.cancel();throw Error("Áudio maior que 10 MB.");}chunks.push(Buffer.from(value));}
-      content=await prepareCompatibleAudio(Buffer.concat(chunks),ffmpegPath);
-      const audioUrl=await uploadMedia(content.audio,COMPAT_AUDIO_MIME,"out");
+      content=await prepareVoiceAudio(Buffer.concat(chunks),ffmpegPath);
+      const audioUrl=await uploadMedia(content.audio,VOICE_MIME,"out");
       if(!audioUrl)throw Error("Não foi possível salvar o áudio preparado.");
-      media={...media,url:audioUrl,mime:COMPAT_AUDIO_MIME,name:"audio.mp3"};
+      media={...media,url:audioUrl,mime:VOICE_MIME,name:"audio.ogg"};
     }
     const [{data:latest,error:cError},{data:rule,error:rError}]=await Promise.all([
       supabase.from("conversations").select("company_id,number_id,status,assignee_id,bot_paused").eq("id",conversation.id).maybeSingle(),

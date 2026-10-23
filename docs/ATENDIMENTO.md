@@ -32,3 +32,15 @@ O serviço usa os comandos nativos `edit` e `delete` do Baileys e só atualiza o
 Verificação desta atualização: 46 testes automáticos aprovados, incluindo serialização nativa MESSAGE_EDIT/REVOKE, rejeição sem alteração local, autoria, empresa, número, limites, chaves de grupos e sincronização de exclusão. Menus e diálogos testados em 320x568, 390x844, 844x390 e 1366x768 com respostas simuladas, incluindo cancelar, salvar, erro e apagar. A validação no banco usa transação com rollback; nenhum cliente recebeu mensagens nesses testes. Recebimento final em um aparelho WhatsApp real exige um destinatário de teste autorizado.
 
 `GET /api/whatsapp/features` permite conferir a versão do recurso no serviço persistente sem expor endereço ou credenciais desse serviço.
+
+
+### Mensagens e notas de voz (23/10/2026)
+
+- Envios manuais, automações e respostas de IA usam OGG/Opus com `ptt: true`, duração e waveform. A verificação do upload cifrado no CDN e a recuperação de mídia continuam obrigatórias; uma falha não é registrada como envio de áudio bem-sucedido.
+- A IA espelha áudios recebidos e responde principalmente por texto a textos, com respostas curtas ocasionais em voz. Pedido explícito por texto é respeitado; `voice_reply: false` desativa a voz.
+- Voz tenta ElevenLabs com chave válida e depois Gemini TTS com credencial Gemini do agente, da mesma empresa ou do ambiente. IDs de chave ElevenLabs não substituem a chave secreta. Sem credencial/quota de voz, a resposta permanece em texto; `/health` expõe somente o estado do provedor.
+- O histórico recebido do WhatsApp importa mensagens recebidas e enviadas, inclusive mensagens encapsuladas. Importação não aciona o bot, não reabre atendimentos e não substitui a prévia mais recente por uma mensagem antiga. O WhatsApp determina quanto histórico disponibiliza na reconexão.
+- O chat reúne atendimentos anteriores do mesmo contato e número, abre no final e mantém a posição de leitura ao consultar mensagens anteriores. Consultas atrasadas não removem mensagens recebidas, edições confirmadas ou avisos de exclusão.
+- A edição exige a versão correspondente do servidor WhatsApp; mantém autoria e limite de 15 minutos. O editor recebe foco e aceita Ctrl/Cmd+Enter.
+
+Validação: testes Node de mídia (conversão, cifra, upload e repetição), regras de edição/exclusão, mesclagem de histórico e síntese/seleção de voz; TypeScript e build de produção. Após publicar, conferir a revisão de ambos os serviços e `voiceAudio.pipelineVersion: 4`, `format: ogg-opus-ptt`, `ready` e `uploadProbeReady` no servidor.

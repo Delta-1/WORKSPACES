@@ -511,7 +511,7 @@ function AgentEditor({ agent, profile, onClose, onSaved }: { agent: Partial<Agen
             placeholder="Chave ElevenLabs deste agente (opcional — senão usa a da empresa/sistema)"
             className="w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] outline-none"
           />
-          <p className="text-[10px] text-gray-500">Cada agente pode ter a própria voz. Sem voz escolhida, usa a voz padrão do sistema. Pegue IDs de voz no painel da ElevenLabs.</p>
+          <p className="text-[10px] text-gray-500">Áudio recebido recebe resposta por voz; texto recebe principalmente texto. A voz personalizada usa uma chave ElevenLabs válida (sk_…), não o ID da chave. Se indisponível, tenta voz Gemini com as credenciais da mesma empresa.</p>
         </div>
 
         <label className="flex items-center gap-2 text-xs cursor-pointer">

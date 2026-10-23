@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const VOICE_MIME = 'audio/ogg; codecs=opus';
-export const VOICE_PIPELINE_VERSION = 3;
+export const VOICE_PIPELINE_VERSION = 4;
 export const COMPAT_AUDIO_MIME = 'audio/mpeg';
 const MAX_BYTES = 16 * 1024 * 1024;
 
