@@ -434,7 +434,7 @@ export default function WorkspaceApp({ employeeApp = false }: { employeeApp?: bo
       if (!loaded) return null;
       const pending = window.localStorage.getItem("pendingRegistrationLanguage");
       const metadataLanguage = authUser.user_metadata?.language;
-      const preferred = normalizeAppLanguage(pending || metadataLanguage || loaded.language);
+      const preferred = normalizeAppLanguage(pending || loaded.language || metadataLanguage);
       if (loaded.language !== preferred) {
         await supabase.from("profiles").update({ language: preferred }).eq("id", loaded.id);
       }
@@ -863,6 +863,7 @@ export default function WorkspaceApp({ employeeApp = false }: { employeeApp?: bo
           profileId={profile?.id}
           avatarUrl={profile?.avatar_url}
           language={appLanguage}
+          attendanceName={profile?.attendance_name} jobTitle={profile?.job_title} bio={profile?.bio}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
           onProfileUpdated={(patch) => {
@@ -870,12 +871,7 @@ export default function WorkspaceApp({ employeeApp = false }: { employeeApp?: bo
               setAppLanguage(patch.language);
               rememberLanguage(patch.language);
             }
-            setProfile((p) => (p ? {
-              ...p,
-              full_name: patch.full_name ?? p.full_name,
-              avatar_url: patch.avatar_url ?? p.avatar_url,
-              language: patch.language ?? p.language,
-            } : p));
+            setProfile(p => p ? { ...p, ...patch } : p);
           }}
         />
         </div>

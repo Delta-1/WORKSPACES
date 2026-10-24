@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import dynamic from "next/dynamic";
+import { attendantName } from "@/whatsapp-service/src/attendant-signature";
 import { mergeThreadMessages } from "@/lib/message-thread";
 import VoiceRecorder from "@/components/messages/VoiceRecorder";
 import AttachmentPreview from "@/components/messages/AttachmentPreview";
@@ -808,7 +809,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       media_url: media.url,
       media_name: media.name,
       media_mime: media.mime,
-      sender_id: profile?.id ?? null,
+      sender_id: profile?.id ?? null, signature_name: attendantName(profile),
       at: new Date().toISOString(),
     };
     if (selConvRef.current === selConv.id) { setMessages((prev) => [...prev, temp]); scrollBottom(); }
@@ -868,7 +869,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       media_url: null,
       media_name: null,
       media_mime: null,
-      sender_id: profile?.id ?? null,
+      sender_id: profile?.id ?? null, signature_name: attendantName(profile),
       at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, temp]);
@@ -909,7 +910,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const numberId = selConv.number_id;
     const temp: WhatsappMessageRow = {
       id: `temp-${crypto.randomUUID()}`, conversation_id: selConv.id, direction: "out", text,
-      media_type: null, media_url: null, media_name: null, media_mime: null, sender_id: profile?.id ?? null, at: new Date().toISOString(),
+      media_type: null, media_url: null, media_name: null, media_mime: null, sender_id: profile?.id ?? null, signature_name: attendantName(profile), at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, temp]);
     scrollBottom();
@@ -1379,7 +1380,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               {threadError && <div role="alert" className="text-center text-sm text-amber-200 py-2">{threadError}<button onClick={() => { if (selConvId) void openConv(selConvId); }} className="ml-2 underline">Tentar novamente</button></div>}
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
+                  <Bubble key={m.id} signatureName={m.signature_name} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}

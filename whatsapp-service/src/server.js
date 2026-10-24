@@ -1,5 +1,6 @@
 import { createAutomationWorker } from "./automation-worker.js";
 import { mutateWhatsappMessage, syncWhatsappMutation, MESSAGE_MUTATIONS_VERSION } from "./message-mutations.js";
+import { resolveAttendantSignature, signedText } from "./attendant-signature.js";
 import { savedMessageKey } from "./message-policy.js";
 import { replyWantsVoice, requestedReplyMode, geminiSpeech } from "./reply-voice.js";
 import { contactNamePatch } from "./contact-names.js";
@@ -773,13 +774,14 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null, signatureName = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
     direction,
     text: mediaLabel(media, text) || null,
     sender_id: senderId,
+    ...(signatureName ? { signature_name: signatureName } : {}),
     company_id: companyId,
   };
   if (messageAt) row.at = messageAt;
@@ -800,7 +802,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     const { data: existingWa, error: lookupError } = await supabase
       .from("whatsapp_messages").select("id").eq("wa_id", waId).limit(1).maybeSingle();
     if (existingWa?.id) {
-      const patch = { ...(waKey ? { wa_key: savedMessageKey(waKey) } : {}), ...(senderId && direction === "out" ? { sender_id: senderId } : {}) };
+      const patch = { ...(waKey ? { wa_key: savedMessageKey(waKey) } : {}), ...(senderId && direction === "out" ? { sender_id: senderId } : {}), ...(signatureName ? { signature_name: signatureName, text: row.text } : {}) };
       if (Object.keys(patch).length) await supabase.from("whatsapp_messages").update(patch).eq("id", existingWa.id);
       return existingWa.id;
     }
@@ -3927,6 +3929,8 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       conversationId = created?.id ?? null;
     }
   }
+  const signatureName = await resolveAttendantSignature(supabase, senderId, cid);
+  const outgoingText = signedText(text, signatureName);
   let loggedId = messageId;
   let sent = null;
   try {
@@ -3937,7 +3941,7 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       const mimetype = media.mime || undefined;
       let content;
       if (media.type === "sticker") content = { sticker: buf };
-      else if (media.type === "image") content = { image: buf, caption: text || undefined, mimetype };
+      else if (media.type === "image") content = { image: buf, caption: outgoingText || undefined, mimetype };
       else if (media.type === "audio") {
         // Native WhatsApp voice note, retaining verified CDN upload and retry recovery.
         content = await prepareVoiceAudio(buf, ffmpegPath);
@@ -3946,11 +3950,11 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
         if (!audioUrl) throw new Error("Não foi possível salvar o áudio preparado. A gravação não foi enviada.");
         media = { ...media, url: audioUrl, mime: VOICE_MIME, name: (media.name || "audio").replace(/\.[^.]+$/, "") + ".ogg" };
       }
-      else if (media.type === "video") content = { video: buf, caption: text || undefined, mimetype };
-      else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo" };
+      else if (media.type === "video") content = { video: buf, caption: outgoingText || undefined, mimetype };
+      else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo", caption: outgoingText || undefined };
       sent = await s.sock.sendMessage(jid, content);
     } else {
-      sent = await s.sock.sendMessage(jid, { text });
+      sent = await s.sock.sendMessage(jid, { text: outgoingText });
     }
     if (!sent?.key?.id) throw new Error("O WhatsApp não confirmou o envio. Confira a conversa antes de tentar novamente.");
   } catch (e) {
@@ -3961,10 +3965,10 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     // pelo messageId (envio pelo site), atualiza também os dados de mídia.
     if (sent?.key?.id) {
       webSentWaIds.add(sent.key.id);
-      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key);
+      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key, signatureName);
       setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
       if (loggedId) {
-        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key) };
+        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key), ...(signatureName ? { signature_name: signatureName, text: mediaLabel(media, text) || null } : {}) };
         if (media && messageId) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
         await supabase.from("whatsapp_messages").update(patch).eq("id", loggedId).then(() => {}, () => {});
       }
@@ -4000,6 +4004,7 @@ app.get("/health", (_req, res) => {
     revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     voiceAudio: voiceAudioHealth,
     speech: speechStatus,
+    attendantSignatures: { version: 1, enabled: true },
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
     messageMutations: { version: MESSAGE_MUTATIONS_VERSION, ready: Boolean(supabase) },

@@ -1,5 +1,7 @@
 import { mutationPatch, savedMessageKey, validateMessageMutation } from "./message-policy.js";
 
+import { signedText, withoutSignature } from "./attendant-signature.js";
+
 const join = value => Array.isArray(value) ? value[0] : value;
 const jid = value => String(value || "").replace(/:\d+(?=@)/, "");
 const active = new Set();
@@ -39,7 +41,7 @@ export async function mutateWhatsappMessage({ db, sock, messageId, numberId, com
     if (!key && contact?.jid && !contact.jid.endsWith("@g.us")) key = { id: message.wa_id, remoteJid: contact.jid, fromMe: true };
     if (!key || key.id !== message.wa_id || key.fromMe !== true) throw Error("A chave original desta mensagem não está disponível. Novos envios já guardam essa informação.");
     if (!sock) throw Error("Este número de WhatsApp não está conectado.");
-    const sent = await sock.sendMessage(key.remoteJid, action === "delete" ? { delete: key } : { text: text.trim(), edit: key });
+    const sent = await sock.sendMessage(key.remoteJid, action === "delete" ? { delete: key } : { text: signedText(text.trim(), message.signature_name), edit: key });
     if (!sent?.key?.id) throw Error("O WhatsApp não confirmou a alteração. Confira a conversa antes de repetir.");
     // Nothing changes locally if WhatsApp refuses the request.
     const patch = mutationPatch(action, text, new Date(now).toISOString());
@@ -76,6 +78,6 @@ export async function syncWhatsappMutation({ db, numberId, key, update, revokedS
     const timestamp = Number(update.messageTimestamp) * 1000;
     const at = !deleted && Number.isFinite(timestamp) && timestamp > 0 ? timestamp : now;
     if (!deleted && row.edited_at && Date.parse(row.edited_at) > at) continue;
-    await updateMessageHistory(db, row, mutationPatch(deleted ? "delete" : "edit", text, new Date(at).toISOString()));
+    await updateMessageHistory(db, row, mutationPatch(deleted ? "delete" : "edit", withoutSignature(text, row.signature_name), new Date(at).toISOString()));
   }
 }

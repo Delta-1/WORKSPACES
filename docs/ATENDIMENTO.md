@@ -44,3 +44,14 @@ Verificação desta atualização: 46 testes automáticos aprovados, incluindo s
 - A edição exige a versão correspondente do servidor WhatsApp; mantém autoria e limite de 15 minutos. O editor recebe foco e aceita Ctrl/Cmd+Enter.
 
 Validação: testes Node de mídia (conversão, cifra, upload e repetição), regras de edição/exclusão, mesclagem de histórico e síntese/seleção de voz; TypeScript e build de produção. Após publicar, conferir a revisão de ambos os serviços e `voiceAudio.pipelineVersion: 4`, `format: ogg-opus-ptt`, `ready` e `uploadProbeReady` no servidor.
+
+
+### Perfil e identificação do atendente (24/10/2026)
+
+Qualquer usuário pode abrir o avatar no canto superior direito e escolher **Editar perfil** para alterar nome da conta, foto, nome de atendimento, cargo/função, sobre mim e idioma. Cargo/função é uma apresentação pessoal; permissões continuam vinculadas ao cargo de acesso da conta. O formulário confirma a gravação antes de fechar e mantém os dados preenchidos quando houver erro. Nome, idioma e remoção de foto persistem após novo login.
+
+O nome de atendimento aparece como assinatura em negrito no rodapé de textos e legendas enviados manualmente pelo Workspace. Quando vazio, usa o nome da conta; sem nome, usa “Atendente”. O servidor resolve o remetente autenticado e a empresa do número, sem aceitar nomes enviados pelo navegador. Automações e bots mantêm suas próprias mensagens. Áudios e figurinhas mantêm seus formatos nativos: a identificação consta no histórico interno, pois esses formatos não recebem uma legenda no WhatsApp.
+
+Cada mensagem guarda `signature_name`, uma cópia do nome no momento do envio. Alterar o perfil não reescreve mensagens antigas. A edição mantém essa assinatura, enquanto o editor permite modificar somente o texto, sem duplicar o rodapé. Excluir uma mensagem remove também sua apresentação visual.
+
+Migração: `attendant_profile_signatures`. Adiciona nome de atendimento, preferência de idioma quando ausente e cópia de assinatura na mensagem. `ensure_profile` usa metadados OAuth somente para criar um perfil novo; em perfis existentes, preserva a personalização salva.

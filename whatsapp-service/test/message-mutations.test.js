@@ -62,3 +62,12 @@ test('events from another chat or channel and ordinary receipts do not alter his
  await syncWhatsappMutation({db:f.db,numberId:'number',key:{id:'ORIGINAL',remoteJid:'123@lid'},update:{status:3},revokedStubType:1});assert.equal(f.row.text,'Original');assert.equal(f.row.deleted_at,null);
 });
 test('editing older content does not replace a newer conversation preview',async()=>{const f=fixture();f.rows.unshift({...original(),id:'newer',text:'Newer'});f.preview.last_message='Newer';await mutateWhatsappMessage({...f.args,action:'edit',text:'Old corrected'});assert.equal(f.preview.last_message,'Newer');});
+
+test('editing a signed message retains its original operator name, with an unsigned editor body',async()=>{
+ const f=fixture({signature_name:'Vanessa • Suporte'});
+ await mutateWhatsappMessage({...f.args,action:'edit',text:'Corrigido'});
+ assert.equal(f.calls[0].content.text,'Corrigido\n\n*Vanessa • Suporte*');
+ assert.equal(f.row.text,'Corrigido');assert.equal(f.row.signature_name,'Vanessa • Suporte');
+ await syncWhatsappMutation({db:f.db,numberId:'number',key:{id:'ORIGINAL',remoteJid:'123@lid'},revokedStubType:1,now:NOW,update:{message:{editedMessage:{message:{conversation:'Editado no celular\n\n*Vanessa • Suporte*'}}}}});
+ assert.equal(f.row.text,'Editado no celular');assert.equal(f.row.signature_name,'Vanessa • Suporte');
+});
