@@ -281,6 +281,31 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setNumbers((n.data as WhatsappNumber[]) ?? []);
   }, [profile]);
 
+  const fetchThread = useCallback(async (id: string, recentOnly = false): Promise<WhatsappMessageRow[]> => {
+    if (!supabase) return [];
+    const { data: current, error: currentError } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).eq("company_id", profile?.company_id).maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) throw new Error("Esta conversa não está disponível. Atualize a lista de conversas.");
+    let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
+    related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
+    const { data: all, error: relatedError } = await related;
+    if (relatedError) throw relatedError;
+    const ids = [...new Set([id, ...(all ?? []).map(c => c.id)])];
+    if (selConvRef.current === id) relatedConversationIds.current = new Set(ids);
+    if (recentOnly) {
+      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at", { ascending: false }).order("id", { ascending: false }).limit(100);
+      if (error) throw new Error(error.message);
+      return (data ?? []).reverse();
+    }
+    const rows: WhatsappMessageRow[] = [];
+    for (let offset = 0;; offset += 500) {
+      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at").order("id").range(offset, offset + 499);
+      if (error) throw new Error(error.message);
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < 500) return rows;
+    }
+  }, [profile?.company_id]);
+
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const update = () => {
@@ -348,14 +373,19 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
-  }, [loadConversations]);
+  }, [loadConversations, fetchThread]);
 
   useEffect(() => {
     if (!supabase || !profile?.company_id) return;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const refreshList = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => { refreshTimer = null; void loadConversations(); }, 100);
+    };
     const ch = supabase
       .channel(`messages-tab-${profile.company_id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
-      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `company_id=eq.${profile.company_id}` }, () => loadConversations())
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, refreshList)
+      .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `company_id=eq.${profile.company_id}` }, refreshList)
       .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "whatsapp_messages", filter: `company_id=eq.${profile.company_id}` }, (payload) => {
@@ -369,12 +399,12 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           // Mensagem nova de cliente numa conversa que não está aberta → não-lida.
           setUnread((prev) => ({ ...prev, [m.conversation_id]: (prev[m.conversation_id] || 0) + 1 }));
         }
-        loadConversations();
+        refreshList();
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "whatsapp_messages", filter: `company_id=eq.${profile.company_id}` }, payload => {
         const message = payload.new as WhatsappMessageRow;
-        setMessages(previous => previous.map(row => row.id === message.id ? message : row));
-        void loadConversations();
+        if (relatedConversationIds.current.has(message.conversation_id)) setMessages(previous => mergeThreadMessages(previous, [message]));
+        refreshList();
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages" }, (payload) => {
         const m = payload.new as InternalMessage;
@@ -384,31 +414,19 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           scrollBottom();
         }
       })
-      .subscribe();
+      .subscribe(status => {
+        if (status === "SUBSCRIBED") {
+          refreshList();
+          const id = selConvRef.current;
+          if (id) void fetchThread(id, true).then(rows => { if (selConvRef.current === id) mergeServerMessages(rows); }).catch(() => {});
+        }
+      });
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       if (supabase) supabase.removeChannel(ch);
     };
-  }, [loadConversations, loadSide, profile?.id, profile?.company_id]);
+  }, [loadConversations, loadSide, profile?.id, profile?.company_id, fetchThread]);
 
-  async function fetchThread(id: string): Promise<WhatsappMessageRow[]> {
-    if (!supabase) return [];
-    const { data: current, error: currentError } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).eq("company_id", profile?.company_id).maybeSingle();
-    if (currentError) throw currentError;
-    if (!current) throw new Error("Esta conversa não está disponível. Atualize a lista de conversas.");
-    let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
-    related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
-    const { data: all, error: relatedError } = await related;
-    if (relatedError) throw relatedError;
-    const ids = [...new Set([id, ...(all ?? []).map(c => c.id)])];
-    if (selConvRef.current === id) relatedConversationIds.current = new Set(ids);
-    const rows: WhatsappMessageRow[] = [];
-    for (let offset = 0;; offset += 500) {
-      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at").order("id").range(offset, offset + 499);
-      if (error) throw new Error(error.message);
-      rows.push(...(data ?? []));
-      if ((data ?? []).length < 500) return rows;
-    }
-  }
 
   async function openConv(id: string) {
     setSelColleagueId(null);
@@ -451,8 +469,9 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     await loadConversations();
   }
 
-  // Rede de segurança: enquanto uma conversa está aberta, revalida as mensagens
-  // a cada 2s. Garante que mensagens enviadas (por mim ou pelo bot, incl. áudio)
+  // Rede de segurança: revalida só as 100 mensagens recentes a cada 1,5s.
+  // O histórico completo permanece carregado e é mesclado sem apagar respostas.
+  // Garante que mensagens enviadas (por mim ou pelo bot, incl. áudio)
   // apareçam rápido mesmo que o evento realtime não chegue.
   useEffect(() => {
     if (!supabase || !selConvId) return;
@@ -462,11 +481,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       if (pending || document.hidden) return;
       pending = true;
       try {
-        const rows = await fetchThread(selConvId);
+        const rows = await fetchThread(selConvId, true);
         if (!cancelled && selConvRef.current === selConvId) mergeServerMessages(rows);
       } catch { /* Keep the current thread during a temporary network failure. */ }
       finally { pending = false; }
-    }, 2000);
+    }, 1500);
     return () => { cancelled = true; clearInterval(poll); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selConvId]);

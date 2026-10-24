@@ -28,7 +28,7 @@ export default function VoiceRecorder({ disabled, hidden, onSend, onRecordingCha
    if(!alive.current){input.getTracks().forEach(t=>t.stop());return;}
    stream.current=input;
    const mime=["audio/webm;codecs=opus","audio/ogg;codecs=opus","audio/mp4"].find(m=>MediaRecorder.isTypeSupported(m));
-   const rec=new MediaRecorder(input,mime?{mimeType:mime}:undefined);recorder.current=rec;
+   const rec=new MediaRecorder(input,{...(mime?{mimeType:mime}:{}),audioBitsPerSecond:64000});recorder.current=rec;
    const chunks:Blob[]=[];let failed=false;
    rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
    rec.onerror=()=>{failed=true;if(alive.current)setError("A gravação falhou. Grave novamente.");if(rec.state!=="inactive")rec.stop();};
@@ -45,7 +45,7 @@ export default function VoiceRecorder({ disabled, hidden, onSend, onRecordingCha
     const file=new File([blob],`audio-${Date.now()}.${ext}`,{type});
     url.current=URL.createObjectURL(file);setDraft({file,url:url.current});
    };
-   rec.start(250);setRecording(true);onRecordingChange(true);setSeconds(0);
+   rec.start(1000);setRecording(true);onRecordingChange(true);setSeconds(0);
    const started=Date.now();timer.current=setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);setSeconds(s);if(s>=600&&rec.state!=="inactive")rec.stop();},250);
   }catch(e){stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;setError(e instanceof Error&&e.name!=="NotAllowedError"?e.message:"Permita o acesso ao microfone para gravar áudio.");}
   finally{if(alive.current)setStarting(false);}

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, createHmac, createDecipheriv } from 'node:crypto';
 import { prepareVoiceAudio, prepareCompatibleAudio, checkVoiceAudio, VOICE_MIME, COMPAT_AUDIO_MIME } from '../src/voice-audio.js';
+import { inspectOpusOgg } from '../src/ogg.js';
 import { prepareWAMessageMedia, getMediaKeys } from 'baileys';
 
 const binary = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -45,6 +46,12 @@ for (const [format, codec] of [['webm', 'libopus'], ['mp4', 'aac'], ['mp3', 'lib
       assert.equal(voice.waveform.length, 64);
       assert.ok(voice.waveform.some(v => v > 0));
       assert.equal(voice.audio.subarray(0, 4).toString(), 'OggS');
+      assert.equal(voice.fileName, 'audio.ogg');
+      const inspected = inspectOpusOgg(voice.audio);
+      assert.equal(inspected.channels, 1);assert.ok(inspected.duration > 0.2 && inspected.duration < 0.6);
+      const corrupt = Buffer.from(voice.audio);corrupt[corrupt.length - 1] ^= 1;
+      assert.throws(() => inspectOpusOgg(corrupt), /checksum/);
+      assert.throws(() => inspectOpusOgg(voice.audio.subarray(0, -1)), /Truncated/);
       const normalized = join(dir, 'normalized.ogg');
       await writeFile(normalized, voice.audio);
       const played = spawnSync(binary, ['-v', 'error', '-i', normalized, '-f', 'null', '-']);
@@ -82,4 +89,15 @@ test('unavailable converter, corrupt and empty recordings fail without a raw aud
 });
 test('startup codec self-test runs offline', { skip: !available }, async () => {
   assert.equal(await checkVoiceAudio(binary), true);
+});
+
+test('browser timestamps are reset before encoding a native voice note', {skip:!available}, async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'voice-timestamp-'));
+ try {
+  const source=join(dir,'offset.webm');
+  const generated=spawnSync(binary,['-v','error','-y','-f','lavfi','-i','sine=frequency=440:duration=0.4','-af','asetpts=PTS+300/TB','-c:a','libopus',source]);
+  assert.equal(generated.status,0,generated.stderr?.toString());
+  const voice=await prepareVoiceAudio(await readFile(source),binary);
+  assert.equal(voice.seconds,1);assert.ok(inspectOpusOgg(voice.audio).duration<1);
+ }finally{await rm(dir,{recursive:true,force:true});}
 });

@@ -1,3 +1,5 @@
+import { resolveIncomingIdentity } from "./chat-identity.js";
+import { createMessageLane, persistIncoming, retryIncoming } from "./message-ingestion.js";
 import { createAutomationWorker } from "./automation-worker.js";
 import { mutateWhatsappMessage, syncWhatsappMutation, MESSAGE_MUTATIONS_VERSION } from "./message-mutations.js";
 import { resolveAttendantSignature, signedText } from "./attendant-signature.js";
@@ -16,6 +18,7 @@ import { prepareVoiceAudio, audioProbeWav, checkVoiceAudio, VOICE_MIME, VOICE_PI
 import { createAudioRetryStore, installAudioDelivery, verifiedAudioUpload } from "./audio-delivery.js";
 const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, format: "ogg-opus-ptt", ready: null, verifiedUploads: 0, rejectedUploads: 0, uploadProbeReady: null };
 let audioUploadProbeRunning = false;
+const incomingHealth = { version: 1, persisted: 0, persistErrors: 0, processingErrors: 0, lastPersistLatencyMs: null, lastPersistAt: null };
 void checkVoiceAudio(ffmpegPath).then(ready => { voiceAudioHealth.ready = ready; }, () => { voiceAudioHealth.ready = false; });
 import makeWASocket, {
   useMultiFileAuthState,
@@ -446,7 +449,7 @@ async function fetchAvatar(sock, jid, contact) {
   }
 }
 
-async function upsertContact(phone, name = null, companyId = null, jid = null) {
+async function upsertContact(phone, name = null, companyId = null, jid = null, aliases = []) {
   if (!supabase) return null;
   // Dedup: casa pelo telefone OU pelo JID (mesma pessoa pode chegar como
   // telefone e como @lid). Assim NÃO cria contato/conversa duplicados.
@@ -465,7 +468,7 @@ async function upsertContact(phone, name = null, companyId = null, jid = null) {
       .from("contacts")
       .select("*")
       .eq("company_id", companyId)
-      .eq("jid", jid)
+      .in("jid", [...new Set([jid, ...aliases])]).limit(1)
       .maybeSingle();
     existing = data;
   }
@@ -864,7 +867,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
 // `media` é o registro de mídia para o histórico (type/url/name/mime), se houver.
 async function sendBotMessage(sock, jid, conversationId, cid, { text = "", media = null, content = null } = {}) {
   if (content?.audio) {
-    if (content.mimetype !== VOICE_MIME || content.ptt !== true) content = await prepareVoiceAudio(content.audio, ffmpegPath);
+    if (content.mimetype !== VOICE_MIME || content.ptt !== true || !content.seconds || !content.waveform) content = await prepareVoiceAudio(content.audio, ffmpegPath);
     if (media?.mime !== VOICE_MIME) {
       const audioUrl = await uploadMedia(content.audio, VOICE_MIME, "out");
       if (!audioUrl) throw Error("Não foi possível salvar o áudio compatível.");
@@ -3322,8 +3325,13 @@ async function startSession(numberId) {
       }
     });
 
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      for (const msg of messages) {
+    const intake = createMessageLane();
+    const replies = createMessageLane();
+    const history = createMessageLane();
+    const receivedIds = new Set();
+    const ingestOne = async (message, type, receivedAt) => {
+      for (const msg of [message]) {
+        if (type === "notify" && !msg.key.fromMe && msg.key.id && receivedIds.has(msg.key.id)) continue;
         const protocol = msg.message?.protocolMessage;
         if (protocol && [proto.Message.ProtocolMessage.Type.REVOKE, proto.Message.ProtocolMessage.Type.MESSAGE_EDIT].includes(protocol.type)) continue;
         const jid = msg.key.remoteJid;
@@ -3375,33 +3383,16 @@ async function startSession(numberId) {
         const text =
           (inner.conversation || inner.extendedTextMessage?.text || node?.caption || "") + (ehFigurinha ? " [a pessoa mandou uma figurinha]" : "");
 
-        let media = null;
+        let media = mediaKind ? { type: ehFigurinha ? "sticker" : mediaKind, url: null, name: node?.fileName || null, mime: node?.mimetype || null } : null;
         let audioBuffer = null;
         let imageBuffer = null;
-        if (mediaKind) {
-          try {
-            const buffer = await downloadMediaMessage(
-              { key: msg.key, message: inner },
-              "buffer",
-              {},
-              { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
-            );
-            if (mediaKind === "audio") audioBuffer = buffer; // guarda p/ transcrever
-            if (mediaKind === "image") imageBuffer = buffer; // guarda p/ visão do bot
-            const url = await uploadMedia(buffer, node?.mimetype || null, "in");
-            if (url) media = { type: ehFigurinha ? "sticker" : mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
-          } catch (err) {
-            console.error("Failed to download incoming media:", err);
-          }
-        }
 
-        if (!text && !media) continue;
+        if (!text && !mediaKind) continue;
         // No WhatsApp novo o remoteJid pode ser um LID (@lid). Guardamos o JID
         // real (para responder certo) e, quando dá, o telefone verdadeiro que
         // vem em remoteJidAlt.
-        const isLid = jid.endsWith("@lid");
-        const altJid = msg.key.remoteJidAlt || null;
-        const phone = isLid && altJid ? altJid.split("@")[0] : jid.split("@")[0];
+        const identity = await resolveIncomingIdentity(msg.key, sock);
+        const phone = identity.phone;
         const contactJid = jid; // responde pelo mesmo canal que recebeu
         const ehGrupo = !!grupo;
         // Em grupo quem fala é um participante, não o "dono" do chat. O nome vai
@@ -3413,6 +3404,7 @@ async function startSession(numberId) {
         try {
           const { number, chatbot: chatbotDoNumero } = await getNumberConfig(numberId);
           const cid = number?.company_id ?? null;
+          if (!cid) throw Error("Incoming number configuration is unavailable");
           // O grupo pode ter um agente próprio; sem isso, usa o do número.
           let chatbot = chatbotDoNumero;
           if (ehGrupo && grupo.chatbot_id) {
@@ -3421,16 +3413,53 @@ async function startSession(numberId) {
           }
           const contact = ehGrupo
             ? await upsertGroupContact(jid, grupo.subject, cid)
-            : await upsertContact(phone, msg.pushName || null, cid, contactJid);
-          if (!contact) continue;
+            : await upsertContact(phone, msg.pushName || null, cid, contactJid, identity.aliases);
+          if (!contact) throw Error("Incoming contact could not be saved");
           void fetchAvatar(sock, contactJid, contact); // foto de perfil (best-effort)
-          const { conversation, created } = await findOrCreateOpenConversation(
+          let { conversation, created } = await findOrCreateOpenConversation(
             contact.id,
             numberId,
             number?.sector_id ?? null,
             cid
           );
-          const inMsgId = await logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
+          if (!conversation) throw Error("Incoming conversation could not be saved");
+          const inMsgId = await persistIncoming(() => logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key));
+          if (msg.key.id) { receivedIds.add(msg.key.id); if (receivedIds.size > 5000) receivedIds.delete(receivedIds.values().next().value); }
+          incomingHealth.persisted++;
+          incomingHealth.lastPersistLatencyMs = Date.now() - receivedAt;
+          incomingHealth.lastPersistAt = new Date().toISOString();
+          // Queue follow-up work only after history is visible. The next message
+          // can now persist while this chat's AI or media download is running.
+          void replies.run(conversation.id, async () => {
+          if (mediaKind) {
+            try {
+              const buffer = await downloadMediaMessage(
+                { key: msg.key, message: inner },
+                "buffer",
+                {},
+                { reuploadRequest: sock.updateMediaMessage, logger: noopLogger }
+              );
+              if (mediaKind === "audio") audioBuffer = buffer; // guarda p/ transcrever
+              if (mediaKind === "image") imageBuffer = buffer; // guarda p/ visão do bot
+              const url = await uploadMedia(buffer, node?.mimetype || null, "in");
+              if (url) media = { type: ehFigurinha ? "sticker" : mediaKind, url, name: node?.fileName || null, mime: node?.mimetype || null };
+            } catch (err) {
+              console.error("Failed to download incoming media:", err);
+            }
+          }
+
+          if (mediaKind) {
+            const patch = media?.url
+              ? { media_type: media.type, media_url: media.url, media_name: media.name, media_mime: media.mime }
+              : { text: textoRegistrado || "Mídia recebida. Não foi possível baixar o arquivo; peça ao cliente para reenviar." };
+            const { error } = await supabase.from("whatsapp_messages").update(patch).eq("id", inMsgId);
+            if (error) console.error("Incoming media history update failed:", error.message);
+          }
+          const { data: freshConversation } = await supabase.from("conversations").select("*").eq("id", conversation.id).eq("company_id", cid).maybeSingle();
+          if (freshConversation) conversation = freshConversation;
+
+
+          if (mediaKind && !media?.url && !audioBuffer && !imageBuffer) return;
 
           // COBRADOR — comprovante de pagamento: se o cliente tem uma cobrança em
           // aberto e mandou uma FOTO/DOCUMENTO, tratamos como comprovante: salvamos
@@ -3440,7 +3469,7 @@ async function startSession(numberId) {
             try {
               markSeen(); // pode ser um comprovante — se for, o Cobrador confirma na hora
               const handled = await handleBillingProof({ sock, jid: contactJid, conversation, cid, contactId: contact.id, media, imageBuffer, mime: node?.mimetype || null });
-              if (handled) continue; // comprovante tratado — não aciona o bot de atendimento
+              if (handled) return; // comprovante tratado — não aciona o bot de atendimento
             } catch (e) {
               console.error("handleBillingProof failed:", e?.message || e);
             }
@@ -3465,7 +3494,7 @@ async function startSession(numberId) {
                 for (const r of replies) {
                   await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
                 }
-                continue; // tratado pelo /configia; pula o bot normal
+                return; // tratado pelo /configia; pula o bot normal
               }
             } catch (e) {
               console.error("configia failed:", e?.message || e);
@@ -3481,7 +3510,7 @@ async function startSession(numberId) {
               if (replies && replies.length) {
                 markSeen();
                 for (const r of replies) await sendBotMessage(sock, contactJid, conversation.id, cid, { text: r });
-                continue; // ainda autenticando (ou acabou de liberar) — não aciona o bot de atendimento
+                return; // ainda autenticando (ou acabou de liberar) — não aciona o bot de atendimento
               }
             } catch (e) {
               console.error("copilot auth failed:", e?.message || e);
@@ -3492,7 +3521,7 @@ async function startSession(numberId) {
           // group traffic, configuration logins or the private copilot line.
           if (!ehGrupo && !number?.is_copilot && !contact?.copilot_access && msg.key.id && isRecentWhatsappMessage(msg, 120000) && messageAutomationWorker) {
             const handled = await messageAutomationWorker.incoming({numberId,companyId:cid,conversation,messageKey:msg.key.id,text:text || "",name:contact.saved_name || contact.name || phone});
-            if (handled) { markSeen(); void messageAutomationWorker.sweep(); continue; }
+            if (handled) { markSeen(); void messageAutomationWorker.sweep(); return; }
           }
 
           // Contato liberado (pelo gestor no app OU por login na linha do copiloto)
@@ -3717,6 +3746,8 @@ async function startSession(numberId) {
             if (!isCopilot && !continuous && reply) {
               const intent = detectBotClosureIntent(reply);
               if (intent === "close") {
+                const { data: latestIncoming } = await supabase.from("whatsapp_messages").select("id").eq("conversation_id", conversation.id).eq("direction", "in").order("at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+                if (latestIncoming && latestIncoming.id !== inMsgId) return;
                 const info2 = await getCompanyInfo(cid);
                 if (info2?.review_link && !/avali/i.test(reply)) {
                   const rv = `Se puder, avalie nosso atendimento: ${info2.review_link}`;
@@ -3744,9 +3775,20 @@ async function startSession(numberId) {
               /* ignore */
             }
           }
+          }).catch(error => { incomingHealth.processingErrors++; console.error("Incoming follow-up failed:", error?.message || error); });
         } catch (err) {
-          console.error("Failed to process incoming message:", err);
+          incomingHealth.persistErrors++;
+          console.error("Failed to persist incoming message:", err);
+          throw err;
         }
+      }
+    };
+    sock.ev.on("messages.upsert", ({ messages, type }) => {
+      for (const message of messages) {
+        const receivedAt = Date.now();
+        const lane = type === "notify" && !message.key?.fromMe ? intake : history;
+        void lane.run(`${numberId}:${message.key?.remoteJid}`, () => retryIncoming(() => ingestOne(message, type, receivedAt)))
+          .catch(error => { incomingHealth.persistErrors++; console.error("Incoming intake failed:", error?.message || error); });
       }
     });
   } catch (err) {
@@ -4006,6 +4048,7 @@ app.get("/health", (_req, res) => {
     revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     voiceAudio: voiceAudioHealth,
     speech: speechStatus,
+    incomingMessages: incomingHealth,
     attendantSignatures: { version: 2, enabled: true, defaultPosition: "top" },
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),

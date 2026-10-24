@@ -60,3 +60,14 @@ Migração: `attendant_profile_signatures`. Adiciona nome de atendimento, prefer
 ### Posição da identificação
 
 Em **avatar → Editar perfil → Posição da identificação**, cada usuário escolhe **Acima da mensagem** (padrão) ou **Abaixo da mensagem**. A prévia acompanha a seleção. A escolha é aplicada aos novos textos e legendas no WhatsApp e ao histórico interno. Cada mensagem guarda `signature_position`; edições preservam a posição e o nome usados no envio. Mensagens anteriores a esta opção mantêm o rodapé com que foram entregues.
+
+
+### Recebimento rápido e áudio compatível (24/10/2026)
+
+Mensagens novas são persistidas antes de baixar anexos ou executar IA/automações. Há filas independentes para gravação, histórico e processamento do bot; um áudio lento ou uma resposta longa da IA não deve bloquear a chegada da próxima mensagem no painel. Mídias ainda sem download aparecem no histórico e são atualizadas após o arquivo ser salvo. Uma falha de download mantém um aviso, em vez de descartar a mensagem. Falhas temporárias de gravação têm tentativas limitadas, e o bot só processa mensagens após confirmar a persistência.
+
+A tela aplica eventos Realtime diretamente e reconcilia as 100 mensagens recentes a cada 1,5 segundo quando visível, mantendo o histórico anterior e a posição de leitura. A reconexão do canal também dispara uma reconciliação. Consultas usam índices por conversa/horário e por empresa/contato/número. A janela de reconciliação é um mecanismo de recuperação, não uma garantia de prazo sob falha de rede.
+
+O pipeline de voz v5 usa a mesma reconstrução do STARSIS: decodifica a gravação WebM/AAC para PCM mono com timestamps normalizados, produz Ogg/Opus, verifica páginas/CRC/encerramento e confirma a decodificação antes do upload cifrado. Duração, waveform e nome do arquivo são incluídos também nas respostas por voz do bot. Gravações com timestamp deslocado, páginas corrompidas e arquivos truncados têm testes de regressão.
+
+`/health` expõe `incomingMessages` com contagem de persistência/erros e última latência observada, sem conteúdo de clientes; `voiceAudio.pipelineVersion` deve ser 5 e os testes de codec/upload devem estar prontos.

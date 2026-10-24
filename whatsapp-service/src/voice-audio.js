@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {inspectOpusOgg} from './ogg.js';
 
 export const VOICE_MIME = 'audio/ogg; codecs=opus';
-export const VOICE_PIPELINE_VERSION = 4;
+export const VOICE_PIPELINE_VERSION = 5;
 export const COMPAT_AUDIO_MIME = 'audio/mpeg';
 const MAX_BYTES = 16 * 1024 * 1024;
 
@@ -31,18 +32,18 @@ export async function prepareVoiceAudio(input, binary, format = 'voice') {
     const ogg = join(dir, compatible ? 'audio.mp3' : 'voice.ogg');
     const pcm = join(dir, 'voice.pcm');
     await writeFile(source, input);
-    // Decode once; explicit container, mono Opus and speech framing for native clients.
-    // PCM also provides duration/waveform without Baileys' optional audio decoders.
-    await transcode(binary, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', source,
-      '-t', '3601', '-map', '0:a:0', '-vn', '-map_metadata', '-1',
-      ...(compatible ? ['-c:a', 'libmp3lame', '-b:a', '96k', '-ar', '44100', '-ac', '1', '-f', 'mp3']
-        : ['-c:a', 'libopus', '-application', 'voip', '-frame_duration', '20', '-b:a', '32k', '-ar', '48000', '-ac', '1', '-f', 'ogg']), ogg,
-      '-t', '3601', '-map', '0:a:0', '-vn', '-c:a', 'pcm_s16le', '-ar', '8000', '-ac', '1', '-f', 's16le', pcm]);
-    const [audio, samples] = await Promise.all([readFile(ogg), readFile(pcm)]);
-    const head = audio.indexOf(Buffer.from('OpusHead'));
-    if ((!compatible && (audio.subarray(0, 4).toString() !== 'OggS' || head < 0 || audio[head + 9] !== 1)) || audio.length < 32 || audio.length > MAX_BYTES || samples.length < 2 || samples.length > 3600 * 16000) {
-      throw new Error('O arquivo convertido não contém uma nota de voz válida.');
-    }
+    // Finalize browser containers into canonical PCM before creating a new voice note.
+    await transcode(binary, ['-hide_banner','-loglevel','error','-nostdin','-y','-i',source,
+      '-t','3601','-map','0:a:0','-vn','-ac','1','-ar','16000','-c:a','pcm_s16le','-f','s16le',pcm]);
+    const samples=await readFile(pcm);
+    if(samples.length<2||samples.length>3600*32000)throw Error('Gravação vazia ou longa demais.');
+    await transcode(binary,['-hide_banner','-loglevel','error','-nostdin','-y','-f','s16le','-ar','16000','-ac','1','-i',pcm,
+      '-map_metadata','-1',...(compatible?['-c:a','libmp3lame','-b:a','96k','-ar','44100','-f','mp3']:
+      ['-c:a','libopus','-application','voip','-frame_duration','20','-b:a','48k','-ar','48000','-ac','1','-f','ogg']),ogg]);
+    const audio=await readFile(ogg);
+    if(audio.length<32||audio.length>MAX_BYTES)throw Error('Áudio inválido ou muito grande.');
+    if(!compatible)inspectOpusOgg(audio);
+    await transcode(binary,['-hide_banner','-loglevel','error','-nostdin','-xerror','-i',ogg,'-map','0:a:0','-f','null','-']);
     const sampleCount = Math.floor(samples.length / 2);
     const peaks = Array.from({ length: 64 }, (_, bucket) => {
       let peak = 0;
@@ -54,8 +55,8 @@ export async function prepareVoiceAudio(input, binary, format = 'voice') {
     const max = Math.max(...peaks);
     const waveform = Uint8Array.from(peaks, p => max ? Math.round(p / max * 100) : 0);
     return compatible
-      ? { audio, mimetype: COMPAT_AUDIO_MIME, ptt: false, seconds: Math.max(1, Math.ceil(sampleCount / 8000)) }
-      : { audio, mimetype: VOICE_MIME, ptt: true, seconds: Math.max(1, Math.ceil(sampleCount / 8000)), waveform };
+      ? { audio, mimetype: COMPAT_AUDIO_MIME, ptt: false, fileName:'audio.mp3', seconds: Math.max(1, Math.ceil(sampleCount / 16000)) }
+      : { audio, mimetype: VOICE_MIME, ptt: true, fileName:'audio.ogg', seconds: Math.max(1, Math.ceil(sampleCount / 16000)), waveform };
   } catch (error) {
     // Preserve diagnostics in server logs; return a useful error without temp paths.
     console.error('prepareVoiceAudio failed:', error?.message || error);
