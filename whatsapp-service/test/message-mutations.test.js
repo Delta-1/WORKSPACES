@@ -71,3 +71,12 @@ test('editing a signed message retains its original operator name, with an unsig
  await syncWhatsappMutation({db:f.db,numberId:'number',key:{id:'ORIGINAL',remoteJid:'123@lid'},revokedStubType:1,now:NOW,update:{message:{editedMessage:{message:{conversation:'Editado no celular\n\n*Vanessa • Suporte*'}}}}});
  assert.equal(f.row.text,'Editado no celular');assert.equal(f.row.signature_name,'Vanessa • Suporte');
 });
+
+test('an edit preserves a message heading even after the profile preference changes',async()=>{
+ const f=fixture({signature_name:'Vanessa',signature_position:'top'});
+ await mutateWhatsappMessage({...f.args,action:'edit',text:'Novo texto'});
+ assert.equal(f.calls[0].content.text,'*Vanessa*\n\nNovo texto');
+ assert.equal(f.row.text,'Novo texto');assert.equal(f.row.signature_position,'top');
+ await syncWhatsappMutation({db:f.db,numberId:'number',key:{id:'ORIGINAL',remoteJid:'123@lid'},revokedStubType:1,now:NOW,update:{message:{editedMessage:{message:{conversation:'*Vanessa*\n\nEditado no celular'}}}}});
+ assert.equal(f.row.text,'Editado no celular');assert.equal(f.row.signature_position,'top');
+});

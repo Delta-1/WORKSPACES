@@ -5,7 +5,7 @@ import { messageAuthHeaders } from "@/lib/message-auth";
 import { safeMediaName } from "@/lib/whatsapp-media";
 import type { WhatsappMediaType } from "@/lib/types";
 import MessageActions from "./MessageActions";
-export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName}:{signatureName?:string|null;mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
+export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName,signaturePosition}:{signatureName?:string|null;signaturePosition?:"top"|"bottom";mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
  const [viewer,setViewer]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  const name=safeMediaName(mediaName,mediaType,mediaMime);
  const time=new Date(at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
@@ -18,6 +18,7 @@ export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName
  }
  if(deletedAt)return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className="max-w-[90%] rounded-2xl border border-white/10 px-3 py-2 text-sm italic text-slate-400">Mensagem apagada<span className="ml-3 text-[10px] not-italic">{time}</span></div></div>;
  return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className={`min-w-0 max-w-[90%] md:max-w-[72%] rounded-2xl px-3 py-2 text-sm ${mine?"bg-emerald-700 text-white":"bg-[#1c232e]"}`}>
+  {signatureName&&signaturePosition==="top"&&<p className="mb-2 text-sm break-words"><strong>{signatureName}</strong></p>}
   {mediaUrl&&(mediaType==="image"||mediaType==="sticker")&&<button aria-label={`Abrir ${mediaType==="sticker"?"figurinha":"foto"}`} onClick={()=>setViewer(true)} className="block max-w-full">
    {/* eslint-disable-next-line @next/next/no-img-element */}
    <img src={mediaUrl} alt={mediaName|| (mediaType==="sticker"?"Figurinha":"Foto recebida")} loading="lazy" className="rounded-lg max-w-full max-h-60 object-contain mb-1" onError={()=>setError("Imagem indisponível. Tente baixar o arquivo.")}/>
@@ -26,7 +27,7 @@ export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName
   {mediaUrl&&mediaType==="video"&&<><video aria-label="Vídeo da mensagem" src={mediaUrl} controls playsInline preload="metadata" className="w-full max-h-60 rounded-lg mb-1" onError={()=>setError("Não consegui reproduzir o vídeo. Tente baixar o arquivo.")}/><button onClick={()=>setViewer(true)} className="underline text-xs">Ampliar vídeo</button></>}
   {mediaUrl&&mediaType==="document"&&<a href={mediaUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg bg-black/15 p-3 mb-1"><FileText size={20} className="shrink-0"/><span className="break-all">{name}</span></a>}
   {text&&<p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{text}</p>}
-  {signatureName&&<p className="mt-2 text-sm break-words"><strong>{signatureName}</strong></p>}
+  {signatureName&&signaturePosition!=="top"&&<p className="mt-2 text-sm break-words"><strong>{signatureName}</strong></p>}
   {error&&<p role="alert" className="text-xs text-amber-200 my-1">{error}</p>}
   {onSaveSticker&&<button onClick={()=>void onSaveSticker()} className="block text-[11px] underline py-1">Salvar figurinha</button>}
   <div className="flex items-center justify-end gap-2 mt-1 flex-wrap">

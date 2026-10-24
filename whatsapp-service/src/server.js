@@ -774,14 +774,14 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null, signatureName = null) {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null, signatureName = null, signaturePosition = "bottom") {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
     direction,
     text: mediaLabel(media, text) || null,
     sender_id: senderId,
-    ...(signatureName ? { signature_name: signatureName } : {}),
+    ...(signatureName ? { signature_name: signatureName, signature_position: signaturePosition } : {}),
     company_id: companyId,
   };
   if (messageAt) row.at = messageAt;
@@ -802,7 +802,7 @@ async function logMessage(conversationId, direction, text, senderId = null, medi
     const { data: existingWa, error: lookupError } = await supabase
       .from("whatsapp_messages").select("id").eq("wa_id", waId).limit(1).maybeSingle();
     if (existingWa?.id) {
-      const patch = { ...(waKey ? { wa_key: savedMessageKey(waKey) } : {}), ...(senderId && direction === "out" ? { sender_id: senderId } : {}), ...(signatureName ? { signature_name: signatureName, text: row.text } : {}) };
+      const patch = { ...(waKey ? { wa_key: savedMessageKey(waKey) } : {}), ...(senderId && direction === "out" ? { sender_id: senderId } : {}), ...(signatureName ? { signature_name: signatureName, signature_position: signaturePosition, text: row.text } : {}) };
       if (Object.keys(patch).length) await supabase.from("whatsapp_messages").update(patch).eq("id", existingWa.id);
       return existingWa.id;
     }
@@ -3929,8 +3929,10 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       conversationId = created?.id ?? null;
     }
   }
-  const signatureName = await resolveAttendantSignature(supabase, senderId, cid);
-  const outgoingText = signedText(text, signatureName);
+  const signature = await resolveAttendantSignature(supabase, senderId, cid);
+  const signatureName = signature?.name ?? null;
+  const signaturePosition = signature?.position ?? "top";
+  const outgoingText = signedText(text, signatureName, signaturePosition);
   let loggedId = messageId;
   let sent = null;
   try {
@@ -3965,10 +3967,10 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     // pelo messageId (envio pelo site), atualiza também os dados de mídia.
     if (sent?.key?.id) {
       webSentWaIds.add(sent.key.id);
-      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key, signatureName);
+      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key, signatureName, signaturePosition);
       setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
       if (loggedId) {
-        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key), ...(signatureName ? { signature_name: signatureName, text: mediaLabel(media, text) || null } : {}) };
+        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key), ...(signatureName ? { signature_name: signatureName, signature_position: signaturePosition, text: mediaLabel(media, text) || null } : {}) };
         if (media && messageId) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
         await supabase.from("whatsapp_messages").update(patch).eq("id", loggedId).then(() => {}, () => {});
       }
@@ -4004,7 +4006,7 @@ app.get("/health", (_req, res) => {
     revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     voiceAudio: voiceAudioHealth,
     speech: speechStatus,
-    attendantSignatures: { version: 1, enabled: true },
+    attendantSignatures: { version: 2, enabled: true, defaultPosition: "top" },
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
     messageMutations: { version: MESSAGE_MUTATIONS_VERSION, ready: Boolean(supabase) },

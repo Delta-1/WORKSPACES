@@ -7,6 +7,7 @@ export type Profile = {
   email: string;
   full_name: string | null;
   attendance_name?: string | null;
+  attendance_position?: "top" | "bottom";
   job_title?: string | null;
   bio?: string | null;
   avatar_url: string | null;
@@ -251,6 +252,7 @@ export type WhatsappMediaType = "image" | "audio" | "video" | "document" | "stic
 
 export type WhatsappMessageRow = {
   signature_name?: string | null;
+  signature_position?: "top" | "bottom";
   id: string;
   conversation_id: string;
   direction: "in" | "out";

@@ -863,7 +863,7 @@ export default function WorkspaceApp({ employeeApp = false }: { employeeApp?: bo
           profileId={profile?.id}
           avatarUrl={profile?.avatar_url}
           language={appLanguage}
-          attendanceName={profile?.attendance_name} jobTitle={profile?.job_title} bio={profile?.bio}
+          attendanceName={profile?.attendance_name} attendancePosition={profile?.attendance_position} jobTitle={profile?.job_title} bio={profile?.bio}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           onLogout={handleLogout}
           onProfileUpdated={(patch) => {

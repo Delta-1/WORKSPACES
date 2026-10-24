@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Profile } from "@/lib/types";
-import { cleanAttendantName } from "@/whatsapp-service/src/attendant-signature";
+import { attendancePosition as normalizedPosition, cleanAttendantName } from "@/whatsapp-service/src/attendant-signature";
 import { Camera, Languages, LogOut, Moon, Pencil, Sun, User, X } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import { APP_LANGUAGES, type AppLanguage } from "@/lib/language";
@@ -42,7 +42,7 @@ export default function ProfileMenu({
   profileId,
   avatarUrl,
   language,
-  attendanceName, jobTitle, bio,
+  attendanceName, attendancePosition, jobTitle, bio,
   onToggleTheme,
   onLogout,
   onProfileUpdated,
@@ -54,11 +54,12 @@ export default function ProfileMenu({
   avatarUrl?: string | null;
   language: AppLanguage;
   attendanceName?: string | null;
+  attendancePosition?: "top" | "bottom";
   jobTitle?: string | null;
   bio?: string | null;
   onToggleTheme: () => void;
   onLogout: () => void;
-  onProfileUpdated?: (patch: Partial<Pick<Profile, "full_name" | "avatar_url" | "language" | "attendance_name" | "job_title" | "bio">>) => void;
+  onProfileUpdated?: (patch: Partial<Pick<Profile, "full_name" | "avatar_url" | "language" | "attendance_name" | "attendance_position" | "job_title" | "bio">>) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -66,6 +67,7 @@ export default function ProfileMenu({
   const [draftAvatar, setDraftAvatar] = useState<string | null>(avatarUrl ?? null);
   const [draftLanguage, setDraftLanguage] = useState<AppLanguage>(language);
   const [draftAttendance, setDraftAttendance] = useState(attendanceName ?? "");
+  const [draftPosition, setDraftPosition] = useState<"top" | "bottom">(normalizedPosition(attendancePosition));
   const [draftJob, setDraftJob] = useState(jobTitle ?? "");
   const [draftBio, setDraftBio] = useState(bio ?? "");
   const [error, setError] = useState("");
@@ -84,6 +86,7 @@ export default function ProfileMenu({
     setDraftName(name);
     setDraftAvatar(avatarUrl ?? null);
     setDraftLanguage(language);
+    setDraftPosition(normalizedPosition(attendancePosition));
     setDraftAttendance(attendanceName ?? ""); setDraftJob(jobTitle ?? ""); setDraftBio(bio ?? ""); setError("");
     setEditing(true);
     setOpen(false);
@@ -104,8 +107,8 @@ export default function ProfileMenu({
     setSaving(true); setError("");
     try {
       if (!supabase || !profileId) throw Error("Entre na sua conta para salvar o perfil.");
-      const patch = { full_name: newName, avatar_url: draftAvatar, language: draftLanguage, attendance_name: cleanAttendantName(draftAttendance) || null, job_title: draftJob.trim() || null, bio: draftBio.trim() || null };
-      const { data, error: saveError } = await supabase.from("profiles").update(patch).eq("id", profileId).select("full_name,avatar_url,language,attendance_name,job_title,bio").single();
+      const patch = { full_name: newName, avatar_url: draftAvatar, language: draftLanguage, attendance_name: cleanAttendantName(draftAttendance) || null, attendance_position: draftPosition, job_title: draftJob.trim() || null, bio: draftBio.trim() || null };
+      const { data, error: saveError } = await supabase.from("profiles").update(patch).eq("id", profileId).select("full_name,avatar_url,language,attendance_name,attendance_position,job_title,bio").single();
       if (saveError || !data) throw Error("Não foi possível salvar seu perfil. Tente novamente.");
       onProfileUpdated?.(data);
       setEditing(false);
@@ -199,8 +202,13 @@ export default function ProfileMenu({
             <div>
               <label htmlFor="profile-attendance" className="block text-xs font-semibold text-gray-400 mb-1.5">Nome de atendimento no WhatsApp</label>
               <input id="profile-attendance" value={draftAttendance} onChange={e => setDraftAttendance(e.target.value)} disabled={saving} maxLength={80} placeholder={draftName || "Ex.: Vanessa • Suporte"} className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-base outline-none" />
-              <p className="text-xs text-gray-400 mt-1">Deixe em branco para usar o nome da conta. Textos e legendas recebem este nome em negrito no final.</p>
-              <div aria-label="Prévia da assinatura" className="mt-3 rounded-xl bg-emerald-800 p-3 text-sm text-white"><p>Olá! Como posso ajudar?</p><strong className="block mt-3 break-words">{cleanAttendantName(draftAttendance) || cleanAttendantName(draftName) || "Seu nome"}</strong></div>
+              <p className="text-xs text-gray-400 mt-1">Deixe em branco para usar o nome da conta. Textos e legendas recebem este nome em negrito na posição escolhida.</p>
+              <label htmlFor="profile-signature-position" className="block text-xs font-semibold text-gray-400 mt-3 mb-1.5">Posição da identificação</label>
+              <select id="profile-signature-position" value={draftPosition} onChange={e => setDraftPosition(e.target.value as "top" | "bottom")} disabled={saving} className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-base outline-none">
+                <option value="top" className="bg-[#0b1019]">Acima da mensagem (padrão)</option>
+                <option value="bottom" className="bg-[#0b1019]">Abaixo da mensagem</option>
+              </select>
+              <div aria-label="Prévia da assinatura" className="mt-3 rounded-xl bg-emerald-800 p-3 text-sm text-white">{draftPosition === "bottom" && <p>Olá! Como posso ajudar?</p>}<strong className={`block break-words ${draftPosition === "top" ? "mb-3" : "mt-3"}`}>{cleanAttendantName(draftAttendance) || cleanAttendantName(draftName) || "Seu nome"}</strong>{draftPosition === "top" && <p>Olá! Como posso ajudar?</p>}</div>
             </div>
             <div>
               <label htmlFor="profile-job" className="block text-xs font-semibold text-gray-400 mb-1.5">Cargo ou função (opcional)</label>

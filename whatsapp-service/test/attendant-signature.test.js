@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attendantName, cleanAttendantName, signedText, withoutSignature, resolveAttendantSignature } from '../src/attendant-signature.js';
+import { attendancePosition, attendantName, cleanAttendantName, signedText, withoutSignature, resolveAttendantSignature } from '../src/attendant-signature.js';
 import { generateWAMessageContent } from 'baileys';
 
 test('the WhatsApp footer uses the configured name, then account name, never an email', async () => {
@@ -24,7 +24,7 @@ test('the sender is looked up under the connected number company and lookup erro
   let filters=[];
   const query={select(){return this;},eq(k,v){filters.push([k,v]);return this;},async maybeSingle(){return {data:{full_name:'Victor',attendance_name:'Victor • Técnico'}};}};
   const db={from(table){assert.equal(table,'profiles');return query;}};
-  assert.equal(await resolveAttendantSignature(db,'user-a','company-a'),'Victor • Técnico');
+  assert.deepEqual(await resolveAttendantSignature(db,'user-a','company-a'),{name:'Victor • Técnico',position:'top'});
   assert.deepEqual(filters,[['id','user-a'],['company_id','company-a']]);
   query.maybeSingle=async()=>({data:null,error:{message:'missing profile'}});
   await assert.rejects(resolveAttendantSignature(db,'user-a','other'),/confirmar o perfil/);
@@ -33,4 +33,15 @@ test('only the stored footer is removed from a linked-device edit',()=>{
   assert.equal(withoutSignature('Texto novo\n\n*Vanessa*','Vanessa'),'Texto novo');
   assert.equal(withoutSignature('Texto novo\n\n*Outra pessoa*','Vanessa'),'Texto novo\n\n*Outra pessoa*');
   assert.equal(withoutSignature(null,'Vanessa'),null);
+});
+
+test('new replies default to a bold heading and can use the footer instead',()=>{
+ assert.equal(attendancePosition(undefined),'top');
+ assert.equal(attendancePosition('bottom'),'bottom');
+ assert.equal(attendancePosition('untrusted'),'top');
+ assert.equal(signedText('Olá','Vanessa','top'),'*Vanessa*\n\nOlá');
+ assert.equal(signedText('Olá','Vanessa','bottom'),'Olá\n\n*Vanessa*');
+ assert.equal(withoutSignature('*Vanessa*\n\nOlá','Vanessa','top'),'Olá');
+ assert.equal(withoutSignature('Olá\n\n*Vanessa*','Vanessa','bottom'),'Olá');
+ assert.equal(withoutSignature('Olá\n\n*Vanessa*','Vanessa','top'),'Olá\n\n*Vanessa*');
 });
