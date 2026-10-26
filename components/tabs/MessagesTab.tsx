@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { attendancePosition, attendantName } from "@/whatsapp-service/src/attendant-signature";
 import { mergeThreadMessages } from "@/lib/message-thread";
+import { useChatScroll } from "@/components/messages/useChatScroll";
 import VoiceRecorder from "@/components/messages/VoiceRecorder";
 import AttachmentPreview from "@/components/messages/AttachmentPreview";
 import Bubble from "@/components/messages/MessageBubble";
@@ -223,32 +224,15 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [attachment, setAttachment] = useState<File | null>(null);
   const [forwardMessage, setForwardMessage] = useState<WhatsappMessageRow | null>(null);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
   const relatedConversationIds = useRef(new Set<string>());
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const selConvRef = useRef<string | null>(null);
   const selColRef = useRef<string | null>(null);
-
-  const scrollBottom = () => {
-    stickToBottom.current = true;
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "instant" }));
-  };
-  useLayoutEffect(() => {
-    if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [selConvId, messages, internal, threadLoading]);
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (stickToBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [selConvId, selColleagueId]);
+  const { viewportRef, contentRef, reset: resetChatScroll, scrollBottom, following: stickToBottom, handlers: chatScrollHandlers } = useChatScroll(
+    selConvId || selColleagueId, selColleagueId ? internal : messages, threadLoading
+  );
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !profile?.company_id) {
@@ -425,10 +409,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       if (refreshTimer) clearTimeout(refreshTimer);
       if (supabase) supabase.removeChannel(ch);
     };
-  }, [loadConversations, loadSide, profile?.id, profile?.company_id, fetchThread]);
+  }, [loadConversations, loadSide, profile?.id, profile?.company_id, fetchThread, scrollBottom, stickToBottom]);
 
 
   async function openConv(id: string) {
+    resetChatScroll();
     setSelColleagueId(null);
     selColRef.current = null;
     setSelConvId(id);
@@ -436,7 +421,6 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     setUnread((prev) => (prev[id] ? { ...prev, [id]: 0 } : prev)); // zera as não-lidas ao abrir
     if (!supabase) return;
     relatedConversationIds.current = new Set([id]);
-    stickToBottom.current = true;
     setMessages([]); setThreadLoading(true); setThreadError("");
     try { const data = await fetchThread(id); if (selConvRef.current === id) mergeServerMessages(data); }
     catch (e) { if (selConvRef.current === id) setThreadError(e instanceof Error ? e.message : "Falha ao carregar histórico."); }
@@ -609,6 +593,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   async function openColleague(id: string) {
+    resetChatScroll();
     setSelConvId(null);
     selConvRef.current = null;
     setSelColleagueId(id);
@@ -619,6 +604,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       .select("*")
       .or(`and(sender_id.eq.${profile.id},recipient_id.eq.${id}),and(sender_id.eq.${id},recipient_id.eq.${profile.id})`)
       .order("at");
+    if (selColRef.current !== id) return;
     setInternal(data ?? []);
     scrollBottom();
   }
@@ -1390,10 +1376,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
             </div>
 
             {selConv && profile && <AttendanceActions key={selConv.id} conversation={selConv} profile={profile} colleagues={colleagues} onChanged={loadConversations} />}
-            <div ref={scrollRef} aria-label="Histórico de mensagens" onScroll={event => {
-              const element = event.currentTarget;
-              stickToBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-            }} className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4">
+            <div ref={viewportRef} aria-label="Histórico de mensagens" tabIndex={0} {...chatScrollHandlers} className="flex-1 min-h-0 overflow-y-auto custom-scroll p-4 [overflow-anchor:none]">
               <div ref={contentRef} className="space-y-2">
               {threadLoading && <p role="status" className="text-center text-sm text-slate-400 py-2">Carregando histórico…</p>}
               {threadError && <div role="alert" className="text-center text-sm text-amber-200 py-2">{threadError}<button onClick={() => { if (selConvId) void openConv(selConvId); }} className="ml-2 underline">Tentar novamente</button></div>}

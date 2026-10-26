@@ -1,0 +1,49 @@
+// Run after building with NEXT_PUBLIC_SUPABASE_URL=https://mock.supabase.test
+// and NEXT_PUBLIC_SUPABASE_ANON_KEY=fixture-anon. All account/data calls are mocked.
+const { chromium } = require('playwright');
+const { spawn } = require('node:child_process');
+const assert = require('node:assert/strict');
+const now = new Date().toISOString();
+const profile = { id:'user-a', email:'fixture@example.test', full_name:'Teste', role:'gestor', company_id:'company-a', language:'pt-BR', tutorials_done:{bemvindo:true,inicio:true,mensagens:true}, created_at:now };
+const conversations = ['a','b'].map(suffix => ({id:`conv-${suffix}`,company_id:'company-a',contact_id:`contact-${suffix}`,number_id:'number-a',status:'atendendo',assignee_id:profile.id,created_at:now,last_message_at:now,contacts:{id:`contact-${suffix}`,name:`Cliente ${suffix.toUpperCase()}`,saved_name:`Cliente ${suffix.toUpperCase()}`,phone:'551199999999'+suffix}}));
+const rows = conversations.flatMap(c => Array.from({length:150}, (_, i) => ({id:`${c.id}-${i}`,conversation_id:c.id,company_id:'company-a',direction:i%2?'out':'in',text:`${c.id} mensagem ${i} ${'Histórico longo. '.repeat(15)}`,at:new Date(Date.now()-300000+i*1000).toISOString(),...(i===148?{media_type:'image',media_url:`https://fixture.test/${c.id}.svg`}:{})})));
+const internals = Array.from({length:100},(_,i)=>({id:`internal-${i}`,sender_id:i%2?profile.id:'colleague',recipient_id:i%2?'colleague':profile.id,text:`Equipe mensagem ${i} ${'Histórico interno. '.repeat(12)}`,at:now}));
+let server, browser;
+(async()=>{try {
+ server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','-p','3105','--hostname','127.0.0.1'],{stdio:['ignore','pipe','pipe']});
+ let logs='';server.stdout.on('data',d=>logs+=d);server.stderr.on('data',d=>logs+=d);
+ await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(logs)),20000);server.stdout.on('data',d=>{if(String(d).includes('Ready')){clearTimeout(timer);resolve();}});server.on('exit',()=>reject(Error(logs)));});
+ const launchOptions={...(process.env.CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.CHROMIUM_EXECUTABLE_PATH}:{}),args:['--no-sandbox','--no-zygote','--single-process','--use-angle=swiftshader','--disable-dev-shm-usage']};
+ for (const layout of ['classic','kanban','crm']) {
+  browser=await chromium.launch(launchOptions);
+  const page=await browser.newPage({viewport:{width:1365,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.route('https://fixture.test/**',async route=>{await new Promise(r=>setTimeout(r,400));await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="1000"><rect width="400" height="1000" fill="green"/></svg>'});});
+  await page.route('https://mock.supabase.test/**',async route=>{
+   const req=route.request(),url=new URL(req.url()),p=url.pathname;let data=[];
+   if(p.includes('/auth/'))data={user:{...profile,user_metadata:{}}};else if(p.endsWith('/rpc/ensure_profile'))data=profile;else if(p.endsWith('/rpc/my_environments'))data=[];else if(p.includes('/rpc/'))data=true;
+   else if(p.endsWith('/companies'))data={id:'company-a',name:'Teste',owner_id:profile.id,subscription_status:'active',plan:'enterprise'};
+   else if(p.endsWith('/company_settings'))data=[{messages_layout:layout,enabled_features:null}];
+   else if(p.endsWith('/profiles'))data=url.searchParams.get('id')?.includes('neq')?[{...profile,id:'colleague',full_name:'Colega Teste'}]:[profile];
+   else if(p.endsWith('/whatsapp_numbers'))data=[{id:'number-a',company_id:'company-a',status:'connected',label:'WhatsApp'}];
+   else if(p.endsWith('/conversations')){if(url.searchParams.has('id')){const c=conversations.find(c=>'eq.'+c.id===url.searchParams.get('id'));data=c?{contact_id:c.contact_id,number_id:c.number_id}:null;}else if(url.searchParams.get('select')==='id')data=conversations.filter(c=>'eq.'+c.contact_id===url.searchParams.get('contact_id')).map(c=>({id:c.id}));else data=conversations;}
+   else if(p.endsWith('/whatsapp_messages')){const selection=url.searchParams.get('conversation_id')||'';data=rows.filter(row=>selection.includes(row.conversation_id));if(url.searchParams.get('limit')==='100')data=data.slice(-100).reverse();else{await new Promise(r=>setTimeout(r,150));data=data.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+500);}}
+   else if(p.endsWith('/internal_messages')){await new Promise(r=>setTimeout(r,100));data=internals;}
+   if(req.headers()['accept']?.includes('vnd.pgrst.object')&&Array.isArray(data))data=data[0]||null;
+   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
+  });
+  await page.addInitScript(({profile,layout})=>{const enc=v=>btoa(JSON.stringify(v));localStorage.setItem('sb-mock-auth-token',JSON.stringify({access_token:enc({alg:'none'})+'.'+enc({sub:profile.id,role:'authenticated',exp:Math.floor(Date.now()/1000)+3600})+'.fixture',refresh_token:'fixture',expires_at:Math.floor(Date.now()/1000)+3600,expires_in:3600,token_type:'bearer',user:{...profile,user_metadata:{}}}));localStorage.setItem('msg:layout',layout);localStorage.setItem('msg:onboarded','1');},{profile,layout});
+  await page.goto('http://127.0.0.1:3105');await page.getByRole('button',{name:'Abrir Mensagens',exact:true}).click();await page.getByText('Cliente A',{exact:true}).filter({visible:true}).first().click();
+  const history=page.getByLabel('Histórico de mensagens');
+  const gap=()=>history.evaluate(e=>e.scrollHeight-e.clientHeight-e.scrollTop);
+  await page.getByText(rows.find(r=>r.id==='conv-a-149').text,{exact:true}).waitFor();await page.waitForTimeout(650);assert.ok(await gap()<3,`${layout}: opens at last message including delayed media`);
+  // Browser restoration/layout events are not a request to read older messages.
+  await history.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});await page.waitForTimeout(50);assert.ok(await gap()<3,`${layout}: unexpected layout scroll must not cancel initial following`);
+  await history.hover();await page.mouse.wheel(0,-700);await page.waitForTimeout(150);const readingTop=await history.evaluate(e=>e.scrollTop);assert.ok(await gap()>100);
+  rows.push({id:`poll-${layout}`,conversation_id:'conv-a',company_id:'company-a',direction:'in',text:`Mensagem nova ${layout}`,at:new Date().toISOString()});await page.getByText(`Mensagem nova ${layout}`,{exact:true}).waitFor({state:'attached',timeout:4000});assert.ok(Math.abs(await history.evaluate(e=>e.scrollTop)-readingTop)<5,`${layout}: preserve deliberate reading position`);
+  await page.getByText('Cliente B',{exact:true}).filter({visible:true}).first().click();await page.getByText(rows.find(r=>r.id==='conv-b-149').text,{exact:true}).waitFor();assert.ok(await gap()<3,`${layout}: switching resets to bottom`);
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);assert.ok(await gap()<3,`${layout}: resize stays at bottom`);
+  await page.getByRole('button',{name:'Voltar para as conversas',exact:true}).click();if(layout==='kanban')await page.getByRole('tab',{name:/Em atendimento/}).click();await page.getByText('Cliente A',{exact:true}).filter({visible:true}).first().click();await page.getByText(`Mensagem nova ${layout}`,{exact:true}).waitFor();assert.ok(await gap()<3,`${layout}: mobile reopening resets to latest message`);
+  await page.setViewportSize({width:1365,height:900});await page.getByTitle('Equipe (interno)',{exact:true}).click();await page.getByRole('button',{name:'Colega Teste',exact:true}).click();await page.getByText(internals[99].text,{exact:true}).waitFor();assert.ok(await gap()<3,`${layout}: internal chat also opens at bottom`);
+  assert.deepEqual(errors,[]);await page.close();await browser.close();console.log(`PASS ${layout}: desktop, mobile, delayed media, programmatic scroll, deliberate reading, switching, reopening, internal chat`);
+ }
+} catch(error){console.error(error);process.exitCode=1;}finally{await browser?.close();server?.kill();}})();

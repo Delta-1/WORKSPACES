@@ -71,3 +71,9 @@ A tela aplica eventos Realtime diretamente e reconcilia as 100 mensagens recente
 O pipeline de voz v5 usa a mesma reconstrução do STARSIS: decodifica a gravação WebM/AAC para PCM mono com timestamps normalizados, produz Ogg/Opus, verifica páginas/CRC/encerramento e confirma a decodificação antes do upload cifrado. Duração, waveform e nome do arquivo são incluídos também nas respostas por voz do bot. Gravações com timestamp deslocado, páginas corrompidas e arquivos truncados têm testes de regressão.
 
 `/health` expõe `incomingMessages` com contagem de persistência/erros e última latência observada, sem conteúdo de clientes; `voiceAudio.pipelineVersion` deve ser 5 e os testes de codec/upload devem estar prontos.
+
+### Abertura no final da conversa
+
+Ao entrar, trocar ou reabrir uma conversa, o chat posiciona a última mensagem na área visível. O ajuste acompanha o carregamento de imagens e mudanças de tamanho da tela. Rolagens geradas pelo navegador durante o carregamento não desativam esse comportamento. Ao subir o histórico com mouse, toque ou teclado, a posição de leitura é preservada; voltar ao final ou reabrir a conversa retoma o acompanhamento das mensagens mais recentes. O mesmo comportamento vale para conversas internas da equipe.
+
+Regressão de interface: `tests/browser/chat-scroll.cjs` cobre os layouts clássico, Kanban e CRM em desktop e celular, com histórico longo, imagem atrasada, rolagem de layout, leitura manual, troca/reabertura e chat interno.
