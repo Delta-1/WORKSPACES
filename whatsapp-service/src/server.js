@@ -1,7 +1,7 @@
 import { createAuthStore } from "./auth-store.js";
 import { installConfirmedDelivery } from "./confirmed-delivery.js";
 import { databaseFetch } from "./database-fetch.js";
-import { resolveIncomingIdentity } from "./chat-identity.js";
+import { normalizeJid, resolveIncomingIdentity } from "./chat-identity.js";
 import { createMessageLane, persistIncoming, retryIncoming } from "./message-ingestion.js";
 import { createAutomationWorker } from "./automation-worker.js";
 import { mutateWhatsappMessage, syncWhatsappMutation, MESSAGE_MUTATIONS_VERSION } from "./message-mutations.js";
