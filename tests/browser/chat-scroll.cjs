@@ -18,7 +18,7 @@ let server, browser;
   browser=await chromium.launch(launchOptions);
   const page=await browser.newPage({viewport:{width:1365,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const alerts=[];page.on('dialog',async dialog=>{alerts.push(dialog.message());await dialog.accept();});
-  let failClaim=false, slowInbox=false, acceptSend=false, sendRequests=0,lastSend=null;
+  let failClaim=false, slowInbox=false, acceptSend=false, sendRequests=0,lastSend=null,failMessages=false,messageReads=0;
   await page.route('**/api/whatsapp/send',async route=>{sendRequests++;await new Promise(r=>setTimeout(r,350));const body=route.request().postDataJSON();lastSend=body;const quoted=rows.find(r=>r.id===body.replyToMessageId);if(acceptSend)rows.push({...(quoted?{reply_to:{id:quoted.id,wa_id:quoted.wa_id,author:"Cliente A",text:quoted.text,media_type:quoted.media_type||null}}:{}),id:`sent-${layout}-${sendRequests}`,conversation_id:body.conversationId,direction:'out',text:body.text,wa_id:'confirmed-fixture',at:new Date().toISOString()});await route.fulfill({status:acceptSend?200:400,contentType:'application/json',body:JSON.stringify(acceptSend?{success:true}:{success:false,message:'O WhatsApp recusou o envio (código 479).'})});});
   await page.route('https://fixture.test/**',async route=>{await new Promise(r=>setTimeout(r,400));await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="1000"><rect width="400" height="1000" fill="green"/></svg>'});});
   await page.route('https://mock.supabase.test/**',async route=>{
@@ -31,7 +31,7 @@ let server, browser;
    else if(p.endsWith('/profiles'))data=url.searchParams.get('id')?.includes('neq')?[{...profile,id:'colleague',full_name:'Colega Teste'}]:[profile];
    else if(p.endsWith('/whatsapp_numbers'))data=[{id:'number-a',company_id:'company-a',status:'connected',label:'WhatsApp'}];
    else if(p.endsWith('/conversations')){if(url.searchParams.has('id')){const c=conversations.find(c=>'eq.'+c.id===url.searchParams.get('id'));data=c?{contact_id:c.contact_id,number_id:c.number_id}:null;}else if(url.searchParams.get('select')==='id')data=conversations.filter(c=>'eq.'+c.contact_id===url.searchParams.get('contact_id')).map(c=>({id:c.id}));else data=conversations;}
-   else if(p.endsWith('/whatsapp_messages')){const selection=url.searchParams.get('conversation_id')||'';data=rows.filter(row=>selection.includes(row.conversation_id));if(url.searchParams.get('limit')==='100')data=data.slice(-100).reverse();else{await new Promise(r=>setTimeout(r,150));data=data.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+500);}}
+   else if(p.endsWith('/whatsapp_messages')){messageReads++;if(failMessages){await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture database outage'})});return;}const selection=url.searchParams.get('conversation_id')||'';data=rows.filter(row=>selection.includes(row.conversation_id));if(url.searchParams.get('limit')==='100')data=data.slice(-100).reverse();else{await new Promise(r=>setTimeout(r,150));data=data.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+500);}}
    else if(p.endsWith('/internal_messages')){await new Promise(r=>setTimeout(r,100));data=internals;}
    if(req.headers()['accept']?.includes('vnd.pgrst.object')&&Array.isArray(data))data=data[0]||null;
    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
@@ -51,6 +51,11 @@ await page.waitForTimeout(150);assert.ok(alerts.some(a=>a.includes('assumir')));
   await page.waitForTimeout(700);assert.equal(sendRequests,1,'inbox refresh does not block send');assert.ok(alerts.some(a=>a.includes('479')));assert.equal(await composer.inputValue(),`Envio de teste ${layout}`);assert.equal(await sendButton.isEnabled(),true);
   slowInbox=false;acceptSend=true;await sendButton.click();await page.waitForTimeout(600);assert.equal(sendRequests,2);assert.equal(await composer.inputValue(),'');
   await page.getByText('Enviando…',{exact:true}).waitFor({state:'hidden',timeout:5000});
+  if(layout==='classic'){
+   failMessages=true;try{await page.getByRole('alert').filter({hasText:'Conexão temporariamente indisponível. Tentando novamente…'}).waitFor({timeout:6000});}catch(e){console.log({messageReads,hidden:await page.evaluate(()=>document.hidden),alerts:await page.getByRole('alert').allTextContents(),errors});throw e;}
+   await page.getByText(rows.find(r=>r.id==='conv-a-149').text,{exact:true}).waitFor({state:'attached'});const reads=messageReads;await page.waitForTimeout(700);assert.equal(messageReads,reads,'outage backs off rather than hammering the database');
+   failMessages=false;await page.getByRole('alert').filter({hasText:'Conexão temporariamente indisponível. Tentando novamente…'}).waitFor({state:'hidden',timeout:10000});await page.getByText(rows.find(r=>r.id==='conv-a-149').text,{exact:true}).waitFor({state:'attached'});
+  }
   const source=page.locator('#message-conv-a-146');
   await history.dispatchEvent('wheel',{deltaY:-600});await source.getByRole('button',{name:'Responder mensagem',exact:true}).click();
   const replying=page.getByRole('region',{name:'Respondendo à mensagem',exact:true});await replying.waitFor();assert.ok(await replying.textContent().then(t=>t.includes('Cliente A')));assert.ok(await composer.evaluate(e=>e===document.activeElement));if(layout==='classic')await page.screenshot({path:'/tmp/workspaces-reply-desktop.png'});

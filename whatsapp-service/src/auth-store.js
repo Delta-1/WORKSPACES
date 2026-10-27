@@ -31,7 +31,7 @@ export function createAuthStore({ db, numberId, serialize, revive, appStateKey, 
     // One bounded batch instead of a database round trip per device/key.
     for (let i = 0; i < missing.length; i += 100) {
       const batch = missing.slice(i, i + 100);
-      const rows = await request(() => db.from('wa_auth').select('key,value').eq('number_id', numberId).in('key', batch));
+      const rows = await request(() => db.from('wa_auth').select('key,value').retry(false).eq('number_id', numberId).in('key', batch));
       const found = new Map((rows || []).map(row => [row.key, row.value]));
       for (const key of batch) {
         const value = found.get(key) == null ? null : revive(found.get(key));

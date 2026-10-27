@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, Bot, Check, Columns3, DollarSign, Download, Eye, EyeOff, FileText, Hash, LayoutGrid, MessageSquare, Monitor as MonitorIcon, MoreVertical, Package, Paperclip, Pencil, Phone, Plug, Plus, Search, Send, Smile, Sticker, Star, Trash2, UserPlus, Users, Workflow, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { attendancePosition, attendantName } from "@/whatsapp-service/src/attendant-signature";
+import { startMessagePolling } from "@/lib/message-polling";
 import { mergeThreadMessages } from "@/lib/message-thread";
 import { useChatScroll } from "@/components/messages/useChatScroll";
 import VoiceRecorder from "@/components/messages/VoiceRecorder";
@@ -228,6 +229,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [forwardMessage, setForwardMessage] = useState<WhatsappMessageRow | null>(null);
 
   const relatedConversationIds = useRef(new Set<string>());
+  const threadLookup = useRef({ key: "", expires: 0, ids: [] as string[] });
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -270,17 +272,24 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
   const fetchThread = useCallback(async (id: string, recentOnly = false): Promise<WhatsappMessageRow[]> => {
     if (!supabase) return [];
-    const { data: current, error: currentError } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).eq("company_id", profile?.company_id).maybeSingle();
-    if (currentError) throw currentError;
-    if (!current) throw new Error("Esta conversa não está disponível. Atualize a lista de conversas.");
-    let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
-    related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
-    const { data: all, error: relatedError } = await related;
-    if (relatedError) throw relatedError;
-    const ids = [...new Set([id, ...(all ?? []).map(c => c.id)])];
+    const key = `${profile?.company_id}:${id}`;
+    let ids: string[];
+    const cached = threadLookup.current;
+    if (recentOnly && cached.key === key && cached.expires > Date.now()) ids = cached.ids;
+    else {
+      const { data: current, error: currentError } = await supabase.from("conversations").select("contact_id,number_id").eq("id", id).eq("company_id", profile?.company_id).maybeSingle().retry(!recentOnly);
+      if (currentError) throw currentError;
+      if (!current) throw new Error("Esta conversa não está disponível. Atualize a lista de conversas.");
+      let related = supabase.from("conversations").select("id").eq("contact_id", current.contact_id).eq("company_id", profile?.company_id);
+      related = current.number_id ? related.eq("number_id", current.number_id) : related.is("number_id", null);
+      const { data: all, error: relatedError } = await related.retry(!recentOnly);
+      if (relatedError) throw relatedError;
+      ids = [...new Set([id, ...(all ?? []).map(c => c.id)])];
+      threadLookup.current = { key, ids, expires: Date.now() + 30000 };
+    }
     if (selConvRef.current === id) relatedConversationIds.current = new Set(ids);
     if (recentOnly) {
-      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at", { ascending: false }).order("id", { ascending: false }).limit(100);
+      const { data, error } = await supabase.from("whatsapp_messages").select("*").in("conversation_id", ids).order("at", { ascending: false }).order("id", { ascending: false }).limit(100).retry(false);
       if (error) throw new Error(error.message);
       return (data ?? []).reverse();
     }
@@ -371,7 +380,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     };
     const ch = supabase
       .channel(`messages-tab-${profile.company_id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, refreshList)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `company_id=eq.${profile.company_id}` }, () => { threadLookup.current.expires = 0; refreshList(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "contacts", filter: `company_id=eq.${profile.company_id}` }, refreshList)
       .on("postgres_changes", { event: "*", schema: "public", table: "contact_groups", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
       .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_numbers", filter: `company_id=eq.${profile.company_id}` }, () => loadSide())
@@ -383,6 +392,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
           setMessages(previous => mergeThreadMessages(previous, [m]));
           if (stickToBottom.current) scrollBottom();
         } else if (m.direction === "in") {
+          threadLookup.current.expires = 0;
           // Mensagem nova de cliente numa conversa que não está aberta → não-lida.
           setUnread((prev) => ({ ...prev, [m.conversation_id]: (prev[m.conversation_id] || 0) + 1 }));
         }
@@ -457,26 +467,26 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     await loadConversations();
   }
 
-  // Rede de segurança: revalida só as 100 mensagens recentes a cada 1,5s.
+  // Rede de segurança: consulta só as 100 mensagens recentes, sem sobrepor
+  // requisições e com recuo progressivo se o banco estiver indisponível.
   // O histórico completo permanece carregado e é mesclado sem apagar respostas.
   // Garante que mensagens enviadas (por mim ou pelo bot, incl. áudio)
   // apareçam rápido mesmo que o evento realtime não chegue.
   useEffect(() => {
     if (!supabase || !selConvId) return;
-    let pending = false;
     let cancelled = false;
-    const poll = setInterval(async () => {
-      if (pending || document.hidden) return;
-      pending = true;
+    const stop = startMessagePolling(async () => {
       try {
         const rows = await fetchThread(selConvId, true);
-        if (!cancelled && selConvRef.current === selConvId) mergeServerMessages(rows);
-      } catch { /* Keep the current thread during a temporary network failure. */ }
-      finally { pending = false; }
-    }, 1500);
-    return () => { cancelled = true; clearInterval(poll); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selConvId]);
+        if (!cancelled && selConvRef.current === selConvId) { mergeServerMessages(rows); setThreadError(""); }
+      } catch (error) {
+        if (!cancelled && selConvRef.current === selConvId) setThreadError("Conexão temporariamente indisponível. Tentando novamente…");
+        throw error;
+      }
+    }, () => document.hidden);
+    return () => { cancelled = true; stop(); };
+  }, [selConvId, fetchThread]);
+
   // Salva a conversa aberta como arquivo de texto (backup/registro).
   // Log do contato: relatórios que o robô gerou dos atendimentos (bot e manual).
   async function openContactLog() {

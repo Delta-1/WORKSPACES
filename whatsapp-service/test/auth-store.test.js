@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createAuthStore } from '../src/auth-store.js';
 function fixture() {
  const rows = new Map(); let fail = false; let calls = 0;
- const db = {from(){ const q = {select(){return q;},eq(){return q;},async in(_, keys){calls++; if(fail)return {error:{status:503}};return {data:keys.filter(k=>rows.has(k)).map(key=>({key,value:rows.get(key)}))};},async upsert(data){calls++;if(fail)return {error:{status:503}};for(const row of data)rows.set(row.key,structuredClone(row.value));return {};},delete(){const del={eq(){return del;},async in(_,keys){if(fail)return {error:{status:503}};for(const key of keys)rows.delete(key);return {};}};return del;}};return q;}};
+ const db = {from(){ const q = {select(){return q;},retry(){return q;},eq(){return q;},async in(_, keys){calls++; if(fail)return {error:{status:503}};return {data:keys.filter(k=>rows.has(k)).map(key=>({key,value:rows.get(key)}))};},async upsert(data){calls++;if(fail)return {error:{status:503}};for(const row of data)rows.set(row.key,structuredClone(row.value));return {};},delete(){const del={eq(){return del;},async in(_,keys){if(fail)return {error:{status:503}};for(const key of keys)rows.delete(key);return {};}};return del;}};return q;}};
  const args={db,numberId:'test',serialize:structuredClone,revive:structuredClone,appStateKey:v=>({...v,decoded:true}),pause:async()=>{}};
  return {rows,args,store:createAuthStore(args),setFail:v=>{fail=v;},calls:()=>calls};
 }

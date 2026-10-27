@@ -1,3 +1,4 @@
+import { createDatabaseHealth } from "./database-health.js";
 import { prepareReply, incomingReply } from "./message-reply.js";
 import { createAuthStore } from "./auth-store.js";
 import { installConfirmedDelivery } from "./confirmed-delivery.js";
@@ -4022,9 +4023,12 @@ app.use(express.json());
 // Diagnóstico público (sem segredos): mostra se o serviço enxerga as variáveis
 // de ambiente do Supabase em tempo de execução. Fica ANTES do middleware de
 // segurança para poder ser aberto direto no navegador.
-app.get("/health", (_req, res) => {
+const databaseHealth = createDatabaseHealth({ db: supabase });
+app.get("/health", async (_req, res) => {
+  const database = await databaseHealth();
   res.json({
-    ok: true,
+    ok: database.status === "healthy",
+    database,
     revision: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     voiceAudio: voiceAudioHealth,
     speech: speechStatus,

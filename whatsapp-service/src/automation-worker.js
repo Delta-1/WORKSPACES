@@ -1,9 +1,12 @@
 import { matches, nextNode, renderText, validateFlow } from './automation-flow.js';
 export function createAutomationWorker({ db, storageOrigin, send, connected, logger = console, now = () => Date.now() }) {
   let sweeping = false;
+  let sweepFailures = 0;
+  let nextSweepAt = 0;
   async function incoming({ numberId, companyId, conversation, messageKey, text, name }) {
     const {data:resumed,error:resumeError}=await db.rpc('resume_message_automation',{conversation_id:conversation.id,message_key:messageKey,received_text:text ?? ''});
     if(resumeError){logger.error('Automation resume:',resumeError.message);return false;}
+    sweepFailures = 0; nextSweepAt = 0; // A successful incoming query proves recovery.
     if(resumed)return true;
     const { data: rules, error } = await db.from('message_automations').select('*').eq('company_id', companyId).eq('number_id',numberId).eq('enabled',true).eq('trigger_type','incoming').order('priority').order('created_at');
     if (error) { logger.error('Automation rules:',error.message); return false; }
@@ -42,14 +45,15 @@ export function createAutomationWorker({ db, storageOrigin, send, connected, log
     } catch(e) {logger.error('Automation execution:',e.message);await save({status:e.code==='AUTOMATION_CANCELED'?'canceled':'failed',error:String(e.message).slice(0,500),finished_at:new Date(now()).toISOString()}).catch(err=>logger.error('Automation log:',err.message));}
   }
   async function sweep() {
-    if(sweeping)return;sweeping=true;
+    if(sweeping || now() < nextSweepAt)return;sweeping=true;
     try {
       const {data:scheduled,error}=await db.from('message_automations').select('id,target_conversation_id,scheduled_at').eq('enabled',true).eq('trigger_type','scheduled').lte('scheduled_at',new Date(now()).toISOString()).limit(50);
       if(error)throw Error(error.message);
       for(const rule of scheduled??[]) {const {error:e}=await db.rpc('reserve_message_automation',{rule_id:rule.id,conversation_id:rule.target_conversation_id,message_key:`scheduled:${rule.id}:${rule.scheduled_at}`,received_text:'',contact_name:''});if(e)logger.error('Automation schedule:',e.message);}
       // Each claim is atomic. A crashed send is marked uncertain/failed, never blindly resent.
       for(let i=0;i<40;i++) {const {data:run,error:e}=await db.rpc('claim_message_automation_run');if(e)throw Error(e.message);if(!run)break;await process(run);}
-    }catch(e){logger.error('Automation sweep:',e.message);}finally{sweeping=false;}
+      sweepFailures = 0; nextSweepAt = 0;
+    }catch(e){sweepFailures++;nextSweepAt=now()+Math.min(60000,5000*2**Math.min(sweepFailures,4));logger.error('Automation sweep:',e.message);}finally{sweeping=false;}
   }
   return {incoming,sweep,process};
 }

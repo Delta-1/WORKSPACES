@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createDatabaseHealth } from '../src/database-health.js';
+function fixture(){let clock=1000,calls=0,failed=false,release=null;const db={from(table){assert.equal(table,'whatsapp_numbers');const q={select(){return q;},limit(){return q;},retry(){return q;},async abortSignal(signal){assert.equal(signal instanceof AbortSignal,true);calls++;if(release)await release;return failed?{error:{message:'private database details'}}:{data:[]};}};return q;}};return{check:createDatabaseHealth({db,now:()=>clock}),calls:()=>calls,fail:v=>{failed=v;},advance:()=>{clock+=16000;},hold:p=>{release=p;}};}
+test('database health reflects real dependency failure and recovery, without exposing errors',async()=>{const f=fixture();assert.equal((await f.check()).status,'healthy');f.fail(true);await f.check();assert.equal(f.calls(),1);f.advance();const down=await f.check();assert.equal(down.status,'unavailable');assert.equal(JSON.stringify(down).includes('private'),false);f.fail(false);f.advance();assert.equal((await f.check()).status,'healthy');});
+test('concurrent health reads share a single database probe',async()=>{const f=fixture();let release;f.hold(new Promise(r=>{release=r;}));const a=f.check(),b=f.check();assert.equal(f.calls(),1);release();assert.deepEqual(await a,await b);});
+test('missing database configuration is not reported as healthy',async()=>assert.equal((await createDatabaseHealth({db:null})()).status,'unavailable'));

@@ -12,5 +12,5 @@ export const supabaseConfigured = Boolean(url && anonKey);
 // point" when certain OAuth user metadata reaches a header) and is the flow
 // Supabase recommends for browser apps anyway.
 export const supabase = supabaseConfigured
-  ? createClient(url, anonKey, { auth: { flowType: "pkce" } })
+  ? createClient(url, anonKey, { auth: { flowType: "pkce" }, db: { timeout: 15000 } })
   : null;

@@ -95,3 +95,11 @@ Use a seta **Responder** ao lado de uma mensagem já confirmada. A prévia apare
 O histórico mantém a referência e a prévia da mensagem original, inclusive quando o cliente responde citando uma mensagem pelo WhatsApp. Clique na citação para localizar a original quando ela estiver carregada. Mensagens de atendimentos anteriores do mesmo contato e número também podem ser citadas; mensagens de outra empresa, contato, número ou já apagadas são recusadas. Encaminhar continua sendo uma ação independente.
 
 Requer a migration `20261027140315_whatsapp_quoted_replies.sql`. A API verifica a capacidade `quotedReplies` antes de enviar, para evitar respostas sem citação durante uma atualização parcial do serviço. Testes nativos e de integração: `whatsapp-service/test/message-reply.test.js` e `server-reply.test.js`. O teste de navegador cobre prévia, cancelamento, falha, persistência ao reabrir, navegação até a original e resposta a foto pelo celular.
+
+### Proteção durante indisponibilidade do banco
+
+O recebimento em tempo real continua prioritário. A consulta de reconciliação do chat reutiliza por até 30 segundos a lista de atendimentos do mesmo contato/número e invalida essa lista quando há alterações relevantes. Consultas de reconciliação não usam tentativas internas adicionais do SDK; um único agendador evita sobreposição e aumenta a espera após falhas, até 60 segundos. O histórico carregado é preservado e a interface informa a conexão indisponível. A recuperação restaura a frequência normal. Abas ocultas consultam com menor frequência.
+
+O cliente aplica prazo de 15 segundos às consultas PostgREST, sem encurtar uploads do Storage. As leituras das chaves de sessão usam apenas as tentativas controladas pelo armazenamento de autenticação. O processamento de automações também recua durante falhas e é reativado por uma consulta recebida bem-sucedida.
+
+O `/health` consulta a disponibilidade real do banco com prazo curto, cache de 15 segundos e uma única consulta em andamento. `ok` depende de `database.status === "healthy"`; a conectividade do socket é informada separadamente em `sessions`. O endpoint continua HTTP 200 para evitar reinícios do processo por falhas de uma dependência externa.
