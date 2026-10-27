@@ -5,7 +5,7 @@ import { messageAuthHeaders } from "@/lib/message-auth";
 import { safeMediaName } from "@/lib/whatsapp-media";
 import type { WhatsappMediaType } from "@/lib/types";
 import MessageActions from "./MessageActions";
-export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName,signaturePosition}:{signatureName?:string|null;signaturePosition?:"top"|"bottom";mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
+export default function MessageBubble({pending,mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName,signaturePosition}:{pending?:boolean;signatureName?:string|null;signaturePosition?:"top"|"bottom";mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
  const [viewer,setViewer]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  const name=safeMediaName(mediaName,mediaType,mediaMime);
  const time=new Date(at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
@@ -31,6 +31,7 @@ export default function MessageBubble({mine,at,text,mediaUrl,mediaType,mediaName
   {error&&<p role="alert" className="text-xs text-amber-200 my-1">{error}</p>}
   {onSaveSticker&&<button onClick={()=>void onSaveSticker()} className="block text-[11px] underline py-1">Salvar figurinha</button>}
   <div className="flex items-center justify-end gap-2 mt-1 flex-wrap">
+   {pending&&<span role="status" className="text-[10px] opacity-80">Enviando…</span>}
    {editedAt&&<span className="text-[10px] opacity-70">editada</span>}
    {mediaUrl&&messageId&&<button aria-label={`Baixar ${name}`} disabled={busy} onClick={()=>void download()} className="flex items-center gap-1 text-[11px] p-1 hover:bg-white/10 rounded disabled:opacity-50"><Download size={14}/>{busy?"Baixando…":"Baixar"}</button>}
    {onForward&&<button aria-label="Encaminhar mensagem" onClick={onForward} className="flex items-center gap-1 text-[11px] p-1 hover:bg-white/10 rounded"><Forward size={14}/>Encaminhar</button>}

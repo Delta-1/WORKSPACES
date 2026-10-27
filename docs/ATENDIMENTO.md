@@ -77,3 +77,13 @@ O pipeline de voz v5 usa a mesma reconstrução do STARSIS: decodifica a gravaç
 Ao entrar, trocar ou reabrir uma conversa, o chat posiciona a última mensagem na área visível. O ajuste acompanha o carregamento de imagens e mudanças de tamanho da tela. Rolagens geradas pelo navegador durante o carregamento não desativam esse comportamento. Ao subir o histórico com mouse, toque ou teclado, a posição de leitura é preservada; voltar ao final ou reabrir a conversa retoma o acompanhamento das mensagens mais recentes. O mesmo comportamento vale para conversas internas da equipe.
 
 Regressão de interface: `tests/browser/chat-scroll.cjs` cobre os layouts clássico, Kanban e CRM em desktop e celular, com histórico longo, imagem atrasada, rolagem de layout, leitura manual, troca/reabertura e chat interno.
+
+### Resiliência do envio e da sessão
+
+O envio aguarda o ACK do servidor do WhatsApp antes de confirmar sucesso. Rejeições (como 479), queda de conexão ou falta de confirmação geram aviso; o sistema não repete automaticamente um envio incerto. O ACK indica aceitação pelo servidor, não leitura ou entrega no aparelho do cliente.
+
+O armazenamento das chaves Signal usa consultas em lote, cache por sessão e escrita persistida antes da atualização do cache. Falhas de leitura não são interpretadas como ausência de credenciais. Consultas ao banco têm prazo de 12 segundos; tentativas das chaves são limitadas. Status e newsletters são ignorados antes da descriptografia. Contatos, histórico e atendimento têm filas independentes; a atualização da lista de conversas não bloqueia o envio. O conteúdo de texto, anexos e áudio fica disponível para solicitações de recuperação do WhatsApp.
+
+Testes: `whatsapp-service/test/auth-store.test.js`, `confirmed-delivery.test.js`, `database-fetch.test.js` e a suíte existente de áudio. `tests/browser/chat-scroll.cjs` também cobre falha ao assumir, rejeição do envio, recuperação do campo e envio enquanto a lista atualiza; `TEST_STAFF=1` executa com o perfil de funcionário. Nenhum teste envia mensagens a destinatários reais.
+
+O serviço Railway acompanha apenas mudanças em `/whatsapp-service/**`. Alterações nos aplicativos e no layout web não reiniciam mais a conexão do WhatsApp.

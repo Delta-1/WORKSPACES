@@ -87,3 +87,11 @@ test('Baileys protobuf media keys survive persistent retry serialization',async(
   assert.deepEqual(Buffer.from(recovered.audioMessage.mediaKey),Buffer.alloc(32,7));
   assert.equal(Number(recovered.audioMessage.fileLength),123);assert.equal(recovered.audioMessage.ptt,false);
 });
+
+test('text and attachment content is also available for recipient retries',async()=>{
+ for(const message of [{conversation:'hello'},{imageMessage:{url:'fixture'}}]){
+  let saved;const result={key:{id:'saved'},message};const sock={sendMessage:async()=>result};
+  installAudioDelivery(sock,{save:async value=>{saved=value;}});
+  assert.equal(await sock.sendMessage(target,{text:'hi'}),result);assert.equal(saved,result);
+ }
+});

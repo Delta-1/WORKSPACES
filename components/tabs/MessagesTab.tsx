@@ -725,9 +725,13 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
   async function claimConversation(conv: ConvRow): Promise<boolean> {
     if (!supabase || !profile?.id) return false;
-    const { error } = await supabase.rpc("attendance_action", { cid: conv.id, action: "claim" });
-    if (error) { alert(error.message); await loadConversations(); return false; }
-    await loadConversations(); return true;
+    try {
+      const { error } = await supabase.rpc("attendance_action", { cid: conv.id, action: "claim" }).abortSignal(AbortSignal.timeout(12000));
+      if (error) { alert("Não foi possível assumir o atendimento: " + error.message); return false; }
+      // Refresh independently: a slow inbox query must not prevent sending.
+      void loadConversations();
+      return true;
+    } catch { alert("Não foi possível assumir o atendimento. Tente novamente em instantes."); return false; }
   }
 
   const selConv = selConvId ? conversations.find((c) => c.id === selConvId) ?? null : null;
@@ -822,7 +826,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     const messageId = null;
     try {
       const headers = await authHeaders();
-      const response = await fetch("/api/whatsapp/send", {
+      const response = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000),
         method: "POST", headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId }),
       });
@@ -884,7 +888,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         // O serviço registra o envio aceito e atribui a mensagem ao responsável.
         const messageId = null;
         const headers = await authHeaders();
-        const res = await fetch("/api/whatsapp/send", {
+        const res = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000),
           method: "POST",
           headers: { "Content-Type": "application/json", ...headers },
           body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id, messageId }),
@@ -893,12 +897,12 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         if (!res.ok || !data.success) {
           setMessages(prev => prev.filter(m => m.id !== temp.id));
           alert(data.message ?? data.error ?? "Erro ao enviar. Algum número conectado?");
-          setInput((cur) => cur || text); // devolve o texto se nem salvou
+          if (selConvRef.current === temp.conversation_id) setInput((cur) => cur || text); // devolve o texto se nem salvou
         }
       } catch {
         setMessages(prev => prev.filter(m => m.id !== temp.id));
-        alert("Erro ao enviar a mensagem.");
-        setInput((cur) => cur || text);
+        alert("O envio não foi confirmado. Confira a conversa antes de reenviar.");
+        if (selConvRef.current === temp.conversation_id) setInput((cur) => cur || text);
       } finally { setSending(false); }
     })();
   }
@@ -922,7 +926,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     (async () => {
       try {
         const headers = await authHeaders();
-        const res = await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id }) });
+        const res = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000), method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id }) });
         const data = await res.json();
         if (!data.success) alert(data.message ?? "Erro ao enviar.");
       } catch { alert("Erro ao enviar a ferramenta."); }
@@ -954,7 +958,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
   async function forwardToContact(contact: Contact, numberId: string) {
     if (!forwardMessage) throw new Error("Selecione uma mensagem para encaminhar.");
-    const response = await fetch("/api/whatsapp/send", {
+    const response = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000),
       method: "POST", headers: { "Content-Type": "application/json", ...await authHeaders() },
       body: JSON.stringify({ to: contact.jid || contact.phone, numberId, forwardMessageId: forwardMessage.id }),
     });
@@ -1382,7 +1386,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               {threadError && <div role="alert" className="text-center text-sm text-amber-200 py-2">{threadError}<button onClick={() => { if (selConvId) void openConv(selConvId); }} className="ml-2 underline">Tentar novamente</button></div>}
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} signatureName={m.signature_name} signaturePosition={m.signature_position} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
+                  <Bubble key={m.id} pending={m.id.startsWith("temp-")} signatureName={m.signature_name} signaturePosition={m.signature_position} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
@@ -2258,7 +2262,7 @@ function ChatChargeModal({ companyId, contact, onClose }: { companyId: string | 
       }
       const extrato = renderExtrato(cleanItens, motivo);
       const text = `Olá ${(nome || "").split(" ")[0]}! 👋 Segue sua cobrança de ${money(valorFinal)}.\n${extrato}\nPagamento via Pix:\n${pixKey || "(chave Pix não configurada no Cobrador)"}\n\nAssim que pagar, me envie o comprovante aqui que eu confirmo. 🙏`.replace(/\n{3,}/g, "\n\n");
-      if (to) await fetch("/api/whatsapp/send", { method: "POST", headers: { "Content-Type": "application/json", ...await messageAuthHeaders() }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
+      if (to) await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000), method: "POST", headers: { "Content-Type": "application/json", ...await messageAuthHeaders() }, body: JSON.stringify({ to, text, media: imageUrl ? { type: "image", url: imageUrl } : undefined }) });
       setValor(""); setMotivo(""); setItens([]); setImageUrl(null); setFollowupMin("0"); setMulta(""); await load();
     } finally { setBusy(false); }
   }

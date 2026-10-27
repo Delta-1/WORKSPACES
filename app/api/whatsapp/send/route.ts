@@ -8,7 +8,7 @@ export const maxDuration = 180;
 type Media = { type: WhatsappMediaType; url: string; name?: string | null; mime?: string | null };
 export async function POST(request: Request) {
  try {
-  const auth=supabaseForRequest(request);
+  const auth=supabaseForRequest(request, 12000);
   if(!auth)return NextResponse.json({error:"Faça login para enviar."},{status:401});
   const {data:{user}}=await auth.auth.getUser();
   if(!user)return NextResponse.json({error:"Sessão expirada."},{status:401});

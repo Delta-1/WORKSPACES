@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { installConfirmedDelivery } from '../src/confirmed-delivery.js';
+function socket(relay,timeoutMs=20){const health={};const sock={ws:new EventEmitter(),ev:new EventEmitter()};let calls=0;sock.sendMessage=async(jid,content,opts)=>{calls++;return relay(sock,opts.messageId,jid,content);};installConfirmedDelivery(sock,{makeId:()=> 'fixed-id',timeoutMs,health});return {sock,health,calls:()=>calls};}
+const sent=id=>({key:{id},message:{conversation:'hi'}});
+test('fast ACK before send returns is retained',async()=>{const f=socket(async(s,id)=>{s.ws.emit('CB:ack,class:message',{attrs:{id}});return sent(id);});assert.equal((await f.sock.sendMessage('chat',{text:'hi'})).key.id,'fixed-id');assert.equal(f.health.confirmed,1);});
+test('no success before server ACK; unrelated ACK ignored',async()=>{let done=false;const f=socket(async(_,id)=>sent(id),1000);const promise=f.sock.sendMessage('chat',{text:'hi'}).then(()=>{done=true;});await new Promise(r=>setImmediate(r));assert.equal(done,false);f.sock.ws.emit('CB:ack,class:message',{attrs:{id:'other'}});assert.equal(done,false);f.sock.ws.emit('CB:ack,class:message',{attrs:{id:'fixed-id'}});await promise;assert.equal(done,true);});
+test('server refusal is a failure, without duplicate relay',async()=>{const f=socket(async(s,id)=>{s.ws.emit('CB:ack,class:message',{attrs:{id,error:'479'}});return sent(id);});await assert.rejects(f.sock.sendMessage('chat',{audio:Buffer.alloc(1)}),/479/);assert.equal(f.calls(),1);assert.equal(f.health.failed,1);});
+test('lost ACK times out without automatic resend',async()=>{const f=socket(async(_,id)=>sent(id));await assert.rejects(f.sock.sendMessage('chat',{text:'hi'}),/ainda não confirmou/);assert.equal(f.calls(),1);});
+test('connection loss and relay exceptions release pending sends',async()=>{const f=socket(async(s,id)=>{s.ev.emit('connection.update',{connection:'close'});return sent(id);});await assert.rejects(f.sock.sendMessage('chat',{text:'hi'}),/conexão caiu/);const failed=socket(async()=>{throw Error('unavailable');});await assert.rejects(failed.sock.sendMessage('chat',{text:'hi'}),/unavailable/);});

@@ -1,3 +1,4 @@
+import { databaseFetch } from "@/whatsapp-service/src/database-fetch.js";
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -8,12 +9,12 @@ const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
  * RLS policies apply exactly as they would for that user in the browser.
  * Returns null if Supabase isn't configured or no bearer token was sent.
  */
-export function supabaseForRequest(request: Request) {
+export function supabaseForRequest(request: Request, timeoutMs?: number) {
   if (!url || !anonKey) return null;
   const auth = request.headers.get("authorization");
   if (!auth) return null;
   return createClient(url, anonKey, {
-    global: { headers: { Authorization: auth } },
+    global: { headers: { Authorization: auth }, ...(timeoutMs ? { fetch: databaseFetch(fetch, timeoutMs) } : {}) },
     auth: { persistSession: false },
   });
 }

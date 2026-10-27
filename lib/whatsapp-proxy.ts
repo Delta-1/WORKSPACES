@@ -11,9 +11,10 @@ export async function callWhatsappService(path: string, init?: RequestInit) {
   if (!base) throw new Error("WHATSAPP_SERVICE_URL não configurado.");
   const res = await fetch(`${base}${path}`, {
     ...init,
+    signal: init?.signal ?? (["/send", "/messages/mutate"].includes(path) ? AbortSignal.timeout(120000) : undefined),
     headers: { "Content-Type": "application/json", "X-Service-Secret": secret, ...(init?.headers ?? {}) },
     cache: "no-store",
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({ success: false, error: "O serviço de WhatsApp está temporariamente indisponível. Confira a conversa antes de reenviar." }));
   return { status: res.status, data };
 }

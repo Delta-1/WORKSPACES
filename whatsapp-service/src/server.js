@@ -1,3 +1,6 @@
+import { createAuthStore } from "./auth-store.js";
+import { installConfirmedDelivery } from "./confirmed-delivery.js";
+import { databaseFetch } from "./database-fetch.js";
 import { resolveIncomingIdentity } from "./chat-identity.js";
 import { createMessageLane, persistIncoming, retryIncoming } from "./message-ingestion.js";
 import { createAutomationWorker } from "./automation-worker.js";
@@ -18,6 +21,7 @@ import { prepareVoiceAudio, audioProbeWav, checkVoiceAudio, VOICE_MIME, VOICE_PI
 import { createAudioRetryStore, installAudioDelivery, verifiedAudioUpload } from "./audio-delivery.js";
 const voiceAudioHealth = { pipelineVersion: VOICE_PIPELINE_VERSION, format: "ogg-opus-ptt", ready: null, verifiedUploads: 0, rejectedUploads: 0, uploadProbeReady: null };
 let audioUploadProbeRunning = false;
+const outgoingHealth = { version: 1, confirmed: 0, failed: 0 };
 const incomingHealth = { version: 1, persisted: 0, persistErrors: 0, processingErrors: 0, lastPersistLatencyMs: null, lastPersistAt: null };
 void checkVoiceAudio(ffmpegPath).then(ready => { voiceAudioHealth.ready = ready; }, () => { voiceAudioHealth.ready = false; });
 import makeWASocket, {
@@ -28,7 +32,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   initAuthCreds,
   BufferJSON,
-  makeCacheableSignalKeyStore,
+  generateMessageIDV2,
   proto,
   normalizeMessageContent,
 } from "baileys";
@@ -50,7 +54,7 @@ const APP_URL = (process.env.APP_URL || "").replace(/\/+$/, "");
 // needs full write access to the contacts/conversations/messages tables.
 const supabase =
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { global: { fetch: databaseFetch() }, auth: { persistSession: false, autoRefreshToken: false } })
     : null;
 
 // Fallback env key used only if a chatbot has no key of its own.
@@ -500,6 +504,7 @@ async function upsertContact(phone, name = null, companyId = null, jid = null, a
 
 // Sincroniza a agenda de contatos do WhatsApp para a tabela `contacts`,
 // para o usuário ver seus contatos assim que conectar (como no WhatsApp Web).
+const contactSyncLane = createMessageLane();
 async function syncContacts(list, companyId, sock = null) {
   if (!supabase || !companyId || !Array.isArray(list)) return;
   for (const c of list) {
@@ -510,7 +515,8 @@ async function syncContacts(list, companyId, sock = null) {
     }
     const phone = jid.split("@")[0];
     // Look up both aliases: contact updates may arrive by LID while messages use PN.
-    let { data: existing } = await supabase.from("contacts").select("*").eq("company_id", companyId).eq("phone", phone).maybeSingle();
+    let { data: existing, error: lookupError } = await supabase.from("contacts").select("*").eq("company_id", companyId).eq("phone", phone).maybeSingle();
+    if (lookupError) throw Error("Contact sync paused: database unavailable");
     if (!existing && (c.lid || c.id !== jid)) {
       const { data } = await supabase.from("contacts").select("*").eq("company_id", companyId).eq("jid", c.lid || c.id).maybeSingle();
       existing = data;
@@ -520,7 +526,7 @@ async function syncContacts(list, companyId, sock = null) {
     const { error } = existing
       ? await supabase.from("contacts").update(row).eq("id", existing.id)
       : await supabase.from("contacts").upsert({ ...row, company_id: companyId, phone }, { onConflict: "company_id,phone" });
-    if (error) console.error("Contact sync failed:", error.message);
+    if (error) throw Error("Contact sync paused: database unavailable");
   }
 }
 
@@ -3126,59 +3132,13 @@ async function runCopilotReply(companyId, chatbot, customerText, history = [], f
 // Auth state persistido no Supabase (sobrevive a reinícios/deploys)
 // ---------------------------------------------------------------------------
 async function useSupabaseAuthState(numberId) {
-  const readKey = async (key) => {
-    const { data } = await supabase
-      .from("wa_auth")
-      .select("value")
-      .eq("number_id", numberId)
-      .eq("key", key)
-      .maybeSingle();
-    if (!data?.value) return null;
-    return JSON.parse(JSON.stringify(data.value), BufferJSON.reviver);
-  };
-  const writeKey = async (key, value) => {
-    const stored = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
-    await supabase
-      .from("wa_auth")
-      .upsert({ number_id: numberId, key, value: stored, updated_at: new Date().toISOString() }, { onConflict: "number_id,key" });
-  };
-  const removeKey = async (key) => {
-    await supabase.from("wa_auth").delete().eq("number_id", numberId).eq("key", key);
-  };
-
-  const creds = (await readKey("creds")) || initAuthCreds();
-
-  const keys = {
-    get: async (type, ids) => {
-      const result = {};
-      await Promise.all(
-        ids.map(async (id) => {
-          let value = await readKey(`${type}-${id}`);
-          if (type === "app-state-sync-key" && value) {
-            value = proto.Message.AppStateSyncKeyData.fromObject(value);
-          }
-          result[id] = value;
-        })
-      );
-      return result;
-    },
-    set: async (data) => {
-      const tasks = [];
-      for (const category of Object.keys(data)) {
-        for (const id of Object.keys(data[category])) {
-          const value = data[category][id];
-          const key = `${category}-${id}`;
-          tasks.push(value ? writeKey(key, value) : removeKey(key));
-        }
-      }
-      await Promise.all(tasks);
-    },
-  };
-
-  return {
-    state: { creds, keys: makeCacheableSignalKeyStore(keys, noopLogger) },
-    saveCreds: () => writeKey("creds", creds),
-  };
+  const store = createAuthStore({ db: supabase, numberId,
+    serialize: value => JSON.parse(JSON.stringify(value, BufferJSON.replacer)),
+    revive: value => JSON.parse(JSON.stringify(value), BufferJSON.reviver),
+    appStateKey: value => proto.Message.AppStateSyncKeyData.fromObject(value),
+  });
+  const creds = (await store.readCreds()) || initAuthCreds();
+  return { state: { creds, keys: store.keys }, saveCreds: () => store.saveCreds(creds) };
 }
 
 async function clearSupabaseAuthState(numberId) {
@@ -3250,17 +3210,23 @@ async function startSession(numberId) {
       // Estabilidade + velocidade: não fica "online" (mantém as notificações no
       // celular), keep-alive curto e SEM sincronizar histórico gigante (mais rápido).
       markOnlineOnConnect: false,
+      // Persist our own sends after server acknowledgement; avoid synthetic echoes.
+      emitOwnEvents: false,
       keepAliveIntervalMs: 15000,
       connectTimeoutMs: 60000,
       qrTimeout: 60000,
       retryRequestDelayMs: 250,
+      defaultQueryTimeoutMs: 15000,
+      transactionOpts: { maxCommitRetries: 1, delayBetweenTriesMs: 500 },
+      shouldIgnoreJid: jid => jid === "status@broadcast" || jid.endsWith("@newsletter"),
       browser: ["Workspace", "Chrome", "121.0"],
       syncFullHistory: false,
     });
+    installConfirmedDelivery(sock, { makeId: () => generateMessageIDV2(sock.user?.id), health: outgoingHealth });
     installAudioDelivery(sock, audioRetryStore, { health: voiceAudioHealth });
     s.sock = sock;
 
-    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", () => { void saveCreds().catch(() => { console.error("WhatsApp credentials persistence failed; database unavailable"); }); });
     sock.ev.on("messages.update", async updates => {
       if (!supabase) return;
       for (const { key, update } of updates) {
@@ -3274,19 +3240,22 @@ async function startSession(numberId) {
     // Mensagens importadas não reabrem atendimentos nem acionam IA/automações.
     sock.ev.on("messaging-history.set", async ({ contacts, messages }) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null, sock);
-      await syncRecentMessageHistory(sock, numberId, messages);
+      await Promise.allSettled([
+        contactSyncLane.run(numberId, () => syncContacts(contacts, number?.company_id ?? null, sock)),
+        syncRecentMessageHistory(sock, numberId, messages),
+      ]);
     });
     sock.ev.on("contacts.upsert", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null, sock);
+      await contactSyncLane.run(numberId, () => syncContacts(contacts, number?.company_id ?? null, sock)).catch(error => console.error(error.message));
     });
     sock.ev.on("contacts.update", async (contacts) => {
       const { number } = await getNumberConfig(numberId);
-      await syncContacts(contacts, number?.company_id ?? null, sock);
+      await contactSyncLane.run(numberId, () => syncContacts(contacts, number?.company_id ?? null, sock)).catch(error => console.error(error.message));
     });
 
     sock.ev.on("connection.update", async (update) => {
+      if (s.sock !== sock) return; // Ignore delayed events from a replaced connection.
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         s.state.status = "qr_pending";
@@ -3934,7 +3903,7 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
   let jid;
   if (to.includes("@")) {
     // Já veio um JID completo (o app manda contact.jid) — usa como está.
-    jid = to;
+    jid = normalizeJid(to);
   } else {
     // Só dígitos: tenta confirmar como telefone real no WhatsApp.
     let resolved = null;
@@ -3949,14 +3918,13 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     jid = resolved || (to.replace(/\D/g, "").length >= 14 ? `${to}@lid` : `${to}@s.whatsapp.net`);
   }
 
-  // Estratégia "log-first" (igual ao sendBotMessage): resolve contato/conversa e
-  // GRAVA a mensagem no Supabase ANTES de mandar pelo WhatsApp. Assim qualquer
-  // envio automático (Cobrador, encerramento por inatividade, assessor/relay)
-  // também aparece na hora no app Mensagens, e não só depois de sair no WhatsApp.
+  // Resolve and authorize the attendance before relay. Save the outgoing
+  // history only after the WhatsApp server confirms submission.
   const phone = jid.split("@")[0];
-  const { number } = await getNumberConfig(numberId);
-  const cid = number?.company_id ?? null;
-  const contact = await upsertContact(phone, null, cid, jid);
+  const { data: number, error: numberError } = await supabase.from("whatsapp_numbers").select("company_id,sector_id").eq("id", numberId).maybeSingle();
+  if (numberError || !number?.company_id) throw new Error("Não foi possível consultar o número de atendimento. Tente novamente em instantes.");
+  const cid = number.company_id;
+  const contact = authorizedConversationId ? null : await upsertContact(phone, null, cid, jid);
   let conversationId = authorizedConversationId;
   if (authorizedConversationId) {
     const { data: current } = await supabase.from("conversations").select("*").eq("id", authorizedConversationId).eq("company_id", cid).eq("number_id", numberId).maybeSingle();
@@ -4049,6 +4017,7 @@ app.get("/health", (_req, res) => {
     voiceAudio: voiceAudioHealth,
     speech: speechStatus,
     incomingMessages: incomingHealth,
+    outgoingMessages: outgoingHealth,
     attendantSignatures: { version: 2, enabled: true, defaultPosition: "top" },
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),

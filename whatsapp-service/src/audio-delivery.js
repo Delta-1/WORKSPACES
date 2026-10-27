@@ -96,11 +96,10 @@ export function installAudioDelivery(sock, retryStore, options) {
   const send = sock.sendMessage.bind(sock);
   const upload = verifiedAudioUpload(sock, options);
   sock.sendMessage = async (jid, content, opts = {}) => {
-    if (!content?.audio) return send(jid, content, opts);
-    const sent = await send(jid, content, { ...opts, upload });
-    if (!sent?.key?.id) throw Error('O WhatsApp não confirmou a submissão do áudio. Confira a conversa antes de reenviar.');
+    const sent = await send(jid, content, content?.audio ? { ...opts, upload } : opts);
+    if (!sent?.key?.id && content?.audio) throw Error('O WhatsApp não confirmou a submissão do áudio. Confira a conversa antes de reenviar.');
     // Persistence failure cannot turn an already-submitted message into a false failure.
-    try { await retryStore.save(sent); } catch (error) { console.error('Audio retry persistence failed:', error?.message || error); }
+    try { if (sent?.key?.id && sent.message) await retryStore.save(sent); } catch (error) { console.error('Message retry persistence failed:', error?.message || error); }
     return sent;
   };
 }
