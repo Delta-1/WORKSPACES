@@ -8,6 +8,7 @@ import { mergeThreadMessages } from "@/lib/message-thread";
 import { useChatScroll } from "@/components/messages/useChatScroll";
 import VoiceRecorder from "@/components/messages/VoiceRecorder";
 import AttachmentPreview from "@/components/messages/AttachmentPreview";
+import ReplyPreview from "@/components/messages/ReplyPreview";
 import Bubble from "@/components/messages/MessageBubble";
 import ContactsPicker from "@/components/messages/ContactsPicker";
 import AttendanceActions from "@/components/messages/AttendanceActions";
@@ -16,7 +17,7 @@ import { contactDisplayName } from "@/lib/attendance";
 import ToolsPicker from "../ToolsPicker";
 import { messageAuthHeaders } from "@/lib/message-auth";
 import { supabase } from "@/lib/supabase-client";
-import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
+import type { Contact, Conversation, InternalMessage, Profile, RemoteAgent, Tool, WhatsappMediaType, WhatsappReply, WhatsappMessageRow, WhatsappNumber, Chatbot } from "@/lib/types";
 import WhatsappTab from "./WhatsappTab";
 import RemoteViewer from "@/components/RemoteViewer";
 import BotFlowBuilder, { type BotFlow } from "@/components/BotFlowBuilder";
@@ -222,6 +223,8 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [replyMessage, setReplyMessage] = useState<WhatsappMessageRow | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [forwardMessage, setForwardMessage] = useState<WhatsappMessageRow | null>(null);
 
   const relatedConversationIds = useRef(new Set<string>());
@@ -413,6 +416,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
 
 
   async function openConv(id: string) {
+    setReplyMessage(null);
     resetChatScroll();
     setSelColleagueId(null);
     selColRef.current = null;
@@ -593,6 +597,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
   }
 
   async function openColleague(id: string) {
+    setReplyMessage(null);
     resetChatScroll();
     setSelConvId(null);
     selConvRef.current = null;
@@ -748,6 +753,18 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
     : numbers.find((n) => n.status === "connected") ?? numbers[0] ?? null;
   const botOn = Boolean(selNumber?.auto_reply);
 
+  function replySnapshot(message: WhatsappMessageRow): WhatsappReply {
+    return { id: message.id, wa_id: message.wa_id || "", author: message.direction === "out" ? message.signature_name || "Equipe" : contactDisplayName(selConv?.contacts), text: message.text || ({image:"Foto",audio:"Áudio",video:"Vídeo",document:"Arquivo",sticker:"Figurinha"}[message.media_type || "document"]), media_type: message.media_type };
+  }
+  function quoteTarget(reply: WhatsappReply) {
+    return messages.find(message => message.id === reply.id || (!!message.wa_id && message.wa_id === reply.wa_id));
+  }
+  function goToQuote(reply: WhatsappReply) {
+    const target = quoteTarget(reply);
+    const element = target ? document.getElementById(`message-${target.id}`) : null;
+    if (element) { stickToBottom.current = false; element.scrollIntoView({ block: "center", behavior: "instant" }); element.focus({ preventScroll: true }); }
+  }
+
   async function toggleBot() {
     if (!supabase || !profile?.company_id || !selNumber) {
       alert("Conecte um número de WhatsApp primeiro (botão de engrenagem).");
@@ -818,6 +835,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       media_url: media.url,
       media_name: media.name,
       media_mime: media.mime,
+      ...(replyMessage ? { reply_to: replySnapshot(replyMessage) } : {}),
       sender_id: profile?.id ?? null, signature_name: attendantName(profile), signature_position: attendancePosition(profile?.attendance_position),
       at: new Date().toISOString(),
     };
@@ -828,10 +846,11 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       const headers = await authHeaders();
       const response = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000),
         method: "POST", headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId }),
+        body: JSON.stringify({ to: selConv.contacts.jid || selConv.contacts.phone, numberId: selConv.number_id, conversationId: selConv.id, media, text: caption || undefined, messageId, replyToMessageId: replyMessage?.id }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.message || payload.error || "Falha no envio da mídia.");
+      setReplyMessage(current => current?.id === replyMessage?.id ? null : current);
       // The server can normalize audio and add a media label. Replace this exact
       // local preview with the actual saved message even if Realtime is delayed.
       const rows = await fetchThread(conversationId).catch(() => null);
@@ -878,6 +897,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
       media_url: null,
       media_name: null,
       media_mime: null,
+      ...(replyMessage ? { reply_to: replySnapshot(replyMessage) } : {}),
       sender_id: profile?.id ?? null, signature_name: attendantName(profile), signature_position: attendancePosition(profile?.attendance_position),
       at: new Date().toISOString(),
     };
@@ -891,14 +911,14 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
         const res = await fetch("/api/whatsapp/send", { signal: AbortSignal.timeout(150000),
           method: "POST",
           headers: { "Content-Type": "application/json", ...headers },
-          body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id, messageId }),
+          body: JSON.stringify({ to, text, senderId: profile?.id, numberId, conversationId: selConv.id, messageId, replyToMessageId: replyMessage?.id }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
           setMessages(prev => prev.filter(m => m.id !== temp.id));
           alert(data.message ?? data.error ?? "Erro ao enviar. Algum número conectado?");
           if (selConvRef.current === temp.conversation_id) setInput((cur) => cur || text); // devolve o texto se nem salvou
-        }
+        } else { setReplyMessage(current => current?.id === replyMessage?.id ? null : current); }
       } catch {
         setMessages(prev => prev.filter(m => m.id !== temp.id));
         alert("O envio não foi confirmado. Confira a conversa antes de reenviar.");
@@ -1386,7 +1406,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               {threadError && <div role="alert" className="text-center text-sm text-amber-200 py-2">{threadError}<button onClick={() => { if (selConvId) void openConv(selConvId); }} className="ml-2 underline">Tentar novamente</button></div>}
               {selConv &&
                 messages.map((m) => (
-                  <Bubble key={m.id} pending={m.id.startsWith("temp-")} signatureName={m.signature_name} signaturePosition={m.signature_position} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
+                  <Bubble key={m.id} replyTo={m.reply_to} onQuoteClick={m.reply_to && quoteTarget(m.reply_to) ? () => goToQuote(m.reply_to!) : undefined} onReply={m.wa_id && !m.deleted_at && !sending && !lockMsg ? () => { setReplyMessage(m); composerRef.current?.focus(); } : undefined} pending={m.id.startsWith("temp-")} signatureName={m.signature_name} signaturePosition={m.signature_position} editedAt={m.edited_at} deletedAt={m.deleted_at} onEdit={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at && !m.media_type && !m.media_url ? text => mutateMessage(m, "edit", text) : undefined} onDelete={m.sender_id === profile?.id && m.direction === "out" && m.wa_id && !m.deleted_at ? () => mutateMessage(m, "delete") : undefined} mine={m.direction === "out"} at={m.at} text={m.text} mediaUrl={m.media_url} mediaType={m.media_type} mediaName={m.media_name} mediaMime={m.media_mime} messageId={!m.id.startsWith("temp-") ? m.id : undefined} onForward={!m.id.startsWith("temp-") && (m.text || m.media_url) ? () => setForwardMessage(m) : undefined} onSaveSticker={profile && m.media_url && (m.media_type === "sticker" || m.media_mime === "image/webp") ? async () => { try { await saveReceivedSticker(profile, m.media_url!); alert("Figurinha salva!"); } catch (e) { alert(e instanceof Error ? e.message : "Falha ao salvar."); } } : undefined} />
                 ))}
               {selColleague &&
                 internal.map((m) => <Bubble key={m.id} mine={m.sender_id === profile?.id} at={m.at} text={m.text} />)}
@@ -1394,6 +1414,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               </div>
             </div>
 
+            {replyMessage && selConv && <div role="region" aria-label="Respondendo à mensagem" className="px-3 py-2 border-t border-white/10 bg-[#111826] flex items-center gap-2 shrink-0"><div className="flex-1 min-w-0"><ReplyPreview reply={replySnapshot(replyMessage)}/></div><button type="button" aria-label="Cancelar resposta" onClick={() => setReplyMessage(null)} className="min-h-11 min-w-11 rounded-full hover:bg-white/10 text-slate-300"><X size={19} className="mx-auto"/></button></div>}
             {lockMsg && (
               <div className="px-3 py-2 border-t border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-200 flex items-center gap-1.5 shrink-0">
                 <Users size={13} /> {lockMsg}
@@ -1463,6 +1484,7 @@ export default function MessagesTab({ profile, openTarget, onTargetHandled }: { 
               )}
 
               <textarea
+                ref={composerRef}
                 aria-label="Mensagem"
                 rows={1}
                 value={input}

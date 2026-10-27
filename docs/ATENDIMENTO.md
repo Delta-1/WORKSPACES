@@ -87,3 +87,11 @@ O armazenamento das chaves Signal usa consultas em lote, cache por sessão e esc
 Testes: `whatsapp-service/test/auth-store.test.js`, `confirmed-delivery.test.js`, `database-fetch.test.js` e a suíte existente de áudio. `tests/browser/chat-scroll.cjs` também cobre falha ao assumir, rejeição do envio, recuperação do campo e envio enquanto a lista atualiza; `TEST_STAFF=1` executa com o perfil de funcionário. Nenhum teste envia mensagens a destinatários reais.
 
 O serviço Railway acompanha apenas mudanças em `/whatsapp-service/**`. Alterações nos aplicativos e no layout web não reiniciam mais a conexão do WhatsApp.
+
+### Responder a uma mensagem específica
+
+Use a seta **Responder** ao lado de uma mensagem já confirmada. A prévia aparece acima do campo de texto e pode ser cancelada com o X. Texto, áudio e anexos enviados com uma resposta selecionada incluem a citação nativa no WhatsApp do cliente. Ao concluir o envio, a seleção é limpa; em caso de falha, a resposta permanece selecionada para revisão. Trocar de conversa cancela a seleção.
+
+O histórico mantém a referência e a prévia da mensagem original, inclusive quando o cliente responde citando uma mensagem pelo WhatsApp. Clique na citação para localizar a original quando ela estiver carregada. Mensagens de atendimentos anteriores do mesmo contato e número também podem ser citadas; mensagens de outra empresa, contato, número ou já apagadas são recusadas. Encaminhar continua sendo uma ação independente.
+
+Requer a migration `20261027140315_whatsapp_quoted_replies.sql`. A API verifica a capacidade `quotedReplies` antes de enviar, para evitar respostas sem citação durante uma atualização parcial do serviço. Testes nativos e de integração: `whatsapp-service/test/message-reply.test.js` e `server-reply.test.js`. O teste de navegador cobre prévia, cancelamento, falha, persistência ao reabrir, navegação até a original e resposta a foto pelo celular.

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   if(!user)return NextResponse.json({error:"Sessão expirada."},{status:401});
   const {data:profile}=await auth.from("profiles").select("id,company_id,sector_id,role").eq("id",user.id).single();
   if(!profile?.company_id)return NextResponse.json({error:"Selecione uma empresa."},{status:403});
-  const body=await request.json() as {to?:string;text?:string;numberId?:string;media?:Media;messageId?:string;conversationId?:string;forwardMessageId?:string};
+  const body=await request.json() as {to?:string;text?:string;numberId?:string;media?:Media;messageId?:string;conversationId?:string;replyToMessageId?:string;forwardMessageId?:string};
   const {to}=body;
   let {text,media}=body;
   if(body.forwardMessageId){
@@ -58,11 +58,18 @@ export async function POST(request: Request) {
   if(body.numberId&&c.number_id!==body.numberId)return NextResponse.json({error:"Número diferente do atendimento."},{status:400});
   const {data:targetAllowed}=await auth.rpc("can_access_number",{nid:c.number_id});
   if(!targetAllowed)return NextResponse.json({error:"Sem acesso ao número de destino."},{status:403});
+  if(body.replyToMessageId){
+   const capability=await callWhatsappService("/health",{signal:AbortSignal.timeout(5000)});
+   if(capability.status!==200||!capability.data.quotedReplies?.ready)return NextResponse.json({error:"As respostas específicas estão sendo atualizadas. Tente novamente em instantes."},{status:503});
+   if(body.forwardMessageId)return NextResponse.json({error:"Escolha responder ou encaminhar a mensagem."},{status:400});
+   const {data:original,error}=await auth.from("whatsapp_messages").select("id,wa_id,deleted_at,conversations!inner(company_id,number_id,contact_id)").eq("id",body.replyToMessageId).eq("company_id",profile.company_id).eq("conversations.company_id",profile.company_id).eq("conversations.number_id",c.number_id).eq("conversations.contact_id",c.contact_id).maybeSingle();
+   if(error||!original?.wa_id||original.deleted_at)return NextResponse.json({error:"Mensagem original indisponível para responder."},{status:403});
+  }
   const {error:claimError}=await auth.rpc("attendance_action",{cid:c.id,action:"claim"});
   if(claimError)return NextResponse.json({error:claimError.message},{status:409});
   let messageId:string|undefined;
   if(body.messageId){const {data:m}=await auth.from("whatsapp_messages").select("id").eq("id",body.messageId).eq("conversation_id",c.id).eq("sender_id",user.id).eq("direction","out").maybeSingle();if(!m)return NextResponse.json({error:"Mensagem inválida."},{status:403});messageId=m.id;}
-  const {status,data}=await callWhatsappService("/send",{method:"POST",body:JSON.stringify({to,text,senderId:user.id,numberId:c.number_id,conversationId:c.id,media,messageId})});
+  const {status,data}=await callWhatsappService("/send",{method:"POST",body:JSON.stringify({to,text,senderId:user.id,numberId:c.number_id,conversationId:c.id,media,messageId,replyToMessageId:body.replyToMessageId})});
   return NextResponse.json(data,{status});
  }catch(err){return NextResponse.json({success:false,error:err instanceof Error?err.message:"Erro ao enviar."},{status:400});}
 }

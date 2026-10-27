@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Download, Forward, FileText, X } from "lucide-react";
+import { Download, Forward, FileText, Reply, X } from "lucide-react";
 import { messageAuthHeaders } from "@/lib/message-auth";
 import { safeMediaName } from "@/lib/whatsapp-media";
-import type { WhatsappMediaType } from "@/lib/types";
+import type { WhatsappMediaType, WhatsappReply } from "@/lib/types";
+import ReplyPreview from "./ReplyPreview";
 import MessageActions from "./MessageActions";
-export default function MessageBubble({pending,mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName,signaturePosition}:{pending?:boolean;signatureName?:string|null;signaturePosition?:"top"|"bottom";mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
+export default function MessageBubble({replyTo,onReply,onQuoteClick,pending,mine,at,text,mediaUrl,mediaType,mediaName,mediaMime,messageId,onForward,onSaveSticker,editedAt,deletedAt,onEdit,onDelete,signatureName,signaturePosition}:{replyTo?:WhatsappReply|null;onReply?:()=>void;onQuoteClick?:()=>void;pending?:boolean;signatureName?:string|null;signaturePosition?:"top"|"bottom";mine:boolean;at:string;text:string|null;mediaUrl?:string|null;mediaType?:WhatsappMediaType|null;mediaName?:string|null;mediaMime?:string|null;messageId?:string;onForward?:()=>void;onSaveSticker?:()=>Promise<void>;editedAt?:string|null;deletedAt?:string|null;onEdit?:(text:string)=>Promise<void>;onDelete?:()=>Promise<void>}){
  const [viewer,setViewer]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState("");
  const name=safeMediaName(mediaName,mediaType,mediaMime);
  const time=new Date(at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
@@ -17,7 +18,8 @@ export default function MessageBubble({pending,mine,at,text,mediaUrl,mediaType,m
   }catch(e){setError(e instanceof Error?e.message:"Erro ao baixar. Tente novamente.");}finally{setBusy(false);}
  }
  if(deletedAt)return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className="max-w-[90%] rounded-2xl border border-white/10 px-3 py-2 text-sm italic text-slate-400">Mensagem apagada<span className="ml-3 text-[10px] not-italic">{time}</span></div></div>;
- return <div className={`flex ${mine?"justify-end":"justify-start"}`}><div className={`min-w-0 max-w-[90%] md:max-w-[72%] rounded-2xl px-3 py-2 text-sm ${mine?"bg-emerald-700 text-white":"bg-[#1c232e]"}`}>
+ return <div id={messageId?`message-${messageId}`:undefined} tabIndex={-1} className={`group flex gap-1 outline-none focus:ring-2 focus:ring-emerald-400/70 rounded-xl ${mine?"justify-end":"justify-start"}`}><div className={`min-w-0 max-w-[85%] md:max-w-[72%] rounded-2xl px-3 py-2 text-sm ${mine?"bg-emerald-700 text-white":"bg-[#1c232e]"}`}>
+  {replyTo&&<div className="mb-2"><ReplyPreview reply={replyTo} onClick={onQuoteClick}/></div>}
   {signatureName&&signaturePosition==="top"&&<p className="mb-2 text-sm break-words"><strong>{signatureName}</strong></p>}
   {mediaUrl&&(mediaType==="image"||mediaType==="sticker")&&<button aria-label={`Abrir ${mediaType==="sticker"?"figurinha":"foto"}`} onClick={()=>setViewer(true)} className="block max-w-full">
    {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -39,7 +41,7 @@ export default function MessageBubble({pending,mine,at,text,mediaUrl,mediaType,m
    <span className={`text-[10px] ${mine?"text-emerald-100/70":"text-gray-400"}`}>{time}</span>
   </div>
   {viewer&&mediaUrl&&<MediaViewer src={mediaUrl} type={mediaType} name={name} onClose={()=>setViewer(false)}/>}
- </div></div>;
+ </div>{onReply&&<button type="button" aria-label="Responder mensagem" title="Responder" onClick={onReply} className={`min-h-11 min-w-11 self-center shrink-0 rounded-full text-slate-400 hover:text-emerald-300 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-emerald-400 ${mine?"order-first":""}`}><Reply size={17} className="mx-auto"/></button>}</div>;
 }
 function MediaViewer({src,type,name,onClose}:{src:string;type?:WhatsappMediaType|null;name:string;onClose:()=>void}){
  useEffect(()=>{const escape=(e:KeyboardEvent)=>{if(e.key==="Escape")onClose();};document.addEventListener("keydown",escape);return()=>document.removeEventListener("keydown",escape);},[onClose]);

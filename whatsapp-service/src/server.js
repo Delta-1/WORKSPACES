@@ -1,3 +1,4 @@
+import { prepareReply, incomingReply } from "./message-reply.js";
 import { createAuthStore } from "./auth-store.js";
 import { installConfirmedDelivery } from "./confirmed-delivery.js";
 import { databaseFetch } from "./database-fetch.js";
@@ -783,10 +784,11 @@ function mediaLabel(media, fallbackText) {
   );
 }
 
-async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null, signatureName = null, signaturePosition = "bottom") {
+async function logMessage(conversationId, direction, text, senderId = null, media = null, companyId = null, waId = null, messageAt = null, waKey = null, signatureName = null, signaturePosition = "bottom", replyTo = null) {
   if (!supabase) return;
   const row = {
     conversation_id: conversationId,
+    ...(replyTo ? { reply_to: replyTo } : {}),
     direction,
     text: mediaLabel(media, text) || null,
     sender_id: senderId,
@@ -3392,7 +3394,7 @@ async function startSession(numberId) {
             cid
           );
           if (!conversation) throw Error("Incoming conversation could not be saved");
-          const inMsgId = await persistIncoming(() => logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key));
+          const inMsgId = await persistIncoming(() => logMessage(conversation.id, "in", textoRegistrado, null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key, null, "bottom", incomingReply(inner, [sock.user?.id, sock.user?.lid])));
           if (msg.key.id) { receivedIds.add(msg.key.id); if (receivedIds.size > 5000) receivedIds.delete(receivedIds.values().next().value); }
           incomingHealth.persisted++;
           incomingHealth.lastPersistLatencyMs = Date.now() - receivedAt;
@@ -3880,13 +3882,13 @@ async function logOutgoingEcho(sock, numberId, msg, jid) {
     }
     if (!conversationId) return;
     // waId = key.id → dedup contra o envio feito pelo próprio site.
-    await logMessage(conversationId, msg.key.fromMe ? "out" : "in", text || (mediaKind ? "Mídia do histórico indisponível para download" : ""), null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key);
+    await logMessage(conversationId, msg.key.fromMe ? "out" : "in", text || (mediaKind ? "Mídia do histórico indisponível para download" : ""), null, media, cid, msg.key.id, whatsappMessageTime(msg)?.toISOString() || null, msg.key, null, "bottom", incomingReply(inner, [sock.user?.id, sock.user?.lid]));
   } catch (err) {
     console.error("logOutgoingEcho failed:", err);
   }
 }
 
-async function sendMessage(numberId, to, text, senderId, media, messageId = null, authorizedConversationId = null) {
+async function sendMessage(numberId, to, text, senderId, media, messageId = null, authorizedConversationId = null, replyToMessageId = null) {
   // Se o número informado não estiver conectado, usa qualquer número conectado.
   let s = numberId ? getSession(numberId) : null;
   if (!s || !s.sock || s.state.status !== "connected") {
@@ -3926,9 +3928,11 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
   const cid = number.company_id;
   const contact = authorizedConversationId ? null : await upsertContact(phone, null, cid, jid);
   let conversationId = authorizedConversationId;
+  let attendanceContactId = null;
   if (authorizedConversationId) {
     const { data: current } = await supabase.from("conversations").select("*").eq("id", authorizedConversationId).eq("company_id", cid).eq("number_id", numberId).maybeSingle();
     if (!current || current.assignee_id !== senderId || current.status !== "atendendo") throw new Error("Atendimento transferido ou finalizado. Atualize a conversa.");
+    attendanceContactId = current.contact_id;
   } else if (contact) {
     const { data: convo } = await supabase.from("conversations").select("id,assignee_id,status")
       .eq("contact_id", contact.id).eq("company_id", cid).eq("number_id", numberId).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -3939,6 +3943,14 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       conversationId = created?.id ?? null;
     }
   }
+  let reply = null;
+  if (replyToMessageId) {
+    if (!authorizedConversationId || !senderId) throw Error("Selecione um atendimento para responder.");
+    const { data: original, error } = await supabase.from("whatsapp_messages").select("*,conversations!inner(company_id,number_id,contact_id)").eq("id", replyToMessageId).eq("company_id", cid).eq("conversations.company_id", cid).eq("conversations.number_id", numberId).eq("conversations.contact_id", attendanceContactId).maybeSingle();
+    if (error) throw Error("Não foi possível consultar a mensagem original.");
+    reply = prepareReply(original, { companyId: cid, numberId, contactId: attendanceContactId, jid });
+  }
+  const sendOptions = reply ? { quoted: reply.quoted } : {};
   const signature = await resolveAttendantSignature(supabase, senderId, cid);
   const signatureName = signature?.name ?? null;
   const signaturePosition = signature?.position ?? "top";
@@ -3964,9 +3976,9 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
       }
       else if (media.type === "video") content = { video: buf, caption: outgoingText || undefined, mimetype };
       else content = { document: buf, mimetype: mimetype || "application/octet-stream", fileName: media.name || "arquivo", caption: outgoingText || undefined };
-      sent = await s.sock.sendMessage(jid, content);
+      sent = await s.sock.sendMessage(jid, content, sendOptions);
     } else {
-      sent = await s.sock.sendMessage(jid, { text: outgoingText });
+      sent = await s.sock.sendMessage(jid, { text: outgoingText }, sendOptions);
     }
     if (!sent?.key?.id) throw new Error("O WhatsApp não confirmou o envio. Confira a conversa antes de tentar novamente.");
   } catch (e) {
@@ -3977,10 +3989,10 @@ async function sendMessage(numberId, to, text, senderId, media, messageId = null
     // pelo messageId (envio pelo site), atualiza também os dados de mídia.
     if (sent?.key?.id) {
       webSentWaIds.add(sent.key.id);
-      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key, signatureName, signaturePosition);
+      if (conversationId && !loggedId) loggedId = await logMessage(conversationId, "out", text || "", senderId ?? null, media ?? null, cid, sent.key.id, null, sent.key, signatureName, signaturePosition, reply?.snapshot);
       setTimeout(() => webSentWaIds.delete(sent.key.id), 120000);
       if (loggedId) {
-        const patch = { wa_id: sent.key.id, wa_key: savedMessageKey(sent.key), ...(signatureName ? { signature_name: signatureName, signature_position: signaturePosition, text: mediaLabel(media, text) || null } : {}) };
+        const patch = { ...(reply ? { reply_to: reply.snapshot } : {}), wa_id: sent.key.id, wa_key: savedMessageKey(sent.key), ...(signatureName ? { signature_name: signatureName, signature_position: signaturePosition, text: mediaLabel(media, text) || null } : {}) };
         if (media && messageId) { patch.media_type = media.type; patch.media_url = media.url; patch.media_name = media.name ?? null; patch.media_mime = media.mime ?? null; }
         await supabase.from("whatsapp_messages").update(patch).eq("id", loggedId).then(() => {}, () => {});
       }
@@ -4022,6 +4034,7 @@ app.get("/health", (_req, res) => {
     supabaseConfigured: Boolean(supabase),
     messageAutomations: Boolean(messageAutomationWorker),
     messageMutations: { version: MESSAGE_MUTATIONS_VERSION, ready: Boolean(supabase) },
+    quotedReplies: { version: 1, ready: Boolean(supabase) },
     hasUrl: Boolean(process.env.SUPABASE_URL),
     hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     hasSecret: Boolean(process.env.WHATSAPP_SERVICE_SECRET),
@@ -4092,12 +4105,12 @@ app.post("/groups/sync", async (req, res) => {
 });
 
 app.post("/send", async (req, res) => {
-  const { numberId, to, text, senderId, media, messageId, conversationId } = req.body ?? {};
+  const { numberId, to, text, senderId, media, messageId, conversationId, replyToMessageId } = req.body ?? {};
   if (!to || (!text && !media?.url)) {
     return res.status(400).json({ error: "Informe 'to' e 'text' ou 'media'." });
   }
   try {
-    const sent = await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null, conversationId ? String(conversationId) : null);
+    const sent = await sendMessage(numberId ? String(numberId) : null, to, text, senderId, media, messageId ? String(messageId) : null, conversationId ? String(conversationId) : null, replyToMessageId ? String(replyToMessageId) : null);
     res.json({ success: true, waId: sent.key.id });
   } catch (err) {
     res.status(400).json({ success: false, message: err instanceof Error ? err.message : String(err) });

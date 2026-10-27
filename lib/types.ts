@@ -250,7 +250,10 @@ export type Conversation = {
 
 export type WhatsappMediaType = "image" | "audio" | "video" | "document" | "sticker";
 
+export type WhatsappReply = { id: string | null; wa_id: string; author: string; text: string; media_type: WhatsappMediaType | null };
+
 export type WhatsappMessageRow = {
+  reply_to?: WhatsappReply | null;
   signature_name?: string | null;
   signature_position?: "top" | "bottom";
   id: string;
